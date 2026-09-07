@@ -1,8 +1,8 @@
-# KanbanFlow
+# KanPad
 
 Self-hosted _project management & note taking_ tool for solo developers & small teams.
 
-![KanbanFlow screenshot](https://raziur.com/public_assets/projects/kanbanflow/kanbanflow-screenshot-2026-07-04-opt.png)
+![KanPad screenshot](https://raziur.com/public_assets/projects/kanbanflow/kanbanflow-screenshot-2026-07-04-opt.png)
 
 ### Why?
 

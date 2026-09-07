@@ -1,0 +1,7 @@
+tasks:
+  T001:
+    name: change project name
+    status: done
+    depends: ~
+    phase: 0
+    critical: false

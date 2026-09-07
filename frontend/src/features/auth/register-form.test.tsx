@@ -49,7 +49,7 @@ describe('RegisterForm', () => {
   it('renders the form with correct structure', () => {
     render(<RegisterForm />, { wrapper: createWrapper() });
 
-    expect(screen.getByText(/KanbanFlow/i)).toBeInTheDocument();
+    expect(screen.getByText(/KanPad/i)).toBeInTheDocument();
     expect(screen.getByText(/enter your details to register/i)).toBeInTheDocument();
   });
 

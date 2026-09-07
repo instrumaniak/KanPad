@@ -66,7 +66,7 @@ describe('AppLayout', () => {
   it('renders header with app name', () => {
     renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
 
-    expect(screen.getByText('KanbanFlow')).toBeInTheDocument();
+    expect(screen.getByText('KanPad')).toBeInTheDocument();
   });
 
   it('renders user email in header', () => {

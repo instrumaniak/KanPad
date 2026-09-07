@@ -9,7 +9,7 @@ test.describe('Auth flows', () => {
     test('renders registration form with all fields', async ({ page }) => {
       await page.goto('/register');
 
-      await expect(page.getByRole('heading', { name: 'KanbanFlow' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'KanPad' })).toBeVisible();
       await expect(page.getByLabel('Email')).toBeVisible();
       await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
       await expect(page.getByLabel('Confirm Password')).toBeVisible();
@@ -76,7 +76,7 @@ test.describe('Auth flows', () => {
     test('renders login form with all fields', async ({ page }) => {
       await page.goto('/login');
 
-      await expect(page.getByRole('heading', { name: 'KanbanFlow' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'KanPad' })).toBeVisible();
       await expect(page.getByLabel('Email')).toBeVisible();
       await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
@@ -110,7 +110,7 @@ test.describe('Auth flows', () => {
       await page.getByRole('button', { name: 'Sign In' }).click();
 
       await page.waitForURL((url) => url.pathname !== '/login', { timeout: 10000 });
-      await expect(page.getByText('KanbanFlow')).toBeVisible();
+      await expect(page.getByText('KanPad')).toBeVisible();
     });
 
     test('has link to register page', async ({ page }) => {

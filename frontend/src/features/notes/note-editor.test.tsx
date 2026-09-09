@@ -119,11 +119,13 @@ describe('NoteEditor', () => {
       expect(screen.getByText('Save')).toBeInTheDocument();
     });
 
-    it('toggles preview mode', () => {
+    it('toggles preview mode', async () => {
       renderWithProviders(<NoteEditor onSave={onSave} onCancel={onCancel} />);
       fireEvent.click(screen.getByText('Preview'));
+      await waitFor(() => {
+        expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+      });
       expect(screen.getByText('Edit')).toBeInTheDocument();
-      expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
     });
 
     it('calls onCancel when cancel clicked', () => {

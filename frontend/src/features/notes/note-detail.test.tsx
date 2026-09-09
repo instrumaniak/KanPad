@@ -5,6 +5,10 @@ import { ToastProvider } from '@/components/ui/toast-provider';
 import { NoteDetail } from './note-detail';
 import type { Note } from './notes.api';
 
+vi.mock('./markdown-renderer', () => ({
+  MarkdownRenderer: ({ content }: { content: string }) => <div data-testid="markdown-renderer">{content}</div>,
+}));
+
 const renderWithProviders = (ui: React.ReactElement) => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -103,8 +107,8 @@ describe('NoteDetail', () => {
     expect(screen.queryByText('frontend')).not.toBeInTheDocument();
   });
 
-  it('renders markdown content', () => {
+  it('renders markdown content', async () => {
     renderWithProviders(<NoteDetail note={mockNote} onBack={onBack} onEdit={onEdit} onDelete={onDelete} />);
-    expect(screen.getByText('Hello')).toBeInTheDocument();
+    expect(await screen.findByTestId('markdown-renderer')).toBeInTheDocument();
   });
 });

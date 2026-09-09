@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import type { Note, CreateNoteData } from './notes.api';
 import { useCreateNote, useUpdateNote } from './use-notes';
 import { TagPicker } from '@/features/tags/tag-picker';
@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/components/ui/use-toast';
 import { Bold, Italic, Heading, Code, List, Eye, EyeOff, Save, Workflow } from 'lucide-react';
-import { MarkdownRenderer } from './markdown-renderer';
+import { LazyLoadBoundary } from '@/components/lazy-load-boundary';
+import { LazyMarkdownRenderer } from './lazy-markdown-renderer';
 
 interface NoteEditorProps {
   note?: Note;
@@ -292,7 +293,11 @@ export function NoteEditor({
         </div>
       ) : (
         <div className="min-h-[300px] rounded-md border border-input bg-card px-3 py-2 text-sm overflow-auto prose prose-sm dark:prose-invert max-w-none">
-          <MarkdownRenderer content={content} />
+          <LazyLoadBoundary fallback={<div className="text-xs text-muted-foreground">Failed to load preview</div>}>
+            <Suspense fallback={<div className="text-xs text-muted-foreground animate-pulse">Loading...</div>}>
+              <LazyMarkdownRenderer content={content} />
+            </Suspense>
+          </LazyLoadBoundary>
         </div>
       )}
 

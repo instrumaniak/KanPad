@@ -1,10 +1,3 @@
-export { NoteList } from './note-list';
-export { NoteEditor } from './note-editor';
-export { NoteCard } from './note-card';
-export { NoteDetail } from './note-detail';
-export { CreateNoteDialog } from './create-note-dialog';
-export { MermaidDiagram } from './mermaid-diagram';
-export { MarkdownRenderer } from './markdown-renderer';
 export { BoardNotesSidebar } from './board-notes-sidebar';
 export * from './notes.api';
 export * from './use-notes';

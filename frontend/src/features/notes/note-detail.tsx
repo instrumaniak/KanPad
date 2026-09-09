@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Note } from './notes.api';
 import { getNoteType } from './notes.api';
 import { TagBadge } from '@/features/tags/tag-badge';
@@ -17,7 +18,8 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { ChevronLeft, Edit3, Trash2 } from 'lucide-react';
-import { MarkdownRenderer } from './markdown-renderer';
+import { LazyLoadBoundary } from '@/components/lazy-load-boundary';
+import { LazyMarkdownRenderer } from './lazy-markdown-renderer';
 
 const typeStyles: Record<string, string> = {
   general: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
@@ -94,7 +96,11 @@ export function NoteDetail({ note, onBack, onEdit, onDelete }: NoteDetailProps) 
           )}
           <Separator className="mb-4" />
           <div className="prose prose-sm dark:prose-invert max-w-none">
-            <MarkdownRenderer content={note.content || ''} />
+            <LazyLoadBoundary fallback={<div className="text-xs text-muted-foreground">Failed to load preview</div>}>
+              <Suspense fallback={<div className="text-xs text-muted-foreground animate-pulse">Loading...</div>}>
+                <LazyMarkdownRenderer content={note.content || ''} />
+              </Suspense>
+            </LazyLoadBoundary>
           </div>
         </article>
       </ScrollArea>

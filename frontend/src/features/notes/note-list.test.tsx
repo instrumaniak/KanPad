@@ -1,8 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '@/components/ui/toast-provider';
 import { NoteList } from './note-list';
+
+const mockNavigate = vi.fn();
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 const renderWithProviders = (ui: React.ReactElement) => {
   const queryClient = new QueryClient({
@@ -12,9 +23,11 @@ const renderWithProviders = (ui: React.ReactElement) => {
     },
   });
   return render(
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>{ui}</ToastProvider>
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>{ui}</ToastProvider>
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 };
 
@@ -57,15 +70,6 @@ vi.mock('./note-card', () => ({
       <button aria-label="Actions" data-testid={`actions-${note.id}`}>Actions</button>
       <button data-testid={`edit-${note.id}`} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onEdit(); }}>Edit</button>
       <button data-testid={`delete-${note.id}`} onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(); }}>Delete</button>
-    </div>
-  ),
-}));
-
-vi.mock('./note-detail', () => ({
-  NoteDetail: ({ onBack }: { onBack: () => void }) => (
-    <div data-testid="note-detail">
-      Note Detail
-      <button data-testid="back-btn" onClick={onBack}>Back</button>
     </div>
   ),
 }));
@@ -162,22 +166,15 @@ describe('NoteList', () => {
     expect(screen.queryByText(/Delete note\?/)).not.toBeInTheDocument();
   });
 
-  it('shows note detail when a note is clicked', () => {
+  it('navigates to note detail when a note is clicked', () => {
     renderWithProviders(<NoteList />);
     fireEvent.click(screen.getByText('First Note'));
-    expect(screen.getByTestId('note-detail')).toBeInTheDocument();
+    expect(mockNavigate).toHaveBeenCalledWith('/notes/1');
   });
 
-  it('shows note editor when edit is clicked from note detail', () => {
+  it('navigates to note detail for second note when clicked', () => {
     renderWithProviders(<NoteList />);
-    fireEvent.click(screen.getByText('First Note'));
-    expect(screen.getByTestId('note-detail')).toBeInTheDocument();
-  });
-
-  it('returns to list from note detail via back', () => {
-    renderWithProviders(<NoteList />);
-    fireEvent.click(screen.getByText('First Note'));
-    fireEvent.click(screen.getByTestId('back-btn'));
-    expect(screen.getByText('Notes')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Second Note'));
+    expect(mockNavigate).toHaveBeenCalledWith('/notes/2');
   });
 });

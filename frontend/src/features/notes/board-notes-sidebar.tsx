@@ -17,8 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { cn } from '@/lib/utils';
 import { NoteEditor } from './note-editor';
 import { BoardNotesSidebarItem } from './board-notes-sidebar-item';
-import { useBoardNotes, useDeleteNote } from './use-notes';
-import type { Note } from './notes.api';
+import { useBoardNotes, useDeleteNote, useNote } from './use-notes';
 
 interface BoardNotesSidebarProps {
   boardId: number;
@@ -31,7 +30,9 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle }: BoardNotesSi
   const deleteNote = useDeleteNote();
   const { toast } = useToast();
 
-  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const { data: editingNoteData, isLoading: isLoadingNote } = useNote(editingNoteId ?? 0);
+  const editingNote = editingNoteId ? editingNoteData?.data ?? null : null;
   const [isCreating, setIsCreating] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -47,7 +48,7 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle }: BoardNotesSi
   };
 
   const handleUpdate = () => {
-    setEditingNote(null);
+    setEditingNoteId(null);
   };
 
   const handleDelete = async (id: number) => {
@@ -119,8 +120,8 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle }: BoardNotesSi
                   <div className="relative">
                     <BoardNotesSidebarItem
                       note={note}
-                      onClick={() => setEditingNote(note)}
-                      onEdit={() => setEditingNote(note)}
+                      onClick={() => setEditingNoteId(note.id)}
+                      onEdit={() => setEditingNoteId(note.id)}
                       onDelete={() => setDeleteConfirmId(note.id)}
                     />
                   </div>
@@ -144,26 +145,31 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle }: BoardNotesSi
       )}
 
       <Sheet
-        open={!!editingNote}
+        open={editingNoteId !== null}
         onOpenChange={(open) => {
-          if (!open) setEditingNote(null);
+          if (!open) setEditingNoteId(null);
         }}
       >
         <SheetContent side="right" className="w-[400px] sm:w-[540px] sm:max-w-[540px] p-4">
           <SheetHeader>
             <SheetTitle></SheetTitle>
           </SheetHeader>
-          {editingNote && (
+          {isLoadingNote ? (
+            <div className="space-y-4 pt-4">
+              <div className="h-8 w-48 animate-pulse rounded bg-muted" />
+              <div className="h-64 animate-pulse rounded bg-muted" />
+            </div>
+          ) : editingNote ? (
             <NoteEditor
               note={editingNote}
               onSave={handleUpdate}
-              onCancel={() => setEditingNote(null)}
+              onCancel={() => setEditingNoteId(null)}
               onDelete={() => {
                 setDeleteConfirmId(editingNote.id);
-                setEditingNote(null);
+                setEditingNoteId(null);
               }}
             />
-          )}
+          ) : null}
         </SheetContent>
       </Sheet>
 

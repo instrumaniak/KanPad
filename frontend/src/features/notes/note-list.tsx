@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useNotes } from './use-notes';
 import { NoteCard } from './note-card';
 import { CreateNoteDialog } from './create-note-dialog';
-import { NoteDetail } from './note-detail';
 import { NoteEditor } from './note-editor';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -28,11 +28,11 @@ import { useToast } from '@/components/ui/use-toast';
 const typeFilters = ['All', 'General', 'Board', 'Project', 'Card'] as const;
 
 export function NoteList() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('All');
   const [tagFilter, setTagFilter] = useState<number | undefined>(undefined);
-  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [deletingNote, setDeletingNote] = useState<Note | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -94,23 +94,6 @@ export function NoteList() {
       },
     });
   };
-
-  if (selectedNote) {
-    return (
-      <NoteDetail
-        note={selectedNote}
-        onBack={() => setSelectedNote(null)}
-        onEdit={() => {
-          setEditingNote(selectedNote);
-          setSelectedNote(null);
-        }}
-        onDelete={() => {
-          setDeletingNote(selectedNote);
-          setSelectedNote(null);
-        }}
-      />
-    );
-  }
 
   if (editingNote) {
     return (
@@ -181,7 +164,7 @@ export function NoteList() {
               <NoteCard
                 key={note.id}
                 note={note}
-                onClick={() => setSelectedNote(note)}
+                onClick={() => navigate(`/notes/${note.id}`)}
                 onEdit={() => setEditingNote(note)}
                 onDelete={() => setDeletingNote(note)}
                 onTagClick={handleTagClick}

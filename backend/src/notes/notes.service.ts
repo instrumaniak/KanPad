@@ -166,6 +166,21 @@ export class NotesService {
   async findById(id: number, userId: number): Promise<Note> {
     const note = await this.noteRepository.findOne({
       where: { id },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        board_id: true,
+        project_id: true,
+        card_id: true,
+        user_id: true,
+        board: true,
+        card: true,
+        project: true,
+        tags: true,
+        created_at: true,
+        updated_at: true,
+      },
       relations: ['board', 'tags'],
     });
 

@@ -45,11 +45,13 @@ const mockBoardNotesData = {
 
 const mockUseBoardNotes = vi.fn();
 const mockUseDeleteNote = vi.fn();
+const mockUseNote = vi.fn();
 const mockMutateAsync = vi.fn();
 
 vi.mock('./use-notes', () => ({
   useBoardNotes: () => mockUseBoardNotes(),
   useDeleteNote: () => mockUseDeleteNote(),
+  useNote: (id: number) => mockUseNote(id),
 }));
 
 vi.mock('./board-notes-sidebar-item', () => ({
@@ -86,6 +88,10 @@ describe('BoardNotesSidebar', () => {
     vi.clearAllMocks();
     mockUseBoardNotes.mockReturnValue({ data: mockBoardNotesData, isLoading: false });
     mockUseDeleteNote.mockReturnValue({ mutateAsync: mockMutateAsync });
+    mockUseNote.mockImplementation((id: number) => {
+      const note = mockBoardNotesData.data.find((n) => n.id === id);
+      return { data: note ? { data: note } : null, isLoading: false };
+    });
   });
 
   it('renders board notes', () => {

@@ -28,7 +28,7 @@ interface SessionData {
 interface NoteResponse {
   id: number;
   title: string;
-  content: string;
+  content?: string;
   board_id: number | null;
   project_id: number | null;
   card_id: number | null;

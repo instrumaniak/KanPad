@@ -26,7 +26,7 @@ export class Note {
   title!: string;
 
   @ApiProperty({ example: '# Markdown content' })
-  @Column({ type: 'text' })
+  @Column({ type: 'mediumtext', select: false })
   content!: string;
 
   @ApiPropertyOptional({ example: 1 })

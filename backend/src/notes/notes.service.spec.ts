@@ -407,7 +407,9 @@ describe('NotesService', () => {
       const result = await service.update(1, mockUserId, { title: 'Updated' });
 
       expect(result.title).toBe('Updated');
-      expect(mockNoteRepository.save).toHaveBeenCalledWith(expect.objectContaining({ title: 'Updated' }));
+      expect(mockNoteRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Updated' }),
+      );
     });
 
     it('should update tags', async () => {

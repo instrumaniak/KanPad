@@ -78,7 +78,9 @@ describe('TagsService', () => {
     it('should throw ConflictException if tag with same name exists', async () => {
       mockTagRepository.findOne.mockResolvedValue(mockTag);
 
-      await expect(service.create(mockUserId, { name: 'important' })).rejects.toThrow(ConflictException);
+      await expect(service.create(mockUserId, { name: 'important' })).rejects.toThrow(
+        ConflictException,
+      );
       expect(mockTagRepository.create).not.toHaveBeenCalled();
     });
   });

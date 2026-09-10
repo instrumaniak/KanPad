@@ -8,6 +8,7 @@ const mockUseBoard = vi.fn();
 const mockUseColumns = vi.fn();
 const mockMutateAsync = vi.fn();
 const mockToast = vi.fn();
+const mockUpdateMutate = vi.fn();
 
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ boardId: '1' }),
@@ -16,6 +17,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../use-boards', () => ({
   useBoard: () => mockUseBoard(),
+  useUpdateBoard: () => ({ mutate: mockUpdateMutate, isPending: false }),
 }));
 
 vi.mock('../../columns/use-columns', () => ({
@@ -49,6 +51,16 @@ vi.mock('../../cards/drag-drop-context', () => ({
 
 vi.mock('../../notes/board-notes-sidebar', () => ({
   BoardNotesSidebar: () => <div data-testid="board-notes-sidebar" />,
+}));
+
+vi.mock('../../cards/use-cards', () => ({
+  useUpdateCard: () => ({ mutate: vi.fn() }),
+  useDeleteCard: () => ({ mutate: vi.fn() }),
+  useCreateCard: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+vi.mock('./board-list-view', () => ({
+  BoardListView: () => <div data-testid="board-list-view" />,
 }));
 
 const mockColumn = {
@@ -147,5 +159,70 @@ describe('BoardView', () => {
         type: 'error',
       });
     });
+  });
+
+  it('renders view toggle with board active by default', () => {
+    render(<BoardView />);
+    expect(screen.getByRole('group', { name: 'Board view mode' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('switching to list calls updateBoard with view_mode and preserves kanban on switch back', async () => {
+    mockUseBoard.mockReturnValue({ isLoading: false, data: mockBoardResponse });
+    const { unmount } = render(<BoardView />);
+    fireEvent.click(screen.getByRole('button', { name: /list/i }));
+    await waitFor(() => {
+      expect(mockUpdateMutate).toHaveBeenCalledWith(
+        { id: 1, data: { view_mode: 'list' } },
+        expect.anything(),
+      );
+    });
+    expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: /board/i }));
+    await waitFor(() => {
+      expect(mockUpdateMutate).toHaveBeenCalledWith(
+        { id: 1, data: { view_mode: 'board' } },
+        expect.anything(),
+      );
+    });
+    expect(screen.getByTestId('drag-context')).toBeInTheDocument();
+    unmount();
+  });
+
+  it('initializes list view from board.view_mode', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      data: { data: { ...mockBoardResponse.data, view_mode: 'list' } },
+    });
+    render(<BoardView />);
+    expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('does not PATCH when clicking the active view', () => {
+    render(<BoardView />);
+    fireEvent.click(screen.getByRole('button', { name: /board/i }));
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
+  });
+
+  it('rolls back view and toasts on PATCH failure', async () => {
+    render(<BoardView />);
+    fireEvent.click(screen.getByRole('button', { name: /list/i }));
+    await waitFor(() => {
+      expect(mockUpdateMutate).toHaveBeenCalled();
+    });
+    const onError = mockUpdateMutate.mock.calls[0][1]?.onError as
+      | ((err: Error) => void)
+      | undefined;
+    expect(onError).toBeDefined();
+    onError?.(new Error('Network fail'));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+    });
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Failed to save view' }),
+    );
   });
 });

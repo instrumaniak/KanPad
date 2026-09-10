@@ -74,14 +74,14 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Rich Content, Notes & Organization
-  epic-4: in-progress
+  epic-4: done
   4-1-card-detail-panel: done
   4-2-markdown-description: done
   4-3-color-coded-labels: done
   4-4-due-dates: done
   4-5-checklists-with-progress: done
   4-6-notes-system: done
-  4-7-board-view-toggle: ready-for-dev
+  4-7-board-view-toggle: done
   epic-4-retrospective: optional
 
   # Epic 5: Search, Filter & Visual Polish

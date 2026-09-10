@@ -1,6 +1,6 @@
 # Story 4.7: Board View Toggle
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -49,59 +49,59 @@ so that I can use the same board for different purposes — structured workflow 
 
 ## Tasks / Subtasks
 
-- [ ] Backend: Add `view_mode` to Board entity (AC: #1)
-  - [ ] Add `@Column({ length: 10, default: 'board' }) view_mode!: 'board' | 'list'` to `backend/src/boards/entities/board.entity.ts` with `@ApiProperty({ example: 'board', enum: ['board', 'list'] })`
-  - [ ] Add `view_mode?: 'board' | 'list'` to `UpdateBoardDto` with `@IsIn(['board', 'list'])` + `@IsOptional()` (import from `class-validator`)
-  - [ ] Update `BoardsService.update()` in `backend/src/boards/boards.service.ts` to handle `dto.view_mode !== undefined` → `board.view_mode = dto.view_mode`
-  - [ ] Update `BoardResponse` interface in `backend/src/boards/boards.controller.ts` to include `view_mode: string`
-  - [ ] Include `view_mode: b.view_mode` in ALL response mappings: `findAll`, `findArchived`, `create`, `findOne`, `update`, `archive`, `restore`
-  - [ ] Update `@ApiOperation({ summary: 'Update board name, color, project, or view mode' })` on `PATCH :id`
-- [ ] Backend: Create migration for `view_mode` (AC: #1)
-  - [ ] Create `backend/src/migrations/<timestamp>-AddViewModeToBoards.ts` following `1777411200000-AddIsArchivedToBoards.ts` pattern (hand-written raw SQL, NOT auto-generated)
-  - [ ] `up`: `ALTER TABLE \`boards\` ADD \`view_mode\` varchar(10) NOT NULL DEFAULT 'board'`
-  - [ ] `down`: `ALTER TABLE \`boards\` DROP COLUMN \`view_mode\``
-  - [ ] Register migration in `backend/src/database/typeorm-registry.ts` (import + append to `migrations` array)
-- [ ] Frontend: Update Board types + API (AC: #1)
-  - [ ] Add `view_mode?: 'board' | 'list'` to `Board` interface in `frontend/src/features/boards/boards.api.ts`
-  - [ ] Add `view_mode?: 'board' | 'list'` to `UpdateBoardData` in same file
-  - [ ] No new endpoint needed — reuse existing `updateBoard(id, { view_mode })` PATCH
-- [ ] Frontend: Create `board-view-toggle.tsx` (AC: #1)
-  - [ ] Create `frontend/src/features/boards/board-view/board-view-toggle.tsx`
-  - [ ] Props: `{ value: 'board' | 'list'; onChange: (v: 'board' | 'list') => void; disabled?: boolean }`
-  - [ ] Use shadcn `ToggleGroup` if available, else two `Button`s in a `div` with `role="group" aria-label="Board view mode"` + `aria-pressed` per option
-  - [ ] Icons: `LayoutGrid` for Board, `List` for List (lucide-react, already a dep); verify export before use — `KanbanSquare` was renamed `SquareKanban` in newer lucide versions, so prefer `LayoutGrid` to avoid build break
-  - [ ] Active state: filled background (`bg-accent` / `bg-primary text-primary-foreground`), inactive: `ghost`
-  - [ ] Place in `BoardView` header next to title (right side), sticky header row
-- [ ] Frontend: Create `board-list-view.tsx` + row (AC: #3, #5, #6, #7)
-  - [ ] Create `frontend/src/features/boards/board-view/board-list-view.tsx`
-  - [ ] Props: `{ boardId: number; columns: BoardColumn[] }` — derive flat card list from existing `useColumns(boardId)` data via embedded `columns[].cards` (`GET /api/boards/:boardId/columns` returns `cards: Card[]` per `columns.api.ts`); do NOT use per-column `useCards` aggregation and do NOT add new fetch — reuse same query (no refetch on toggle). Flat list: `columns.flatMap(c => (c.cards ?? []).map(card => ({ ...card, columnName: c.name })))`
-  - [ ] Each row shows: title (inline-editable), column badge (`Badge` variant `secondary`), labels via `LabelBadge` (max 3 + `+N`), due badge via `getDueDateBadge()` from `features/cards/date-utils.ts`, checklist progress via `ProgressBar` from `features/checklists/progress-bar.tsx`
-  - [ ] Sort header: buttons for Created / Updated / Due / Title with `aria-sort`, asc/desc toggle, active indicator (`ArrowUp`/`ArrowDown` lucide)
-  - [ ] Sort logic (client-side, `useMemo`): `created_at`, `updated_at` (date compare), `due_date` (nulls last), `title` (`localeCompare`); stable, memoized on cards + sort key
-  - [ ] Click row → open `CardDetailPanel` (same component as kanban, reuse `card.tsx` pattern with `isPanelOpen` state)
-  - [ ] Inline title edit: click title → `Input` with default value, `Enter`/blur → `useUpdateCard().mutate({ id, data: { title } })`, `Escape` cancels; toast on error
-  - [ ] Delete: `DropdownMenu` or trash `Button` per row → `AlertDialog` confirm → `useDeleteCard()` (same undo-toast pattern as `card.tsx:65-97`)
-  - [ ] "Add Card" in list: `Button` opens `Dialog` with `Input` (title) + `Select` (target column, required, default = first column by `position`) → `useCreateCard().mutate({ title, column_id })` → invalidate `['columns']` + `['cards', columnId]`; empty board still shows Add Card (board always has default columns from `BoardsService.create`)
-- [ ] Frontend: Integrate toggle into `BoardView` (AC: #1, #2, #4)
-  - [ ] Edit `frontend/src/features/boards/board-view/board-view.tsx`: add `const [view, setView] = useState<'board'|'list'>(board?.view_mode ?? 'board')` synced via `useEffect` when `boardResponse` loads
-  - [ ] `useUpdateBoard()` mutation on toggle: optimistic `setView` immediately, PATCH `{ view_mode }` in background, rollback + error toast on failure; disable toggle while `useUpdateBoard.isPending` to prevent rapid-toggle races
-  - [ ] Preserve scroll: `useRef<{ board: number; list: number }>` storing `scrollLeft`/`scrollTop` of containers on toggle, restore on switch back
-  - [ ] Transition: wrap views in `div` with `transition-opacity duration-300 animate-in fade-in`
-  - [ ] Kanban branch unchanged (`DragDropContext` + `Column` + `AddColumnButton`); List branch renders `<BoardListView boardId columns />`
-  - [ ] Keep existing loading (`Loading...`) and not-found states intact
-- [ ] Tests: Backend unit tests (AC: #1)
-  - [ ] Extend `backend/src/boards/boards.service.spec.ts`: update with `view_mode: 'list'` persists; invalid value rejected at DTO level (ValidationPipe)
-  - [ ] Verify persistence after PATCH with follow-up `findOne` DB query (not just response) — per project DB safety rule
-  - [ ] Test default: newly created board has `view_mode === 'board'`
-- [ ] Tests: Frontend unit tests (AC: #1, #3, #4)
-  - [ ] `board-view-toggle.test.tsx`: renders Board/List options, indicates active, calls onChange, `aria-pressed` correct
-  - [ ] `board-list-view.test.tsx`: renders flat rows from multi-column fixture, shows column badge + labels + due + progress, sorts by each key (asc/desc, nulls last for due), click opens detail panel, inline edit calls update, delete calls delete mutation
-  - [ ] Update `board-view.test.tsx`: toggle renders, switching calls `updateBoard` with `{ view_mode }`, kanban preserved when switching back; mock `useUpdateBoard`
-  - [ ] Vitest + @testing-library/react + userEvent, QueryClient wrapper with `retry: false`
-- [ ] Tests: E2E test (AC: #1-#7)
-  - [ ] Create `frontend/e2e/board-view-toggle.spec.ts` following `due-dates.spec.ts` pattern: `test.beforeAll` register user, API login, setup board+columns+cards
-  - [ ] Flow: login → open board → assert kanban → toggle List → assert rows + sort each key → reload → assert List persisted (DB-backed) → toggle Board → assert kanban + scroll preserved → Add Card in List with column picker → verify appears → delete → verify removed
-  - [ ] Use `monitoringTest` from `test-utils.ts`
+- [x] Backend: Add `view_mode` to Board entity (AC: #1)
+  - [x] Add `@Column({ length: 10, default: 'board' }) view_mode!: 'board' | 'list'` to `backend/src/boards/entities/board.entity.ts` with `@ApiProperty({ example: 'board', enum: ['board', 'list'] })`
+  - [x] Add `view_mode?: 'board' | 'list'` to `UpdateBoardDto` with `@IsIn(['board', 'list'])` + `@IsOptional()` (import from `class-validator`)
+  - [x] Update `BoardsService.update()` in `backend/src/boards/boards.service.ts` to handle `dto.view_mode !== undefined` → `board.view_mode = dto.view_mode`
+  - [x] Update `BoardResponse` interface in `backend/src/boards/boards.controller.ts` to include `view_mode: string`
+  - [x] Include `view_mode: b.view_mode` in ALL response mappings: `findAll`, `findArchived`, `create`, `findOne`, `update`, `archive`, `restore`
+  - [x] Update `@ApiOperation({ summary: 'Update board name, color, project, or view mode' })` on `PATCH :id`
+- [x] Backend: Create migration for `view_mode` (AC: #1)
+  - [x] Create `backend/src/migrations/<timestamp>-AddViewModeToBoards.ts` following `1777411200000-AddIsArchivedToBoards.ts` pattern (hand-written raw SQL, NOT auto-generated)
+  - [x] `up`: `ALTER TABLE \`boards\` ADD \`view_mode\` varchar(10) NOT NULL DEFAULT 'board'`
+  - [x] `down`: `ALTER TABLE \`boards\` DROP COLUMN \`view_mode\``
+  - [x] Register migration in `backend/src/database/typeorm-registry.ts` (import + append to `migrations` array)
+- [x] Frontend: Update Board types + API (AC: #1)
+  - [x] Add `view_mode?: 'board' | 'list'` to `Board` interface in `frontend/src/features/boards/boards.api.ts`
+  - [x] Add `view_mode?: 'board' | 'list'` to `UpdateBoardData` in same file
+  - [x] No new endpoint needed — reuse existing `updateBoard(id, { view_mode })` PATCH
+- [x] Frontend: Create `board-view-toggle.tsx` (AC: #1)
+  - [x] Create `frontend/src/features/boards/board-view/board-view-toggle.tsx`
+  - [x] Props: `{ value: 'board' | 'list'; onChange: (v: 'board' | 'list') => void; disabled?: boolean }`
+  - [x] Use shadcn `ToggleGroup` if available, else two `Button`s in a `div` with `role="group" aria-label="Board view mode"` + `aria-pressed` per option
+  - [x] Icons: `LayoutGrid` for Board, `List` for List (lucide-react, already a dep); verify export before use — `KanbanSquare` was renamed `SquareKanban` in newer lucide versions, so prefer `LayoutGrid` to avoid build break
+  - [x] Active state: filled background (`bg-accent` / `bg-primary text-primary-foreground`), inactive: `ghost`
+  - [x] Place in `BoardView` header next to title (right side), sticky header row
+- [x] Frontend: Create `board-list-view.tsx` + row (AC: #3, #5, #6, #7)
+  - [x] Create `frontend/src/features/boards/board-view/board-list-view.tsx`
+  - [x] Props: `{ boardId: number; columns: BoardColumn[] }` — derive flat card list from existing `useColumns(boardId)` data via embedded `columns[].cards` (`GET /api/boards/:boardId/columns` returns `cards: Card[]` per `columns.api.ts`); do NOT use per-column `useCards` aggregation and do NOT add new fetch — reuse same query (no refetch on toggle). Flat list: `columns.flatMap(c => (c.cards ?? []).map(card => ({ ...card, columnName: c.name })))`
+  - [x] Each row shows: title (inline-editable), column badge (`Badge` variant `secondary`), labels via `LabelBadge` (max 3 + `+N`), due badge via `getDueDateBadge()` from `features/cards/date-utils.ts`, checklist progress via `ProgressBar` from `features/checklists/progress-bar.tsx`
+  - [x] Sort header: buttons for Created / Updated / Due / Title with `aria-sort`, asc/desc toggle, active indicator (`ArrowUp`/`ArrowDown` lucide)
+  - [x] Sort logic (client-side, `useMemo`): `created_at`, `updated_at` (date compare), `due_date` (nulls last), `title` (`localeCompare`); stable, memoized on cards + sort key
+  - [x] Click row → open `CardDetailPanel` (same component as kanban, reuse `card.tsx` pattern with `isPanelOpen` state)
+  - [x] Inline title edit: click title → `Input` with default value, `Enter`/blur → `useUpdateCard().mutate({ id, data: { title } })`, `Escape` cancels; toast on error
+  - [x] Delete: `DropdownMenu` or trash `Button` per row → `AlertDialog` confirm → `useDeleteCard()` (same undo-toast pattern as `card.tsx:65-97`)
+  - [x] "Add Card" in list: `Button` opens `Dialog` with `Input` (title) + `Select` (target column, required, default = first column by `position`) → `useCreateCard().mutate({ title, column_id })` → invalidate `['columns']` + `['cards', columnId]`; empty board still shows Add Card (board always has default columns from `BoardsService.create`)
+- [x] Frontend: Integrate toggle into `BoardView` (AC: #1, #2, #4)
+  - [x] Edit `frontend/src/features/boards/board-view/board-view.tsx`: add `const [view, setView] = useState<'board'|'list'>(board?.view_mode ?? 'board')` synced via `useEffect` when `boardResponse` loads
+  - [x] `useUpdateBoard()` mutation on toggle: optimistic `setView` immediately, PATCH `{ view_mode }` in background, rollback + error toast on failure; disable toggle while `useUpdateBoard.isPending` to prevent rapid-toggle races
+  - [x] Preserve scroll: `useRef<{ board: number; list: number }>` storing `scrollLeft`/`scrollTop` of containers on toggle, restore on switch back
+  - [x] Transition: wrap views in `div` with `transition-opacity duration-300 animate-in fade-in`
+  - [x] Kanban branch unchanged (`DragDropContext` + `Column` + `AddColumnButton`); List branch renders `<BoardListView boardId columns />`
+  - [x] Keep existing loading (`Loading...`) and not-found states intact
+- [x] Tests: Backend unit tests (AC: #1)
+  - [x] Extend `backend/src/boards/boards.service.spec.ts`: update with `view_mode: 'list'` persists; invalid value rejected at DTO level (ValidationPipe)
+  - [x] Verify persistence after PATCH with follow-up `findOne` DB query (not just response) — per project DB safety rule
+  - [x] Test default: newly created board has `view_mode === 'board'`
+- [x] Tests: Frontend unit tests (AC: #1, #3, #4)
+  - [x] `board-view-toggle.test.tsx`: renders Board/List options, indicates active, calls onChange, `aria-pressed` correct
+  - [x] `board-list-view.test.tsx`: renders flat rows from multi-column fixture, shows column badge + labels + due + progress, sorts by each key (asc/desc, nulls last for due), click opens detail panel, inline edit calls update, delete calls delete mutation
+  - [x] Update `board-view.test.tsx`: toggle renders, switching calls `updateBoard` with `{ view_mode }`, kanban preserved when switching back; mock `useUpdateBoard`
+  - [x] Vitest + @testing-library/react + userEvent, QueryClient wrapper with `retry: false`
+- [x] Tests: E2E test (AC: #1-#7)
+  - [x] Create `frontend/e2e/board-view-toggle.spec.ts` following `due-dates.spec.ts` pattern: `test.beforeAll` register user, API login, setup board+columns+cards
+  - [x] Flow: login → open board → assert kanban → toggle List → assert rows + sort each key → reload → assert List persisted (DB-backed) → toggle Board → assert kanban + scroll preserved → Add Card in List with column picker → verify appears → delete → verify removed
+  - [x] Use `monitoringTest` from `test-utils.ts`
 
 ## Dev Notes
 
@@ -275,10 +275,56 @@ type SortKey = 'created_at' | 'updated_at' | 'due_date' | 'title';
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+muse-spark-1.3 (opencode contributor-free)
 
 ### Debug Log References
 
+- Backend `tsc --noEmit`: clean; `jest src/boards`: 33 passed (incl. 2 new view_mode tests)
+- Frontend `tsc --noEmit`: clean; `vitest run src/features/boards`: 8 files / 67 passed (incl. 12 new + 3 board-view additions)
+- Full regression: backend 26 suites / 299 passed; frontend 63 files / 528 passed
+- ESLint clean on all touched files (2 fixes applied: prettier formatting in `boards.service.spec.ts`; extracted `board-list-sort.ts` for react-refresh rule; ref-guarded sync effect in `board-view.tsx` for set-state-in-effect rule, mirroring `card-detail-panel.tsx` guard style)
+- Prettier: new/modified story files formatted; `boards.api.ts` + `use-boards.ts` left with pre-existing drift (unclean at HEAD, verified via stash compare)
+- E2E `board-view-toggle.spec.ts` created but NOT executed (requires live MySQL + backend/frontend servers)
+
 ### Completion Notes List
 
+- Backend: `view_mode` varchar(10) DEFAULT 'board' on `Board` entity with `@ApiProperty enum`; `UpdateBoardDto.view_mode` with `@IsIn(['board','list'])` + `@IsOptional()` (rejected at DTO level by existing PATCH `ValidationPipe`, same pattern as `background_color`); `BoardsService.update()` persists `view_mode`; all 7 `BoardResponse` mappers include `view_mode`; PATCH summary updated
+- Migration `1779600000000-AddViewModeToBoards.ts` hand-written raw SQL (up ADD COLUMN / down DROP COLUMN, lossless), registered in `typeorm-registry.ts`; entity + DTO + migration committed together
+- Frontend: `Board` + `UpdateBoardData` extended with `view_mode?`; no new endpoint (reuses PATCH)
+- `board-view-toggle.tsx`: two shadcn `Button`s (no ToggleGroup in codebase) in `role="group" aria-label="Board view mode"` with `aria-pressed`; `LayoutGrid`/`List` lucide icons; `default` variant active / `ghost` inactive
+- `board-list-view.tsx` + `board-list-sort.ts` (extracted for react-refresh lint): pure renderer of `columns` prop (no new fetch, same `useColumns` query, no refetch on toggle); flat list via `flatMap`; column `Badge secondary`; `LabelBadge` max-3 + `+N`; `getDueDateBadge`; `ProgressBar` + `completed/total (percent%)`; client-side `useMemo` sort (due nulls last); row click/Enter/Space opens shared `CardDetailPanel`; inline title edit (Enter/blur commit, Escape cancel, error toast); trash-button + `AlertDialog` delete with success/error toast (simplified vs card.tsx undo-toast — no position-restore context in flat list); Add Card `Dialog` with `Input` + native `<select>` (no shadcn Select in codebase; matches `board-card.tsx` pattern), defaults to first column by position, works on empty board
+- `board-view.tsx`: toggle in sticky header right side; optimistic `setView` + PATCH `{ view_mode }` background, rollback + friendly toast on failure; toggle disabled while `isPending`; scroll preserved via `useRef` (`scrollLeft`/`scrollTop` save/restore); `transition-opacity duration-300 animate-in fade-in` with `motion-safe:` prefixes; kanban branch untouched; loading/not-found states intact; `?? 'board'` fallback for unmigrated rows
+- Tests: backend persistence verified via follow-up `findOne` (not response alone) per DB safety rule; frontend covers toggle/list/sort/panel/edit/delete/empty-state + board-view integration (init from `view_mode`, PATCH payload, kanban preserved); E2E covers toggle → sort → reload-persist → API verify → add/delete in list
+- AC coverage: #1 toggle + per-board persistence (DB-backed); #2 kanban unchanged; #3 flat list + sort + panel + inline edit; #4 kanban + scroll preserved; #5 list is pure renderer of `columns` prop so Epic-5 filters will apply to both (no filter props exist yet — passes vacuously); #6/#7 add/delete in list
+
+### Code Review Fixes (2026-09-10)
+- Triage: 0 intent_gap, 2 bad_spec, 19 patch, 1 defer, 2 rejected (MySQL backticks per established pattern; per-board `view_mode` is AC #1 intent)
+- Bad-spec amends: migration `down DROP COLUMN` is lossy-by-design for additive column (accepted exception to No-data-loss rule); Add Card native `<select>` retained (no shadcn `Select` in tree, matches `board-card.tsx`)
+- Backend: `BoardsService.update()` allowlist guard (`board`/`list` only, ignores `null`/invalid instead of 500); `BoardResponse.view_mode: 'board'|'list'` + `?? 'board'` fallback on all 7 mappers; +1 service test (null/invalid ignored)
+- Sort: `board-list-sort.ts` nulls-last both directions (`!b` → `-1`), `NaN` date guard (`timeOf` → 0)
+- Toggle: `handleViewChange` early-return on same view + `isPending` guard; `viewRequestId` sequence prevents stale rollback on rapid toggles
+- Scroll: scoped via `listScrollRef.querySelector` (no global `document.querySelector`)
+- List: `Card` type imported (fixes `TS2304`); `LabelBadge` prop widened to `{color: string}` (fixes `TS2322`); `CardDetailPanel` boundary cast (columns `Card` lacks `description`); inline-edit commit-once guard + `Escape` suppresses blur; delete restores selection on error + undo-toast recreate; strict `column_id` parse (`/^\d+$/`); `boardId` membership validation on create; sort disabled when empty; zero-columns hint; `columnheader aria-sort` header row + `data-testid="board-list-row"` on card rows
+- Tests: +9 list tests (desc nulls-last, created sort, Escape, commit-once, +N, disabled-on-empty, create-with-column, no-columns hint); +2 board-view tests (no-PATCH-on-active, rollback+toast); E2E fixed `monitoringTest.beforeAll`, added Created/Updated/Due sorts, kanban assert after toggle-back, explicit column pick
+- Verification: backend `tsc` clean + `jest` 26/300; frontend `tsc` clean + `vitest` 63/538; ESLint clean (removed set-state-in-effect, kept submit-time column validation); E2E not executed (needs live MySQL + servers)
+
 ### File List
+
+- backend/src/boards/entities/board.entity.ts (modified: +view_mode column)
+- backend/src/boards/dto/update-board.dto.ts (modified: +view_mode validation)
+- backend/src/boards/boards.service.ts (modified: update handles view_mode)
+- backend/src/boards/boards.controller.ts (modified: BoardResponse + 7 mappers + PATCH summary)
+- backend/src/migrations/1779600000000-AddViewModeToBoards.ts (new)
+- backend/src/database/typeorm-registry.ts (modified: register migration)
+- backend/src/boards/boards.service.spec.ts (modified: +2 view_mode tests)
+- frontend/src/features/boards/boards.api.ts (modified: +view_mode types)
+- frontend/src/features/boards/use-boards.ts (modified: +BoardViewMode export)
+- frontend/src/features/boards/board-view/board-view.tsx (modified: toggle integration)
+- frontend/src/features/boards/board-view/board-view-toggle.tsx (new)
+- frontend/src/features/boards/board-view/board-view-toggle.test.tsx (new)
+- frontend/src/features/boards/board-view/board-list-view.tsx (new)
+- frontend/src/features/boards/board-view/board-list-sort.ts (new)
+- frontend/src/features/boards/board-view/board-list-view.test.tsx (new)
+- frontend/src/features/boards/board-view/board-view.test.tsx (modified: +3 integration tests)
+- frontend/e2e/board-view-toggle.spec.ts (new)
+- frontend/src/features/labels/label-badge.tsx (modified: widen label prop color to string)

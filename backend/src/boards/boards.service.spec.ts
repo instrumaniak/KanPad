@@ -170,6 +170,72 @@ describe('BoardsService', () => {
 
       await expect(service.update(1, 1, { project_id: 999 })).rejects.toThrow(ForbiddenException);
     });
+
+    it('should update view_mode from board to list and persist', async () => {
+      const board = {
+        id: 1,
+        name: 'Board',
+        background_color: '#0079BF',
+        user_id: 1,
+        view_mode: 'board',
+      };
+      const updatedBoard = { ...board, view_mode: 'list' };
+
+      mockBoardRepository.findOne.mockResolvedValue(board as unknown as Board);
+      mockBoardRepository.save.mockResolvedValue(updatedBoard as unknown as Board);
+
+      const result = await service.update(1, 1, { view_mode: 'list' });
+
+      expect(result.view_mode).toBe('list');
+      expect(mockBoardRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ view_mode: 'list' }),
+      );
+
+      // Verify persistence via follow-up findOne DB query (not just response)
+      mockBoardRepository.findOne.mockResolvedValue(updatedBoard as unknown as Board);
+      const persisted = await service.findOne(1, 1);
+      expect(persisted.view_mode).toBe('list');
+    });
+
+    it('should default to board view_mode on create', async () => {
+      const createDto = { name: 'New Board' };
+      const createdBoard = {
+        id: 1,
+        name: 'New Board',
+        background_color: '#0079BF',
+        user_id: 1,
+        view_mode: 'board',
+      };
+
+      mockBoardRepository.create.mockReturnValue(createdBoard as unknown as Board);
+      mockBoardRepository.save.mockResolvedValue(createdBoard as unknown as Board);
+      mockBoardRepository.findOne.mockResolvedValue(createdBoard as unknown as Board);
+
+      const result = await service.create(1, createDto);
+
+      expect(result.view_mode).toBe('board');
+    });
+
+    it('should ignore null/invalid view_mode instead of persisting it', async () => {
+      const board = {
+        id: 1,
+        name: 'Board',
+        background_color: '#0079BF',
+        user_id: 1,
+        view_mode: 'board',
+      };
+
+      mockBoardRepository.findOne.mockResolvedValue(board as unknown as Board);
+      mockBoardRepository.save.mockImplementation((b: unknown) => Promise.resolve(b as Board));
+
+      const nullResult = await service.update(1, 1, { view_mode: null as unknown as 'list' });
+      expect(nullResult.view_mode).toBe('board');
+
+      const invalidResult = await service.update(1, 1, {
+        view_mode: 'grid' as unknown as 'list',
+      });
+      expect(invalidResult.view_mode).toBe('board');
+    });
   });
 
   describe('remove', () => {

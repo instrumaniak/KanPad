@@ -40,6 +40,10 @@ export class Board {
   @Column({ default: false })
   is_archived!: boolean;
 
+  @ApiProperty({ example: 'board', enum: ['board', 'list'] })
+  @Column({ length: 10, default: 'board' })
+  view_mode!: 'board' | 'list';
+
   @ManyToOne(() => User, (user) => user.boards, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user!: User;

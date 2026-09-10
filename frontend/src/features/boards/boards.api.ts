@@ -8,6 +8,7 @@ interface Board {
   updated_at: string;
   columns?: { id: number; name: string; position: number }[];
   is_archived?: boolean;
+  view_mode?: 'board' | 'list';
 }
 
 interface ApiResponse<T> {
@@ -92,6 +93,7 @@ export interface UpdateBoardData {
   name?: string;
   background_color?: string;
   project_id?: number | null;
+  view_mode?: 'board' | 'list';
 }
 
 export async function updateBoard(id: number, data: UpdateBoardData): Promise<ApiResponse<Board>> {

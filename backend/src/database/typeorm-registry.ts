@@ -20,6 +20,7 @@ import { AddDescriptionAndDueDateToCards1778200000000 } from '../migrations/1778
 import { CreateLabelsAndCardLabelsTables1778300000000 } from '../migrations/1778300000000-CreateLabelsAndCardLabelsTables';
 import { CreateChecklistsAndChecklistItems1779000000000 } from '../migrations/1779000000000-CreateChecklistsAndChecklistItems';
 import { CreateNotesTagsTables1779500000000 } from '../migrations/1779500000000-CreateNotesTagsTables';
+import { AddViewModeToBoards1779600000000 } from '../migrations/1779600000000-AddViewModeToBoards';
 
 /**
  * Explicit registry of TypeORM entities.
@@ -56,4 +57,5 @@ export const migrations = [
   CreateLabelsAndCardLabelsTables1778300000000,
   CreateChecklistsAndChecklistItems1779000000000,
   CreateNotesTagsTables1779500000000,
+  AddViewModeToBoards1779600000000,
 ];

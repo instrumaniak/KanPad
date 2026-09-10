@@ -15,6 +15,8 @@ import {
 
 export type { Board } from './boards.api';
 
+export type BoardViewMode = 'board' | 'list';
+
 export function useBoards(projectId?: number) {
   return useQuery({
     queryKey: ['boards', projectId],

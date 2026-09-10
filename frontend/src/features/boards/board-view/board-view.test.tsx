@@ -47,6 +47,10 @@ vi.mock('../../cards/drag-drop-context', () => ({
   ),
 }));
 
+vi.mock('../../notes/board-notes-sidebar', () => ({
+  BoardNotesSidebar: () => <div data-testid="board-notes-sidebar" />,
+}));
+
 const mockColumn = {
   id: 1,
   name: 'To Do',

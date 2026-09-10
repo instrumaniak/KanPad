@@ -1,6 +1,6 @@
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AppLayout } from './app-layout';
 
 // Mock window.matchMedia for jsdom
@@ -42,8 +42,18 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-function renderWithRouter(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>);
+vi.mock('@/features/notes', () => ({
+  BoardNotesSidebar: ({ boardId }: { boardId: number }) => (
+    <aside role="complementary" data-testid="board-notes-sidebar">
+      Board Notes Sidebar {boardId}
+    </aside>
+  ),
+}));
+
+function renderWithRouter(ui: React.ReactElement, initialEntries?: string[]) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>,
+  );
 }
 
 describe('AppLayout', () => {
@@ -56,53 +66,7 @@ describe('AppLayout', () => {
   it('renders header with app name', () => {
     renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
 
-    expect(screen.getByText('KanbanFlow')).toBeInTheDocument();
-  });
-
-  it('renders sidebar toggle button', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
-
-    const toggleButtons = screen.getAllByLabelText('Toggle sidebar');
-    // One in header (mobile), one in sidebar
-    expect(toggleButtons.length).toBe(2);
-  });
-
-  it('sidebar is collapsed by default', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
-
-    const aside = screen.getByRole('complementary');
-    expect(aside).toHaveClass('w-0');
-  });
-
-  it('toggle expands/collapses sidebar', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
-
-    // Use the sidebar's toggle button (inside the aside)
-    const aside = screen.getByRole('complementary');
-    const sidebarToggle = within(aside).getByLabelText('Toggle sidebar');
-
-    expect(aside).toHaveClass('w-0');
-
-    fireEvent.click(sidebarToggle);
-    expect(aside).toHaveClass('w-[240px]');
-
-    fireEvent.click(sidebarToggle);
-    expect(aside).toHaveClass('w-0');
-  });
-
-  it('collapsed state persists to localStorage', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
-
-    const aside = screen.getByRole('complementary');
-    const sidebarToggle = within(aside).getByLabelText('Toggle sidebar');
-
-    // Expand sidebar
-    fireEvent.click(sidebarToggle);
-    expect(localStorage.getItem('sidebar-collapsed')).toBe('false');
-
-    // Collapse sidebar
-    fireEvent.click(sidebarToggle);
-    expect(localStorage.getItem('sidebar-collapsed')).toBe('true');
+    expect(screen.getByText('KanPad')).toBeInTheDocument();
   });
 
   it('renders user email in header', () => {
@@ -121,5 +85,30 @@ describe('AppLayout', () => {
     renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
 
     expect(screen.getByTestId('outlet')).toBeInTheDocument();
+  });
+
+  it('renders BoardNotesSidebar when boardId is in route', () => {
+    render(
+      <MemoryRouter initialEntries={['/boards/42']}>
+        <Routes>
+          <Route path="/boards/:boardId" element={<AppLayout projectsData={{ data: [], total: 0 }} />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('board-notes-sidebar')).toBeInTheDocument();
+    expect(screen.getByText('Board Notes Sidebar 42')).toBeInTheDocument();
+  });
+
+  it('does not render BoardNotesSidebar when boardId is not in route', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<AppLayout projectsData={{ data: [], total: 0 }} />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId('board-notes-sidebar')).not.toBeInTheDocument();
   });
 });

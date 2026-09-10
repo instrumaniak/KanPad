@@ -25,7 +25,7 @@ export function BoardCard({ board, onEdit, onDelete }: BoardCardProps) {
 
   return (
     <div
-      className="group relative flex h-28 cursor-pointer flex-col justify-between rounded-lg border border-border bg-card p-4 transition-transform hover:scale-[1.02]"
+      className="group relative flex h-28 cursor-pointer flex-col justify-between rounded-lg border border-border bg-card p-4 transition-all hover:scale-[1.02] hover:shadow-sm"
       onClick={() => navigate(`/board/${board.id}`)}
     >
       <div className="flex items-start justify-between">

@@ -59,15 +59,17 @@ export function BoardView() {
         <h1 className="text-xl font-semibold">{boardName}</h1>
       </div>
 
-      <div className="flex-1 overflow-x-auto">
-        <DragDropContext boardId={id}>
-          <div className="flex h-full gap-6 p-6 pb-6">
-            {columns?.map((column) => (
-              <Column key={column.id} column={column} allColumns={columns} />
-            ))}
-            <AddColumnButton onClick={handleAddColumn} />
-          </div>
-        </DragDropContext>
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-x-auto">
+          <DragDropContext boardId={id}>
+            <div className="flex h-full gap-6 p-6 pb-6">
+              {columns?.map((column) => (
+                <Column key={column.id} column={column} allColumns={columns} />
+              ))}
+              <AddColumnButton onClick={handleAddColumn} />
+            </div>
+          </DragDropContext>
+        </div>
       </div>
     </div>
   );

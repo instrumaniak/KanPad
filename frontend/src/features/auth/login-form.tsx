@@ -65,7 +65,7 @@ export function LoginForm() {
     <div className="flex min-h-screen items-center justify-center">
       <div className="mx-auto w-full max-w-md space-y-6 p-6">
         <div className="space-y-2 text-center">
-          <h1 className="text-2xl font-bold">KanbanFlow</h1>
+          <h1 className="text-2xl font-bold">KanPad</h1>
           <p className="text-muted-foreground">Enter your credentials to sign in</p>
         </div>
         <form role="form" onSubmit={handleSubmit} className="space-y-4">

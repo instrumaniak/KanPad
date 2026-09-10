@@ -104,16 +104,14 @@ monitoringTest.describe('Drag and Drop', () => {
 
     await dragCardTo(page, card1Box!, card2Box!);
 
-    await page.waitForTimeout(2000);
-
     await expect(cards.nth(0)).toHaveText(/Card 2/, { timeout: 5000 });
-    await expect(cards.nth(1)).toHaveText(/Card 1/);
+    await expect(cards.nth(1)).toHaveText(/Card 1/, { timeout: 5000 });
 
     await page.reload();
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('networkidle');
     const reloadedCards = page.locator('[data-column-id]').first().locator('div[role="button"][aria-label="Open card details"]');
-    await expect(reloadedCards.nth(0)).toHaveText(/Card 2/);
-    await expect(reloadedCards.nth(1)).toHaveText(/Card 1/);
+    await expect(reloadedCards.nth(0)).toHaveText(/Card 2/, { timeout: 10000 });
+    await expect(reloadedCards.nth(1)).toHaveText(/Card 1/, { timeout: 10000 });
 
     assertNoErrors(monitoring);
   });
@@ -159,15 +157,20 @@ monitoringTest.describe('Drag and Drop', () => {
 
     await dragCardTo(page, cardABox!, cardBBox!);
 
-    await page.waitForTimeout(2000);
-
     await expect(firstColumnCards).toHaveCount(0, { timeout: 5000 });
     await expect(secondColumnCards).toHaveCount(2, { timeout: 5000 });
 
+    // Verify server state via API before reload
+    const verifyRes = await page.request.get(`/api/boards/${boardId}/columns`);
+    const verifyData = await verifyRes.json();
+    const verifyColumns = verifyData.data ?? verifyData;
+    expect(verifyColumns[0].cards).toHaveLength(0);
+    expect(verifyColumns[1].cards).toHaveLength(2);
+
     await page.reload();
-    await page.waitForTimeout(3000);
+    await page.waitForLoadState('networkidle');
     const reloadedSecondColumn = page.locator('[data-column-id]').nth(1).locator('div[role="button"][aria-label="Open card details"]');
-    await expect(reloadedSecondColumn).toHaveCount(2);
+    await expect(reloadedSecondColumn).toHaveCount(2, { timeout: 10000 });
 
     assertNoErrors(monitoring);
   });

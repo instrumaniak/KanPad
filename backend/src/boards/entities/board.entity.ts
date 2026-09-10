@@ -12,6 +12,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../../users/entities/user.entity';
 import { Project } from '../../projects/entities/project.entity';
 import { BoardColumn } from '../../columns/entities/column.entity';
+import { Note } from '../../notes/entities/note.entity';
 
 @Entity('boards')
 export class Board {
@@ -57,4 +58,7 @@ export class Board {
 
   @OneToMany(() => BoardColumn, (column) => column.board)
   columns!: BoardColumn[];
+
+  @OneToMany(() => Note, (note) => note.board, { cascade: true })
+  notes!: Note[];
 }

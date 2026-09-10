@@ -10,9 +10,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import { LogOut, ChevronDown, Moon, Sun, Menu } from 'lucide-react';
+import { LogOut, ChevronDown, Moon, Sun, FileText } from 'lucide-react';
 import { useTheme } from '@/hooks/use-theme';
-import { Sidebar } from './sidebar';
+import { BoardNotesSidebar } from '@/features/notes';
 import { Breadcrumbs } from './breadcrumbs';
 import type { ListResponse, Project } from '@/features/projects/projects.api';
 
@@ -115,16 +115,8 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
     <div className="flex h-screen flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={toggleSidebar}
-            aria-label="Toggle sidebar"
-          >
-            <Menu className="h-4 w-4" />
-          </Button>
           <Link to="/">
-            <h1 className="text-lg font-semibold text-foreground">KanbanFlow</h1>
+            <h1 className="text-lg font-semibold text-foreground">KanPad</h1>
           </Link>
         </div>
 
@@ -137,6 +129,13 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
         </div>
 
         <div className="flex items-center gap-1">
+          <Link
+            to="/notes"
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-foreground transition-colors hover:text-foreground"
+          >
+            <FileText className="h-4 w-4" />
+            Notes
+          </Link>
           <Button variant="ghost" size="icon-sm" onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
@@ -161,13 +160,13 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          collapsed={collapsed}
-          onToggle={toggleSidebar}
-          projects={(projectsData?.data ?? []).map((p) => ({ id: String(p.id), name: p.name }))}
-          activeProjectId={projectId}
-          onProjectClick={(id) => navigate(`/projects/${id}`)}
-        />
+        {boardId && (
+          <BoardNotesSidebar
+            boardId={Number(boardId)}
+            collapsed={collapsed}
+            onToggle={toggleSidebar}
+          />
+        )}
         <main className="flex-1 overflow-y-auto bg-background p-6">
           <Outlet />
         </main>

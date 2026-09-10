@@ -24,7 +24,7 @@ test.describe('App shell & navigation', () => {
   });
 
   test('renders header with app name', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'KanbanFlow' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'KanPad' })).toBeVisible();
   });
 
   test('renders user email in header', async ({ page }) => {

@@ -48,7 +48,7 @@ describe('LoginForm', () => {
   it('renders the form with correct structure', () => {
     render(<LoginForm />, { wrapper: createWrapper() });
 
-    expect(screen.getByText(/KanbanFlow/i)).toBeInTheDocument();
+    expect(screen.getByText(/KanPad/i)).toBeInTheDocument();
     expect(screen.getByText(/enter your credentials to sign in/i)).toBeInTheDocument();
   });
 

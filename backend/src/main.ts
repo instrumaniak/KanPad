@@ -55,7 +55,7 @@ async function bootstrap() {
   });
 
   const config = new DocumentBuilder()
-    .setTitle('KanbanFlow API')
+    .setTitle('KanPad API')
     .setVersion('0.0.1')
     .addCookieAuth('connect.sid', {
       type: 'apiKey',

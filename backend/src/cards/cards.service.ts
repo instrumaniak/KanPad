@@ -78,11 +78,6 @@ export class CardsService {
         await cardRepo.update(id, { due_date: dto.due_date ? new Date(dto.due_date) : null });
       }
 
-      if (dto.column_id !== undefined) {
-        await this.findColumnById(dto.column_id, userId);
-        await cardRepo.update(id, { column_id: dto.column_id });
-      }
-
       if (dto.position !== undefined) {
         const targetColumnId = dto.column_id ?? oldColumnId;
         const newPosition = dto.position;
@@ -96,6 +91,11 @@ export class CardsService {
           await this.insertIntoColumn(targetColumnId, targetPosition, manager);
         }
         await cardRepo.update(id, { position: dto.position });
+      }
+
+      if (dto.column_id !== undefined) {
+        await this.findColumnById(dto.column_id, userId);
+        await cardRepo.update(id, { column_id: dto.column_id });
       }
     });
 

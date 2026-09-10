@@ -24,18 +24,25 @@ export default defineConfig({
     },
   },
   build: {
+    chunkSizeWarningLimit: 800,
     rolldownOptions: {
       output: {
         codeSplitting: {
           groups: [
             {
-              test: /node_modules\/(react|react-dom|scheduler)/,
+              test: /node_modules[\\/]mermaid/,
+              name: 'vendor-mermaid',
+              priority: 30,
+            },
+            {
+              test: /node_modules[\\/]react(?:-dom|-compiler)?/,
               name: 'vendor-react',
               priority: 20,
             },
             {
               test: /node_modules/,
               name: 'vendor',
+              minSize: 50000,
               priority: 10,
             },
             {

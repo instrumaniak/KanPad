@@ -14,6 +14,8 @@ import { ColumnsModule } from './columns/columns.module';
 import { CardsModule } from './cards/cards.module';
 import { LabelsModule } from './labels/labels.module';
 import { ChecklistsModule } from './checklists/checklists.module';
+import { NotesModule } from './notes/notes.module';
+import { TagsModule } from './tags/tags.module';
 import { buildDataSourceOptions } from './database/data-source-options';
 
 @Module({
@@ -40,6 +42,8 @@ import { buildDataSourceOptions } from './database/data-source-options';
     CardsModule,
     LabelsModule,
     ChecklistsModule,
+    NotesModule,
+    TagsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

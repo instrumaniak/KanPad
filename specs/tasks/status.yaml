@@ -1,0 +1,19 @@
+tasks:
+  T001:
+    name: change project name
+    status: done
+    depends: ~
+    phase: 0
+    critical: false
+  T002:
+    name: npm workspace
+    status: pending
+    depends: ~
+    phase: 0
+    critical: false
+  T003:
+    name: streamlined release workflow
+    status: pending
+    depends: ~
+    phase: 0
+    critical: false

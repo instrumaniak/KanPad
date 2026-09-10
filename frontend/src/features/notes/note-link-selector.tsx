@@ -38,8 +38,8 @@ export function NoteLinkSelector({
 
   const boards = boardsData?.data ?? [];
   const projects = projectsData?.data ?? [];
-  const columns = columnsData ?? [];
-  const cards = useMemo(() => columns.flatMap((col) => col.cards ?? []), [columns]);
+  const columnsDataSafe = useMemo(() => columnsData ?? [], [columnsData]);
+  const cards = useMemo(() => columnsDataSafe.flatMap((col) => col.cards ?? []), [columnsDataSafe]);
 
   const selectedBoard = boards.find((b) => b.id === linkBoardId);
   const selectedProject = projects.find((p) => p.id === linkProjectId);
@@ -219,7 +219,7 @@ export function NoteLinkSelector({
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground px-2 py-4 text-center">
-                    {columns.length === 0 ? 'No columns on this board' : 'No cards found'}
+                    {columnsDataSafe.length === 0 ? 'No columns on this board' : 'No cards found'}
                   </p>
                 )
               )}

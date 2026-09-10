@@ -5,7 +5,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from '@/components/ui/toast-provider';
 
 const mockUseNote = vi.fn();
-const mockNavigate = vi.fn();
 
 vi.mock('./use-notes', () => ({
   useNote: (id: number) => mockUseNote(id),

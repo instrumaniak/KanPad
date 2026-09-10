@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { BoardView } from './board-view';
 
 const mockNavigate = vi.fn();
@@ -9,9 +9,10 @@ const mockUseColumns = vi.fn();
 const mockMutateAsync = vi.fn();
 const mockToast = vi.fn();
 const mockUpdateMutate = vi.fn();
+let mockBoardId = '1';
 
 vi.mock('react-router-dom', () => ({
-  useParams: () => ({ boardId: '1' }),
+  useParams: () => ({ boardId: mockBoardId }),
   useNavigate: () => mockNavigate,
 }));
 
@@ -30,8 +31,22 @@ vi.mock('@/components/ui/use-toast', () => ({
 }));
 
 vi.mock('../../columns/column', () => ({
-  Column: ({ column }: { column: { id: number; name: string } }) => (
-    <div data-testid={`column-${column.id}`}>{column.name}</div>
+  Column: ({
+    column,
+    allColumns,
+  }: {
+    column: { id: number; name: string; cards?: { id: number; title: string }[] };
+    allColumns?: unknown;
+  }) => (
+    <div
+      data-testid={`column-${column.id}`}
+      data-all-columns={Array.isArray(allColumns) ? allColumns.length : 0}
+    >
+      {column.name}
+      {(column.cards ?? []).map((c) => (
+        <span key={c.id}>{c.title}</span>
+      ))}
+    </div>
   ),
 }));
 
@@ -60,7 +75,15 @@ vi.mock('../../cards/use-cards', () => ({
 }));
 
 vi.mock('./board-list-view', () => ({
-  BoardListView: () => <div data-testid="board-list-view" />,
+  BoardListView: ({ columns }: { columns: { cards?: { title: string }[] }[] }) => (
+    <div data-testid="board-list-view">
+      {(columns ?? [])
+        .flatMap((c) => c.cards ?? [])
+        .map((card, i) => (
+          <span key={i}>{card.title}</span>
+        ))}
+    </div>
+  ),
 }));
 
 const mockColumn = {
@@ -87,8 +110,13 @@ const mockBoardResponse = {
 describe('BoardView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBoardId = '1';
     mockUseBoard.mockReturnValue({ isLoading: false, data: mockBoardResponse });
     mockUseColumns.mockReturnValue({ isLoading: false, data: [mockColumn] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('shows loading when board is loading', () => {
@@ -211,8 +239,7 @@ describe('BoardView', () => {
       expect(mockUpdateMutate).toHaveBeenCalled();
     });
     const onError = mockUpdateMutate.mock.calls[0][1]?.onError as
-      | ((err: Error) => void)
-      | undefined;
+      ((err: Error) => void) | undefined;
     expect(onError).toBeDefined();
     onError?.(new Error('Network fail'));
     await waitFor(() => {
@@ -224,5 +251,136 @@ describe('BoardView', () => {
     expect(mockToast).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Failed to save view' }),
     );
+  });
+
+  describe('card search', () => {
+    const searchColumns = [
+      {
+        ...mockColumn,
+        id: 1,
+        name: 'To Do',
+        cards: [
+          {
+            id: 101,
+            title: 'Alpha task',
+            column_id: 1,
+            position: 0,
+            due_date: null,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+          {
+            id: 102,
+            title: 'Beta task',
+            column_id: 1,
+            position: 1,
+            due_date: null,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+        ],
+      },
+      {
+        ...mockColumn,
+        id: 2,
+        name: 'Done',
+        cards: [
+          {
+            id: 201,
+            title: 'Zulu task',
+            column_id: 2,
+            position: 0,
+            due_date: null,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+        ],
+      },
+    ];
+
+    function renderWithSearchData() {
+      mockUseColumns.mockReturnValue({ isLoading: false, data: searchColumns });
+      vi.useFakeTimers();
+      render(<BoardView />);
+    }
+
+    function typeSearch(value: string) {
+      fireEvent.change(screen.getByLabelText('Search cards'), { target: { value } });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+    }
+
+    it('renders search input in header', () => {
+      renderWithSearchData();
+      expect(screen.getByRole('search')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search cards')).toBeInTheDocument();
+    });
+
+    it('filters cards when typing 2+ chars and restores on clear', () => {
+      renderWithSearchData();
+      typeSearch('Al');
+      expect(screen.getByText('Alpha task')).toBeInTheDocument();
+      expect(screen.queryByText('Beta task')).not.toBeInTheDocument();
+      expect(screen.queryByText('Zulu task')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Clear search'));
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.getByText('Beta task')).toBeInTheDocument();
+      expect(screen.getByText('Zulu task')).toBeInTheDocument();
+    });
+
+    it('shows all cards for 1-char query', () => {
+      renderWithSearchData();
+      typeSearch('A');
+      expect(screen.getByText('Alpha task')).toBeInTheDocument();
+      expect(screen.getByText('Beta task')).toBeInTheDocument();
+      expect(screen.getByText('Zulu task')).toBeInTheDocument();
+    });
+
+    it('shows empty state with Clear search on zero matches and resets', () => {
+      renderWithSearchData();
+      typeSearch('zzz-no-match');
+      expect(screen.getByText('No cards found')).toBeInTheDocument();
+      fireEvent.click(screen.getByText('Clear search'));
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.getByText('Alpha task')).toBeInTheDocument();
+      expect(screen.queryByText('No cards found')).not.toBeInTheDocument();
+    });
+
+    it('debounces filtering by 300ms', () => {
+      renderWithSearchData();
+      fireEvent.change(screen.getByLabelText('Search cards'), { target: { value: 'Al' } });
+      // Before debounce fires, all cards still visible
+      expect(screen.getByText('Beta task')).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.queryByText('Beta task')).not.toBeInTheDocument();
+    });
+
+    it('preserves search when toggling board/list view', () => {
+      renderWithSearchData();
+      typeSearch('Beta');
+      fireEvent.click(screen.getByRole('button', { name: /list/i }));
+      expect(screen.getByTestId('board-list-view')).toHaveTextContent('Beta task');
+      expect(screen.getByTestId('board-list-view')).not.toHaveTextContent('Alpha task');
+      expect(screen.getByLabelText('Search cards')).toHaveValue('Beta');
+    });
+
+    it('resets search on boardId change', () => {
+      mockUseColumns.mockReturnValue({ isLoading: false, data: searchColumns });
+      vi.useFakeTimers();
+      const { rerender } = render(<BoardView />);
+      typeSearch('Beta');
+      expect(screen.queryByText('Alpha task')).not.toBeInTheDocument();
+      mockBoardId = '2';
+      rerender(<BoardView />);
+      expect(screen.getByLabelText('Search cards')).toHaveValue('');
+      expect(screen.getByText('Alpha task')).toBeInTheDocument();
+    });
   });
 });

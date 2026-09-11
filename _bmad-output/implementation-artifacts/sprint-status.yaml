@@ -35,8 +35,8 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-03-19T19:27:21.000Z
-last_updated: 2026-09-10T00:00:00.000Z
-project: trello-clone
+last_updated: 2026-09-11T00:00:00.000Z
+project: kanpad
 project_key: NOKEY
 tracking_system: file-system
 story_location: '{project-root}/_bmad-output/implementation-artifacts'
@@ -87,7 +87,7 @@ development_status:
   # Epic 5: Search, Filter & Visual Polish
   epic-5: in-progress
   5-1-card-search: done
-  5-2-card-filtering: backlog
+  5-2-card-filtering: ready-for-dev
   5-3-dark-mode: backlog
   5-4-responsive-layout: backlog
   5-5-loading-states-error-handling: backlog

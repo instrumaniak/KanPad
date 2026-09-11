@@ -86,6 +86,106 @@ vi.mock('./board-list-view', () => ({
   ),
 }));
 
+vi.mock('./filter-dropdown', () => ({
+  FilterDropdown: ({
+    filters,
+    onFiltersChange,
+  }: {
+    filters: { labels: string[]; dueDate: string | null; checklist: string };
+    onFiltersChange: (f: { labels: string[]; dueDate: string | null; checklist: string }) => void;
+  }) => (
+    <div data-testid="filter-dropdown">
+      <button
+        data-testid="filter-label-red"
+        onClick={() =>
+          onFiltersChange({
+            ...filters,
+            labels: filters.labels.includes('Red')
+              ? filters.labels.filter((l: string) => l !== 'Red')
+              : [...filters.labels, 'Red'],
+          })
+        }
+      >
+        Toggle Red
+      </button>
+      <button
+        data-testid="filter-due-overdue"
+        onClick={() =>
+          onFiltersChange({
+            ...filters,
+            dueDate: filters.dueDate === 'Overdue' ? null : 'Overdue',
+          })
+        }
+      >
+        Set Overdue
+      </button>
+      <button
+        data-testid="filter-checklist-complete"
+        onClick={() =>
+          onFiltersChange({ ...filters, checklist: 'Complete' })
+        }
+      >
+        Set Complete
+      </button>
+      <button
+        data-testid="filter-checklist-incomplete"
+        onClick={() =>
+          onFiltersChange({ ...filters, checklist: 'Incomplete' })
+        }
+      >
+        Set Incomplete
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock('./filter-chips', () => ({
+  FilterChips: ({
+    filters,
+    onClearFilter,
+    onClearAll,
+  }: {
+    filters: { labels: string[]; dueDate: string | null; checklist: string };
+    onClearFilter: (type: 'labels' | 'dueDate' | 'checklist') => void;
+    onClearAll: () => void;
+  }) => {
+    const hasFilters =
+      filters.labels.length > 0 || filters.dueDate !== null || filters.checklist !== 'All';
+    if (!hasFilters) return null;
+    return (
+      <div data-testid="filter-chips">
+        <span data-testid="filter-chips-text">
+          {filters.labels.length > 0 && `Labels: ${filters.labels.join(', ')}`}
+          {filters.dueDate && ` Due: ${filters.dueDate}`}
+          {filters.checklist !== 'All' && ` Checklist: ${filters.checklist}`}
+        </span>
+        {filters.labels.length > 0 && (
+          <button data-testid="clear-label-chip" onClick={() => onClearFilter('labels')}>
+            Clear labels
+          </button>
+        )}
+        {filters.dueDate && (
+          <button data-testid="clear-due-chip" onClick={() => onClearFilter('dueDate')}>
+            Clear due
+          </button>
+        )}
+        {filters.checklist !== 'All' && (
+          <button data-testid="clear-checklist-chip" onClick={() => onClearFilter('checklist')}>
+            Clear checklist
+          </button>
+        )}
+        <button data-testid="clear-all-filters" onClick={onClearAll}>
+          Clear all
+        </button>
+      </div>
+    );
+  },
+}));
+
+vi.mock('../../labels/use-labels', () => ({
+  useLabels: () => ({ data: [{ name: 'Red', color: 'red' }, { name: 'Blue', color: 'blue' }] }),
+}));
+
 const mockColumn = {
   id: 1,
   name: 'To Do',
@@ -381,6 +481,201 @@ describe('BoardView', () => {
       rerender(<BoardView />);
       expect(screen.getByLabelText('Search cards')).toHaveValue('');
       expect(screen.getByText('Alpha task')).toBeInTheDocument();
+    });
+  });
+
+  describe('card filtering', () => {
+    const filterColumns = [
+      {
+        ...mockColumn,
+        id: 1,
+        name: 'To Do',
+        cards: [
+          {
+            id: 101,
+            title: 'Red card',
+            column_id: 1,
+            position: 0,
+            due_date: null,
+            labels: [{ id: 1, name: 'Red', color: 'red' }],
+            checklist_progress: { completed: 1, total: 3, percent: 33 },
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+          {
+            id: 102,
+            title: 'Blue card',
+            column_id: 1,
+            position: 1,
+            due_date: null,
+            labels: [{ id: 2, name: 'Blue', color: 'blue' }],
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+        ],
+      },
+    ];
+
+    function renderWithFilterData() {
+      mockUseColumns.mockReturnValue({ isLoading: false, data: filterColumns });
+      render(<BoardView />);
+    }
+
+    it('renders filter button in header', () => {
+      renderWithFilterData();
+      expect(screen.getByTestId('filter-dropdown')).toBeInTheDocument();
+    });
+
+    it('renders filter chips when filters are active', () => {
+      renderWithFilterData();
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      expect(screen.getByTestId('filter-chips')).toBeInTheDocument();
+      expect(screen.getByTestId('filter-chips-text')).toHaveTextContent('Labels: Red');
+    });
+
+    it('clears all filters via Clear all button', () => {
+      renderWithFilterData();
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      expect(screen.getByTestId('filter-chips')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('clear-all-filters'));
+      expect(screen.queryByTestId('filter-chips')).not.toBeInTheDocument();
+    });
+
+    it('filters cards by label and shows empty state', () => {
+      renderWithFilterData();
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      expect(screen.getByText('Red card')).toBeInTheDocument();
+      expect(screen.queryByText('Blue card')).not.toBeInTheDocument();
+    });
+
+    it('shows empty state with Clear filters when all cards filtered out', () => {
+      renderWithFilterData();
+      // Set a label filter that no card has
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      // Then switch to a filter that eliminates all
+      fireEvent.click(screen.getByTestId('filter-checklist-complete'));
+      expect(screen.getByText('No cards found')).toBeInTheDocument();
+      expect(screen.getByText('Clear filters')).toBeInTheDocument();
+    });
+
+    it('composes search and filter independently', () => {
+      mockUseColumns.mockReturnValue({ isLoading: false, data: filterColumns });
+      vi.useFakeTimers();
+      render(<BoardView />);
+      // Apply label filter
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      // Type search
+      fireEvent.change(screen.getByLabelText('Search cards'), { target: { value: 'Red' } });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.getByText('Red card')).toBeInTheDocument();
+      expect(screen.queryByText('Blue card')).not.toBeInTheDocument();
+    });
+
+    it('resets filters on board change', () => {
+      mockUseColumns.mockReturnValue({ isLoading: false, data: filterColumns });
+      const { rerender } = render(<BoardView />);
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      expect(screen.getByTestId('filter-chips')).toBeInTheDocument();
+      mockBoardId = '2';
+      rerender(<BoardView />);
+      expect(screen.queryByTestId('filter-chips')).not.toBeInTheDocument();
+    });
+
+    it('clears individual label chip while keeping other filters', () => {
+      renderWithFilterData();
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      fireEvent.click(screen.getByTestId('filter-due-overdue'));
+      expect(screen.getByTestId('filter-chips-text')).toHaveTextContent('Labels: Red');
+      expect(screen.getByTestId('filter-chips-text')).toHaveTextContent('Due: Overdue');
+      fireEvent.click(screen.getByTestId('clear-label-chip'));
+      expect(screen.queryByTestId('clear-label-chip')).not.toBeInTheDocument();
+      expect(screen.getByTestId('clear-due-chip')).toBeInTheDocument();
+    });
+
+    it('filters by due date (Overdue) independently', () => {
+      const pastDate = new Date();
+      pastDate.setDate(pastDate.getDate() - 2);
+      const dueDateColumns = [
+        {
+          ...mockColumn,
+          id: 1,
+          name: 'To Do',
+          cards: [
+            {
+              id: 101,
+              title: 'Overdue task',
+              column_id: 1,
+              position: 0,
+              due_date: pastDate.toISOString(),
+              created_at: '2024-01-01',
+              updated_at: '2024-01-01',
+            },
+            {
+              id: 102,
+              title: 'No date task',
+              column_id: 1,
+              position: 1,
+              due_date: null,
+              created_at: '2024-01-01',
+              updated_at: '2024-01-01',
+            },
+          ],
+        },
+      ];
+      mockUseColumns.mockReturnValue({ isLoading: false, data: dueDateColumns });
+      render(<BoardView />);
+      fireEvent.click(screen.getByTestId('filter-due-overdue'));
+      expect(screen.getByText('Overdue task')).toBeInTheDocument();
+      expect(screen.queryByText('No date task')).not.toBeInTheDocument();
+    });
+
+    it('filters by checklist (Complete) independently', () => {
+      const checklistColumns = [
+        {
+          ...mockColumn,
+          id: 1,
+          name: 'To Do',
+          cards: [
+            {
+              id: 101,
+              title: 'Complete task',
+              column_id: 1,
+              position: 0,
+              due_date: null,
+              checklist_progress: { completed: 3, total: 3, percent: 100 },
+              created_at: '2024-01-01',
+              updated_at: '2024-01-01',
+            },
+            {
+              id: 102,
+              title: 'Incomplete task',
+              column_id: 1,
+              position: 1,
+              due_date: null,
+              checklist_progress: { completed: 1, total: 3, percent: 33 },
+              created_at: '2024-01-01',
+              updated_at: '2024-01-01',
+            },
+          ],
+        },
+      ];
+      mockUseColumns.mockReturnValue({ isLoading: false, data: checklistColumns });
+      render(<BoardView />);
+      fireEvent.click(screen.getByTestId('filter-checklist-complete'));
+      expect(screen.getByText('Complete task')).toBeInTheDocument();
+      expect(screen.queryByText('Incomplete task')).not.toBeInTheDocument();
+    });
+
+    it('applies multiple filters simultaneously (intersection)', () => {
+      renderWithFilterData();
+      // Red card: labels=[Red], checklist_progress={completed:1, total:3}
+      // Blue card: labels=[Blue], no checklist
+      fireEvent.click(screen.getByTestId('filter-label-red'));
+      fireEvent.click(screen.getByTestId('filter-checklist-incomplete'));
+      expect(screen.getByText('Red card')).toBeInTheDocument();
+      expect(screen.queryByText('Blue card')).not.toBeInTheDocument();
     });
   });
 });

@@ -87,7 +87,7 @@ development_status:
   # Epic 5: Search, Filter & Visual Polish
   epic-5: in-progress
   5-1-card-search: done
-  5-2-card-filtering: ready-for-dev
+  5-2-card-filtering: done
   5-3-dark-mode: backlog
   5-4-responsive-layout: backlog
   5-5-loading-states-error-handling: backlog

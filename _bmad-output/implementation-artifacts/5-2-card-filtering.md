@@ -1,6 +1,6 @@
 # Story 5.2: Card Filtering
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -39,29 +39,29 @@ so that I can focus on specific subsets of my work.
 
 ## Tasks / Subtasks
 
-- [ ] Frontend: Create filter dropdown component (`filter-dropdown.tsx`) (AC: #1)
-  - [ ] Render filter icon in `BoardView` header next to search
-  - [ ] Dropdown with 3 sections: Labels, Due Date, Checklist
-  - [ ] A11y sub-task: `aria-expanded` on trigger button; `aria-controls` linking dropdown panel; keyboard arrow + Escape navigation; focus trap when open (`focus-trap` or custom `useEffect` focus management)
-  - [ ] Labels: multi-select toggle chips; query cards by `card.labels[]` (AND logic — card must have ALL selected labels)
-  - [ ] Due Date: single-select options (`Overdue`, `Today`, `This Week`, `No Date`); derive from `card.due_date`
-  - [ ] Checklist: single-select (`All`, `With Checklist`, `Complete`, `Incomplete`); derive from `card.checklists[].items[].completed`
-- [ ] Frontend: Create filter chip bar (`filter-chips.tsx`) (AC: #5)
-  - [ ] Props: `{ filters: FilterState; onClearFilter: (type: FilterType, value: string) => void; onClearAll: () => void }`
-  - [ ] Show active filters as removable chips (`LabelBadge` style)
-  - [ ] `"Clear all"` button (`Button` from `components/ui/button`) resets all filters
-- [ ] Integration: Compose filters with existing `filteredColumns` (AC: #2-#4)
-   - [ ] Define `FilterState`: `{ labels: string[]; dueDate: 'Overdue' | 'Today' | 'This Week' | 'No Date' | null; checklist: 'All' | 'With Checklist' | 'Complete' | 'Incomplete' }` (default: `{ labels: [], dueDate: null, checklist: 'All' }`)
-   - [ ] Define `filterColumnsByFilters(columns: Column[], filters: FilterState): Column[]` — sequential composition in order: labels first (AND logic, narrowest), then due date equality, then checklist derivation
-  - [ ] Add `// 5-2: compose filterColumnsByFilters here` in `board-view.tsx`
-  - [ ] Derive `filteredColumns` by applying label + due + checklist filters sequentially
-  - [ ] Preserve `allColumns` prop for column picker (same as 5-1)
-- [ ] Tests: Unit tests for filter logic (AC: #2-#4)
-  - [ ] Label multi-select; due date selection; checklist selection
-  - [ ] Empty results show "No cards found" + Clear filters
-- [ ] Tests: Update `board-view.test.tsx` (AC: #1-#5)
-  - [ ] Filter dropdown opens; chips render; clear all works
-  - [ ] Empty-state test mapping (AC: #5): when `filteredColumns` empty after filter → assert `"No cards found"` block + `"Clear filters"` button renders; click `"Clear filters"` → assert `filteredColumns` restored to full `columns`; assert `search` state preserved (independent)
+- [x] Frontend: Create filter dropdown component (`filter-dropdown.tsx`) (AC: #1)
+  - [x] Render filter icon in `BoardView` header next to search
+  - [x] Dropdown with 3 sections: Labels, Due Date, Checklist
+  - [x] A11y sub-task: `aria-expanded` on trigger button; `aria-controls` linking dropdown panel; keyboard arrow + Escape navigation; focus trap when open (`focus-trap` or custom `useEffect` focus management)
+  - [x] Labels: multi-select toggle chips; query cards by `card.labels[]` (AND logic — card must have ALL selected labels)
+  - [x] Due Date: single-select options (`Overdue`, `Today`, `This Week`, `No Date`); derive from `card.due_date`
+  - [x] Checklist: single-select (`All`, `With Checklist`, `Complete`, `Incomplete`); derive from `card.checklists[].items[].completed`
+- [x] Frontend: Create filter chip bar (`filter-chips.tsx`) (AC: #5)
+  - [x] Props: `{ filters: FilterState; onClearFilter: (type: FilterType, value: string) => void; onClearAll: () => void }`
+  - [x] Show active filters as removable chips (`LabelBadge` style)
+  - [x] `"Clear all"` button (`Button` from `components/ui/button`) resets all filters
+- [x] Integration: Compose filters with existing `filteredColumns` (AC: #2-#4)
+   - [x] Define `FilterState`: `{ labels: string[]; dueDate: 'Overdue' | 'Today' | 'This Week' | 'No Date' | null; checklist: 'All' | 'With Checklist' | 'Complete' | 'Incomplete' }` (default: `{ labels: [], dueDate: null, checklist: 'All' }`)
+   - [x] Define `filterColumnsByFilters(columns: Column[], filters: FilterState): Column[]` — sequential composition in order: labels first (AND logic, narrowest), then due date equality, then checklist derivation
+  - [x] Add `// 5-2: compose filterColumnsByFilters here` in `board-view.tsx`
+  - [x] Derive `filteredColumns` by applying label + due + checklist filters sequentially
+  - [x] Preserve `allColumns` prop for column picker (same as 5-1)
+- [x] Tests: Unit tests for filter logic (AC: #2-#4)
+  - [x] Label multi-select; due date selection; checklist selection
+  - [x] Empty results show "No cards found" + Clear filters
+- [x] Tests: Update `board-view.test.tsx` (AC: #1-#5)
+  - [x] Filter dropdown opens; chips render; clear all works
+  - [x] Empty-state test mapping (AC: #5): when `filteredColumns` empty after filter → assert `"No cards found"` block + `"Clear filters"` button renders; click `"Clear filters"` → assert `filteredColumns` restored to full `columns`; assert `search` state preserved (independent)
 
 ## Dev Notes
 
@@ -178,8 +178,17 @@ None — no errors detected.
 - Edge cases documented: multi-label AND logic, due date derivation rules, checklist state derivation, filter+search independence, board-change reset, zero-card empty state
 - Accessibility noted: dropdown keyboard navigation, chip clear labels, focus management
 - Read-only mode lifted; file written; sprint status updated
+- Implemented: filter utility, filter dropdown, filter chips, board-view integration, unit tests, board-view tests
+- Adapted checklist filter to use `checklist_progress` (columns endpoint returns summary, not full checklist data)
+- All 584 tests passing, TypeScript clean, ESLint clean
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/5-2-card-filtering.md` (new)
 - `_bmad-output/implementation-artifacts/sprint-status.yaml` (updated)
+- `frontend/src/features/boards/board-view/filter-columns-by-filters.ts` (new)
+- `frontend/src/features/boards/board-view/filter-columns-by-filters.test.ts` (new)
+- `frontend/src/features/boards/board-view/filter-dropdown.tsx` (new)
+- `frontend/src/features/boards/board-view/filter-chips.tsx` (new)
+- `frontend/src/features/boards/board-view/board-view.tsx` (modified)
+- `frontend/src/features/boards/board-view/board-view.test.tsx` (modified)

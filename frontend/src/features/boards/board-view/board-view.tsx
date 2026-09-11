@@ -12,6 +12,10 @@ import { BoardViewToggle } from './board-view-toggle';
 import { BoardListView } from './board-list-view';
 import { CardSearchInput } from './card-search-input';
 import { filterColumnsByTitle } from './filter-cards-by-title';
+import { FilterDropdown } from './filter-dropdown';
+import { FilterChips } from './filter-chips';
+import { useLabels } from '../../labels/use-labels';
+import { DEFAULT_FILTER_STATE, type FilterState, filterColumnsByFilters } from './filter-columns-by-filters';
 
 export function BoardView() {
   const { boardId } = useParams<{ boardId: string }>();
@@ -20,6 +24,7 @@ export function BoardView() {
 
   const { data: boardResponse, isLoading: boardLoading } = useBoard(id);
   const { data: columns, isLoading: columnsLoading } = useColumns(id);
+  const { data: allLabels } = useLabels();
 
   const board = boardResponse?.data;
   const boardName = boardResponse?.data?.name;
@@ -30,6 +35,7 @@ export function BoardView() {
   const [view, setView] = useState<BoardViewMode>('board');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTER_STATE);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollRef = useRef<{ board: number; list: number }>({ board: 0, list: 0 });
   const boardScrollRef = useRef<HTMLDivElement>(null);
@@ -78,19 +84,26 @@ export function BoardView() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSearch('');
     setDebouncedSearch('');
+    setFilters(DEFAULT_FILTER_STATE);
   }, [id]);
 
   const activeQuery = debouncedSearch.trim();
   const isSearching = activeQuery.length >= 2;
+  const hasActiveFilters = filters.labels.length > 0 || filters.dueDate !== null || filters.checklist !== 'All';
   // 5-2: compose filterColumnsByFilters here (single derivation point).
-  const filteredColumns = useMemo(
-    () => (isSearching ? filterColumnsByTitle(columns ?? [], activeQuery) : (columns ?? [])),
-    [columns, activeQuery, isSearching],
-  );
+  const filteredColumns = useMemo(() => {
+    let result = columns ?? [];
+    if (isSearching) result = filterColumnsByTitle(result, activeQuery);
+    if (hasActiveFilters) result = filterColumnsByFilters(result, filters);
+    return result;
+  }, [columns, activeQuery, isSearching, hasActiveFilters, filters]);
   const visibleCount = filteredColumns.flatMap((c) => c.cards ?? []).length;
   const totalCount = (columns ?? []).flatMap((c) => c.cards ?? []).length;
+  const isFilteredEmpty =
+    !boardLoading && !columnsLoading && !!board && hasActiveFilters && filteredColumns.every((c) => (c.cards ?? []).length === 0);
   const isSearchEmpty =
     !boardLoading && !columnsLoading && !!board && isSearching && filteredColumns.every((c) => (c.cards ?? []).length === 0);
+  const isEmpty = isSearchEmpty || isFilteredEmpty;
 
   const getListScroller = (): Element | null =>
     listScrollRef.current?.querySelector('[data-testid="board-list-scroll"]') ?? null;
@@ -171,6 +184,11 @@ export function BoardView() {
             onChange={handleSearchChange}
             onClear={handleClearSearch}
           />
+          <FilterDropdown
+            filters={filters}
+            onFiltersChange={setFilters}
+            availableLabels={allLabels ?? []}
+          />
           <BoardViewToggle
             value={view}
             onChange={handleViewChange}
@@ -178,20 +196,40 @@ export function BoardView() {
           />
         </div>
       </div>
+      <FilterChips
+        filters={filters}
+        onClearFilter={(type) => {
+          if (type === 'labels') setFilters((prev) => ({ ...prev, labels: [] }));
+          else if (type === 'dueDate') setFilters((prev) => ({ ...prev, dueDate: null }));
+          else if (type === 'checklist') setFilters((prev) => ({ ...prev, checklist: 'All' }));
+        }}
+        onClearAll={() => setFilters(DEFAULT_FILTER_STATE)}
+      />
       <p aria-live="polite" className="sr-only">
-        {isSearching ? `${visibleCount} of ${totalCount} cards` : ''}
+        {isSearching || hasActiveFilters ? `${visibleCount} of ${totalCount} cards` : ''}
       </p>
 
       <div className="transition-opacity duration-300 animate-in fade-in motion-safe:animate-in motion-safe:fade-in">
-        {isSearchEmpty ? (
+        {isEmpty ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16">
             <h2 className="text-lg font-semibold">No cards found</h2>
             <p className="text-sm text-muted-foreground">
-              No cards match your search. Try a different term or clear the search.
+              {isSearchEmpty
+                ? 'No cards match your search. Try a different term or clear the search.'
+                : 'No cards match your filters. Try different filters or clear them.'}
             </p>
-            <Button variant="secondary" onClick={handleClearSearch}>
-              Clear search
-            </Button>
+            <div className="flex gap-2">
+              {isSearchEmpty && (
+                <Button variant="secondary" onClick={handleClearSearch}>
+                  Clear search
+                </Button>
+              )}
+              {isFilteredEmpty && (
+                <Button variant="secondary" onClick={() => setFilters(DEFAULT_FILTER_STATE)}>
+                  Clear filters
+                </Button>
+              )}
+            </div>
           </div>
         ) : view === 'board' ? (
           <div className="flex flex-1 overflow-hidden">

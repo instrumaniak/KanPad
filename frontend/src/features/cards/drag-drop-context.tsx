@@ -59,7 +59,7 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     }),
     useSensor(TouchSensor, {
       activationConstraint: {
-        delay: 300,
+        delay: 500,
         tolerance: 5,
       },
     }),
@@ -243,7 +243,7 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
       {createPortal(
         <DragOverlay dropAnimation={dropAnimation}>
           {activeCard ? (
-            <div className="rounded border bg-card p-3 text-sm shadow-xl opacity-90 scale-105 cursor-grabbing w-[280px]">
+            <div className="rounded border bg-card p-3 text-sm shadow-xl opacity-90 scale-105 cursor-grabbing w-full max-w-[280px]">
               <CardPreview card={activeCard} />
             </div>
           ) : null}

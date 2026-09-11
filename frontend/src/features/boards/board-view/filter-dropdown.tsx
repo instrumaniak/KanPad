@@ -65,7 +65,7 @@ export function FilterDropdown({ filters, onFiltersChange, availableLabels }: Fi
       <PopoverContent
         align="end"
         sideOffset={4}
-        className="w-72 p-0"
+        className="w-[calc(100vw-2rem)] max-w-72 p-0"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <div className="p-3 space-y-4">

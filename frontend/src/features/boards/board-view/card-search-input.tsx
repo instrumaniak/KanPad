@@ -35,7 +35,7 @@ export function CardSearchInput({ value, onChange, onClear }: CardSearchInputPro
           }
         }}
         ref={inputRef}
-        className="h-9 w-[140px] pl-8 pr-11 sm:w-[240px]"
+        className="h-9 w-[120px] pl-8 pr-11 sm:w-[240px]"
       />
       {value.length > 0 && (
         <Button

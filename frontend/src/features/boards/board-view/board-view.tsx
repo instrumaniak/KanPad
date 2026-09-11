@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBoard, useUpdateBoard, type BoardViewMode } from '../use-boards';
 import { useColumns, useCreateColumn } from '../../columns/use-columns';
@@ -16,6 +16,9 @@ import { FilterDropdown } from './filter-dropdown';
 import { FilterChips } from './filter-chips';
 import { useLabels } from '../../labels/use-labels';
 import { DEFAULT_FILTER_STATE, type FilterState, filterColumnsByFilters } from './filter-columns-by-filters';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
+import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
+import { cn } from '@/lib/utils';
 
 export function BoardView() {
   const { boardId } = useParams<{ boardId: string }>();
@@ -36,12 +39,17 @@ export function BoardView() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTER_STATE);
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollRef = useRef<{ board: number; list: number }>({ board: 0, list: 0 });
   const boardScrollRef = useRef<HTMLDivElement>(null);
   const listScrollRef = useRef<HTMLDivElement>(null);
   const lastServerView = useRef<BoardViewMode | undefined>(undefined);
   const viewRequestId = useRef(0);
+
+  const breakpoint = useBreakpoint();
+  const isMobile = breakpoint === 'mobile';
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   // Sync local view when the persisted server value arrives/changes.
   // Guarded by ref so we only set state on actual server changes
@@ -77,6 +85,17 @@ export function BoardView() {
     setDebouncedSearch('');
   }, []);
 
+  const handleSearchToggle = useCallback(() => {
+    setSearchExpanded((prev) => {
+      if (prev) {
+        clearTimeout(searchTimerRef.current);
+        setSearch('');
+        setDebouncedSearch('');
+      }
+      return !prev;
+    });
+  }, []);
+
   // Reset search on board change — inline body (do NOT call handler) to satisfy exhaustive-deps.
   // Stale query must not leak across boards; cascading render here is intentional and cheap.
   useEffect(() => {
@@ -97,6 +116,7 @@ export function BoardView() {
     if (hasActiveFilters) result = filterColumnsByFilters(result, filters);
     return result;
   }, [columns, activeQuery, isSearching, hasActiveFilters, filters]);
+
   const visibleCount = filteredColumns.flatMap((c) => c.cards ?? []).length;
   const totalCount = (columns ?? []).flatMap((c) => c.cards ?? []).length;
   const isFilteredEmpty =
@@ -173,27 +193,58 @@ export function BoardView() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-4 px-6 py-4">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-4 sm:gap-4 sm:px-6">
         <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h1 className="text-xl font-semibold">{boardName}</h1>
-        <div className="ml-auto flex items-center gap-2">
-          <CardSearchInput
-            value={search}
-            onChange={handleSearchChange}
-            onClear={handleClearSearch}
-          />
-          <FilterDropdown
-            filters={filters}
-            onFiltersChange={setFilters}
-            availableLabels={allLabels ?? []}
-          />
-          <BoardViewToggle
-            value={view}
-            onChange={handleViewChange}
-            disabled={updateBoardMutation.isPending}
-          />
+        <h1 className="min-w-0 truncate text-xl font-semibold">{boardName}</h1>
+        <div className={cn(
+          'ml-auto flex flex-wrap items-center justify-end gap-1 sm:gap-2',
+          isMobile && 'ml-0 w-full flex-nowrap',
+        )}>
+          {isMobile ? (
+            <>
+              {searchExpanded ? (
+                <CardSearchInput
+                  value={search}
+                  onChange={handleSearchChange}
+                  onClear={handleClearSearch}
+                />
+              ) : (
+                <Button variant="ghost" size="icon" onClick={handleSearchToggle} aria-label="Open search">
+                  <Search className="h-5 w-5" />
+                </Button>
+              )}
+              <FilterDropdown
+                filters={filters}
+                onFiltersChange={setFilters}
+                availableLabels={allLabels ?? []}
+              />
+              <BoardViewToggle
+                value={view}
+                onChange={handleViewChange}
+                disabled={updateBoardMutation.isPending}
+              />
+            </>
+          ) : (
+            <>
+              <CardSearchInput
+                value={search}
+                onChange={handleSearchChange}
+                onClear={handleClearSearch}
+              />
+              <FilterDropdown
+                filters={filters}
+                onFiltersChange={setFilters}
+                availableLabels={allLabels ?? []}
+              />
+              <BoardViewToggle
+                value={view}
+                onChange={handleViewChange}
+                disabled={updateBoardMutation.isPending}
+              />
+            </>
+          )}
         </div>
       </div>
       <FilterChips
@@ -209,7 +260,10 @@ export function BoardView() {
         {isSearching || hasActiveFilters ? `${visibleCount} of ${totalCount} cards` : ''}
       </p>
 
-      <div className="transition-opacity duration-300 animate-in fade-in motion-safe:animate-in motion-safe:fade-in">
+      <div className={cn(
+        "transition-opacity animate-in fade-in motion-safe:animate-in motion-safe:fade-in",
+        prefersReducedMotion && "duration-0"
+      )}>
         {isEmpty ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16">
             <h2 className="text-lg font-semibold">No cards found</h2>
@@ -232,18 +286,33 @@ export function BoardView() {
             </div>
           </div>
         ) : view === 'board' ? (
-          <div className="flex flex-1 overflow-hidden">
-            <div className="flex-1 overflow-x-auto" ref={boardScrollRef}>
-              <DragDropContext boardId={id}>
-                <div className="flex h-full gap-6 p-6 pb-6">
-                  {filteredColumns.map((column) => (
-                    <Column key={column.id} column={column} allColumns={columns ?? []} />
-                  ))}
-                  <AddColumnButton onClick={handleAddColumn} />
-                </div>
-              </DragDropContext>
+          isMobile ? (
+            <div className="flex flex-1 overflow-hidden">
+              <div className="flex-1 overflow-x-auto touch-pan-x" ref={boardScrollRef}>
+                <DragDropContext boardId={id}>
+                  <div className="flex h-full min-w-max gap-4 p-4 pb-4">
+                    {filteredColumns.map((column) => (
+                      <Column key={column.id} column={column} allColumns={columns ?? []} />
+                    ))}
+                    <AddColumnButton onClick={handleAddColumn} />
+                  </div>
+                </DragDropContext>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-1 overflow-hidden">
+              <div className="flex-1 overflow-x-auto" ref={boardScrollRef}>
+                <DragDropContext boardId={id}>
+                  <div className="flex h-full gap-6 p-6 pb-6">
+                    {filteredColumns.map((column) => (
+                      <Column key={column.id} column={column} allColumns={columns ?? []} />
+                    ))}
+                    <AddColumnButton onClick={handleAddColumn} />
+                  </div>
+                </DragDropContext>
+              </div>
+            </div>
+          )
         ) : (
           <div ref={listScrollRef} className="flex flex-1 flex-col overflow-hidden">
             <BoardListView boardId={id} columns={filteredColumns} />

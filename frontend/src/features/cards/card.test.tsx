@@ -50,6 +50,17 @@ describe('Card', () => {
   const mockCard = { id: 1, title: 'Test Card', column_id: 1, position: 0, description: null, due_date: null, created_at: '2024-01-01', updated_at: '2024-01-01' };
 
   beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
     vi.clearAllMocks();
   });
 

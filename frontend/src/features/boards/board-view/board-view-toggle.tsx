@@ -15,22 +15,24 @@ export function BoardViewToggle({ value, onChange, disabled = false }: BoardView
       <Button
         variant={value === 'board' ? 'default' : 'ghost'}
         size="sm"
+        aria-label="Board view"
         aria-pressed={value === 'board'}
         disabled={disabled}
         onClick={() => onChange('board')}
       >
-        <LayoutGrid className="mr-1 h-4 w-4" />
-        Board
+        <LayoutGrid className="h-4 w-4 sm:mr-1" />
+        <span className="hidden sm:inline">Board</span>
       </Button>
       <Button
         variant={value === 'list' ? 'default' : 'ghost'}
         size="sm"
+        aria-label="List view"
         aria-pressed={value === 'list'}
         disabled={disabled}
         onClick={() => onChange('list')}
       >
-        <List className="mr-1 h-4 w-4" />
-        List
+        <List className="h-4 w-4 sm:mr-1" />
+        <span className="hidden sm:inline">List</span>
       </Button>
     </div>
   );

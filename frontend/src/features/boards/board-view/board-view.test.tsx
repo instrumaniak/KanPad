@@ -210,6 +210,18 @@ const mockBoardResponse = {
 describe('BoardView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(window, 'innerWidth', { writable: true, value: 1024 });
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
     mockBoardId = '1';
     mockUseBoard.mockReturnValue({ isLoading: false, data: mockBoardResponse });
     mockUseColumns.mockReturnValue({ isLoading: false, data: [mockColumn] });
@@ -293,6 +305,29 @@ describe('BoardView', () => {
     render(<BoardView />);
     expect(screen.getByRole('group', { name: 'Board view mode' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('keeps filtering and view controls available on mobile', () => {
+    Object.defineProperty(window, 'innerWidth', { writable: true, value: 375 });
+
+    render(<BoardView />);
+
+    expect(screen.getByTestId('filter-dropdown')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Board view mode' })).toBeInTheDocument();
+  });
+
+  it('mounts every mobile column as a drop destination and keeps add column available', () => {
+    Object.defineProperty(window, 'innerWidth', { writable: true, value: 375 });
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      data: [mockColumn, { ...mockColumn, id: 2, name: 'Done', position: 1 }],
+    });
+
+    render(<BoardView />);
+
+    expect(screen.getByTestId('column-1')).toBeInTheDocument();
+    expect(screen.getByTestId('column-2')).toBeInTheDocument();
+    expect(screen.getByTestId('add-column-button')).toBeInTheDocument();
   });
 
   it('switching to list calls updateBoard with view_mode and preserves kanban on switch back', async () => {

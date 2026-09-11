@@ -62,16 +62,16 @@ export function BoardList() {
   if (showEmptyState) {
     return (
       <div className="mx-auto max-w-6xl">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-bold">My Boards</h1>
-          <div className="flex gap-2">
-            <Button variant="outline" asChild>
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <Button variant="outline" className="w-full sm:w-auto" asChild>
               <Link to="/archived-boards">
                 <Archive className="mr-1 h-4 w-4" />
                 Archived Boards
               </Link>
             </Button>
-            <Button onClick={() => setShowCreateModal(true)}>
+            <Button className="w-full sm:w-auto" onClick={() => setShowCreateModal(true)}>
               <Plus className="mr-1 h-4 w-4" />
               Create Board
             </Button>
@@ -97,22 +97,22 @@ export function BoardList() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">My Boards</h1>
-        <div className="flex gap-2">
-          <Button variant="outline" asChild>
+        <div className="grid grid-cols-2 gap-2 sm:flex">
+          <Button variant="outline" className="w-full sm:w-auto" asChild>
             <Link to="/projects">
               <FolderKanban className="mr-1 h-4 w-4" />
               Projects
             </Link>
           </Button>
-          <Button variant="outline" asChild>
+          <Button variant="outline" className="w-full sm:w-auto" asChild>
             <Link to="/archived-boards">
               <Archive className="mr-1 h-4 w-4" />
               Archived Boards
             </Link>
           </Button>
-          <Button onClick={() => setShowCreateModal(true)}>
+          <Button className="col-span-2 w-full sm:col-auto sm:w-auto mt-2 sm:mt-0" onClick={() => setShowCreateModal(true)}>
             <Plus className="mr-1 h-4 w-4" />
             Create Board
           </Button>

@@ -198,4 +198,18 @@ describe('CardDraggable', () => {
     fireEvent.mouseEnter(outerDiv);
     expect(outerDiv.style.cursor).toBe('default');
   });
+
+  it('provides transition prop with correct duration and easing to useSortable', () => {
+    render(
+      <CardDraggable card={mockCard} index={0}>
+        {() => <div data-testid="child" />}
+      </CardDraggable>,
+    );
+    const lastCall = mockUseSortable.mock.calls[mockUseSortable.mock.calls.length - 1];
+    expect(lastCall[0]).toHaveProperty('transition');
+    expect(lastCall[0].transition).toEqual({
+      duration: 250,
+      easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+    });
+  });
 });

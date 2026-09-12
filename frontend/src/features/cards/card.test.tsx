@@ -358,4 +358,10 @@ describe('Card', () => {
       });
     });
   });
+
+  it('applies animate-slide-up class when isNew is true', () => {
+    renderWithProviders(<Card card={mockCard} index={0} isNew={true} />);
+    const cardDiv = screen.getByRole('button', { name: /open card details/i });
+    expect(cardDiv.className).toContain('animate-slide-up');
+  });
 });

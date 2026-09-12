@@ -1,7 +1,8 @@
 import { DndContext, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent, DragStartEvent, DropAnimation } from '@dnd-kit/core';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useMemo } from 'react';
+import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { createPortal } from 'react-dom';
 import { useMoveCard, useReorderCard, type Card } from './use-cards';
 import type { DragData } from './use-cards';
@@ -29,15 +30,7 @@ function getColumnIdFromDndId(id: string | number): number | undefined {
   return undefined;
 }
 
-const dropAnimation: DropAnimation = {
-  sideEffects: defaultDropAnimationSideEffects({
-    styles: {
-      active: {
-        opacity: '0.5',
-      },
-    },
-  }),
-};
+
 
 interface DragDropContextProps {
   boardId: number;
@@ -50,7 +43,18 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [activeCard, setActiveCard] = useState<Card | null>(null);
-
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const dropAnimation: DropAnimation = useMemo(() => ({
+    duration: prefersReducedMotion ? 1 : 300,
+    easing: prefersReducedMotion ? 'linear' : 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+    sideEffects: defaultDropAnimationSideEffects({
+      styles: {
+        active: {
+          opacity: '0.5',
+        },
+      },
+    }),
+  }), [prefersReducedMotion]);
   const sensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: {
@@ -86,17 +90,92 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     }
   }, []);
 
-  const handleDragOver = useCallback(() => {
-    // We intentionally do NOT update the React Query cache here.
-    // Updating the cache during drag causes React to unmount/remount
-    // card components between columns, which breaks dnd-kit's internal
-    // DOM tracking and prevents handleDragEnd from firing.
-    // The DragOverlay provides visual feedback during the drag instead.
-  }, []);
+  const handleDragOver = useCallback((event: { active: { id: string | number; data: { current?: unknown } }; over?: { id: string | number; data: { current?: unknown } } }) => {
+    // Live rearrangement for cross-column drag: update target column cards
+    // but do NOT call mutations (those are handled in handleDragEnd)
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeData = active.data.current as DragData;
+    if (!activeData || !activeData.card) return;
+
+    const cardId = activeData.cardId;
+    const columns = getColumns();
+    if (!columns) return;
+
+    // Find source column
+    let sourceColumn: Column | undefined;
+    for (const col of columns) {
+      const idx = col.cards.findIndex((c) => c.id === cardId);
+      if (idx !== -1) {
+        sourceColumn = col;
+        break;
+      }
+    }
+    if (!sourceColumn) return;
+
+    const overId = over.id as string;
+    let targetColumnId: number | undefined;
+    const overColumnId = over.data.current
+      ? (over.data.current as { columnId?: number }).columnId
+      : undefined;
+
+    if (overColumnId !== undefined) {
+      targetColumnId = overColumnId;
+    } else {
+      const overCardId = getCardIdFromDndId(overId) ?? (over.data.current as { card?: { id: number } })?.card?.id;
+      for (const col of columns) {
+        if (col.cards.some((c) => c.id === overCardId)) {
+          targetColumnId = col.id;
+          break;
+        }
+      }
+      if (targetColumnId === undefined) {
+        targetColumnId = getColumnIdFromDndId(overId) ?? sourceColumn.id;
+      }
+    }
+
+    if (targetColumnId === undefined) return;
+    const isSameColumn = sourceColumn.id === targetColumnId;
+
+    if (!isSameColumn) {
+      const targetColumn = columns.find((col) => col.id === targetColumnId);
+      if (targetColumn) {
+        const overData = over.data.current as { card?: { id: number }; index?: number };
+        const targetCards = targetColumn.cards;
+        let insertIndex: number;
+        if (overData?.card) {
+          const cardIdx = targetCards.findIndex((c) => c.id === overData.card!.id);
+          insertIndex = cardIdx !== -1 ? cardIdx : targetCards.length;
+        } else {
+          insertIndex = targetCards.length;
+        }
+        // Update cache for live rearrangement (no mutation)
+        setColumns((cols) => {
+          return cols.map((col) => {
+            if (col.id === sourceColumn!.id) {
+              return { ...col, cards: col.cards.filter((c) => c.id !== cardId) };
+            }
+            if (col.id === targetColumnId) {
+              const movedCard = { ...activeData.card, column_id: targetColumnId, position: insertIndex };
+              const newCards = [...col.cards];
+              newCards.splice(insertIndex, 0, movedCard);
+              return { ...col, cards: newCards.map((c, i) => ({ ...c, position: i })) };
+            }
+            return col;
+          });
+        });
+      }
+    }
+  }, [getColumns, setColumns]);
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
-    setActiveCard(null);
+    const animationDuration = prefersReducedMotion ? 1 : 300;
+
+    // Delay clearing activeCard until bounce animation completes
+    // so the drag overlay stays visible during the settlement animation
+    setTimeout(() => setActiveCard(null), animationDuration);
 
     if (!over) return;
 
@@ -224,7 +303,7 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
         queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
       }
     }
-  }, [moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns]);
+  }, [moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns, prefersReducedMotion]);
 
   const handleDragCancel = useCallback(() => {
     setActiveCard(null);

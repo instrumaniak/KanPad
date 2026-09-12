@@ -35,8 +35,8 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-03-19T19:27:21.000Z
-last_updated: 2026-06-25T12:30:00.000Z
-project: trello-clone
+last_updated: 2026-09-11T16:00:00.000Z
+project: kanpad
 project_key: NOKEY
 tracking_system: file-system
 story_location: '{project-root}/_bmad-output/implementation-artifacts'
@@ -74,22 +74,22 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Rich Content, Notes & Organization
-  epic-4: in-progress
+  epic-4: done
   4-1-card-detail-panel: done
   4-2-markdown-description: done
   4-3-color-coded-labels: done
   4-4-due-dates: done
   4-5-checklists-with-progress: done
-  4-6-notes-system: review
-  4-7-board-view-toggle: backlog
+  4-6-notes-system: done
+  4-7-board-view-toggle: done
   epic-4-retrospective: optional
 
   # Epic 5: Search, Filter & Visual Polish
-  epic-5: backlog
-  5-1-card-search: backlog
-  5-2-card-filtering: backlog
-  5-3-dark-mode: backlog
-  5-4-responsive-layout: backlog
+  epic-5: in-progress
+  5-1-card-search: done
+  5-2-card-filtering: done
+  5-3-dark-mode: done
+  5-4-responsive-layout: done
   5-5-loading-states-error-handling: backlog
   5-6-micro-animations: backlog
   epic-5-retrospective: optional

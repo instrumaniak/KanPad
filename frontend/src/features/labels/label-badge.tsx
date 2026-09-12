@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { getLabelColorClass } from './label-colors';
 
 interface LabelBadgeProps {
-  label: Label;
+  label: Pick<Label, 'id' | 'name'> & { color: string };
   className?: string;
   onRemove?: () => void;
 }

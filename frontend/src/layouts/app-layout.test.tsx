@@ -50,6 +50,12 @@ vi.mock('@/features/notes', () => ({
   ),
 }));
 
+let mockBreakpoint: 'mobile' | 'tablet' | 'desktop' = 'desktop';
+
+vi.mock('@/hooks/use-breakpoint', () => ({
+  useBreakpoint: () => mockBreakpoint,
+}));
+
 function renderWithRouter(ui: React.ReactElement, initialEntries?: string[]) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>,
@@ -110,5 +116,19 @@ describe('AppLayout', () => {
     );
 
     expect(screen.queryByTestId('board-notes-sidebar')).not.toBeInTheDocument();
+  });
+
+  it('renders mobile hamburger menu button on mobile with boardId', () => {
+    mockBreakpoint = 'mobile';
+
+    render(
+      <MemoryRouter initialEntries={['/boards/42']}>
+        <Routes>
+          <Route path="/boards/:boardId" element={<AppLayout projectsData={{ data: [], total: 0 }} />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByLabelText('Open sidebar')).toBeInTheDocument();
   });
 });

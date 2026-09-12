@@ -35,7 +35,7 @@ vi.mock('./use-tags', () => ({
 }));
 
 vi.mock('./tag-badge', () => ({
-  TagBadge: ({ name, color, onRemove }: { name: string; color: string; onRemove?: () => void }) => (
+  TagBadge: ({ name, onRemove }: { name: string; color?: string; onRemove?: () => void }) => (
     <span data-testid={`tag-badge-${name}`}>
       {name}
       {onRemove && <button data-testid={`remove-${name}`} onClick={onRemove}>x</button>}

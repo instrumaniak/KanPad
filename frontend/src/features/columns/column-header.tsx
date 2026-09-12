@@ -3,6 +3,7 @@ import { MoreHorizontal, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, MoveHori
 import { Button } from '@/components/ui/button';
 import { useUpdateColumn, useDeleteColumn, useSortCards, useMoveAllCards, type Column } from './use-columns';
 import { useToast } from '@/components/ui/use-toast';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,8 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
   const sortMutation = useSortCards();
   const moveMutation = useMoveAllCards();
   const { toast } = useToast();
+  const breakpoint = useBreakpoint();
+  const isMobile = breakpoint === 'mobile';
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -141,12 +144,12 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
           onKeyDown={handleKeyDown}
           autoFocus
           onFocus={(e) => e.currentTarget.select()}
-          className="flex-1 rounded border border-input bg-background px-2 py-1 text-sm font-semibold"
+          className={`flex-1 rounded border border-input bg-background px-2 py-1 text-sm font-semibold ${isMobile ? 'min-h-[48px]' : ''}`}
         />
       ) : (
         <button
           onClick={handleStartEdit}
-          className="flex-1 truncate text-left text-sm font-semibold hover:bg-muted/50 rounded px-2 py-1"
+          className={`flex-1 truncate text-left text-sm font-semibold hover:bg-muted/50 rounded px-2 py-1 ${isMobile ? 'min-h-[48px]' : ''}`}
         >
           {column.name}
         </button>
@@ -156,7 +159,7 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
         <Button
           variant="ghost"
           size="icon-sm"
-          className="h-7 w-7"
+          className={isMobile ? 'h-12 w-12' : 'h-7 w-7'}
           onClick={() => setShowMenu(!showMenu)}
         >
           <MoreHorizontal className="h-4 w-4" />
@@ -166,14 +169,14 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
           <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-md border bg-popover p-1 shadow-md">
             <button
               onClick={handleStartEdit}
-              className="flex w-full items-center rounded px-2 py-1.5 text-sm hover:bg-accent"
+              className={`flex w-full items-center rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
             >
               Rename
             </button>
             <div className="relative">
               <button
                 onClick={() => setShowSortMenu(!showSortMenu)}
-                className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-accent"
+                className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
               >
                 <span className="flex items-center gap-2">
                   <ArrowUpDown className="h-4 w-4" />
@@ -182,17 +185,17 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
                 <ChevronRight className="h-4 w-4" />
               </button>
               {showSortMenu && (
-                <div ref={sortMenuRef} className="absolute left-full top-0 ml-1 w-40 rounded-md border bg-popover p-1 shadow-md">
+                <div ref={sortMenuRef} className={`absolute z-20 w-40 rounded-md border bg-popover p-1 shadow-md ${isMobile ? 'top-full left-0 mt-1' : 'left-full top-0 ml-1'}`}>
                   <button
                     onClick={() => handleSort('asc')}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
+                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
                   >
                     <ArrowUp className="h-4 w-4" />
                     Ascending (Oldest first)
                   </button>
                   <button
                     onClick={() => handleSort('desc')}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
+                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
                   >
                     <ArrowDown className="h-4 w-4" />
                     Descending (Newest first)
@@ -204,7 +207,7 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
               <div className="relative">
                 <button
                   onClick={() => setShowMoveMenu(!showMoveMenu)}
-                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-accent"
+                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
                 >
                   <span className="flex items-center gap-2">
                     <MoveHorizontal className="h-4 w-4" />
@@ -213,12 +216,12 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
                   <ChevronRight className="h-4 w-4" />
                 </button>
                 {showMoveMenu && (
-                  <div ref={moveMenuRef} className="absolute left-full top-0 ml-1 w-40 rounded-md border bg-popover p-1 shadow-md">
+                  <div ref={moveMenuRef} className={`absolute z-20 w-40 rounded-md border bg-popover p-1 shadow-md ${isMobile ? 'top-full left-0 mt-1' : 'left-full top-0 ml-1'}`}>
                     {otherColumns.map((col) => (
                       <button
                         key={col.id}
                         onClick={() => handleMoveAll(col.id)}
-                        className="flex w-full items-center rounded px-2 py-1.5 text-sm hover:bg-accent"
+                        className={`flex w-full items-center rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
                       >
                         {col.name}
                       </button>
@@ -232,7 +235,7 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
                 setShowMenu(false);
                 setShowDeleteDialog(true);
               }}
-              className="flex w-full items-center rounded px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+              className={`flex w-full items-center rounded px-2 py-1.5 text-sm text-destructive hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
             >
               Delete
             </button>

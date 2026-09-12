@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Outlet, Navigate, useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/use-auth';
 import { Button } from '@/components/ui/button';
@@ -10,9 +10,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import { LogOut, ChevronDown, Moon, Sun, FileText } from 'lucide-react';
+import { LogOut, ChevronDown, Moon, Sun, FileText, Menu } from 'lucide-react';
 import { useTheme } from '@/hooks/use-theme';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { BoardNotesSidebar } from '@/features/notes';
+import { MobileBottomSheet } from '@/components/mobile-bottom-sheet';
 import { Breadcrumbs } from './breadcrumbs';
 import type { ListResponse, Project } from '@/features/projects/projects.api';
 
@@ -41,8 +43,17 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const { projectId, boardId } = useParams();
-  const [collapsed, setCollapsed] = useState(getStoredCollapsed);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const stored = getStoredCollapsed();
+    const width = window.innerWidth;
+    if (width < 1024) return true;
+    return stored;
+  });
   const [loggingOut, setLoggingOut] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const breakpoint = useBreakpoint();
+  const isMobile = breakpoint === 'mobile';
 
   const toggleSidebar = useCallback(() => {
     setCollapsed((prev) => {
@@ -53,31 +64,8 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
   }, []);
 
   // Auto-collapse on tablet/mobile, re-expand on desktop
-  useEffect(() => {
-    const tablet = window.matchMedia('(min-width: 640px) and (max-width: 1023px)');
-    const mobile = window.matchMedia('(max-width: 639px)');
-
-    const handleResize = () => {
-      if (mobile.matches) {
-        setCollapsed(true);
-        persistCollapsed(true);
-      } else if (tablet.matches) {
-        setCollapsed(true);
-        persistCollapsed(true);
-      } else {
-        // Desktop: restore stored preference
-        setCollapsed(getStoredCollapsed());
-      }
-    };
-
-    handleResize();
-    tablet.addEventListener('change', handleResize);
-    mobile.addEventListener('change', handleResize);
-    return () => {
-      tablet.removeEventListener('change', handleResize);
-      mobile.removeEventListener('change', handleResize);
-    };
-  }, []);
+  // Use derived state from breakpoint instead of setState in effect
+  const effectiveCollapsed = breakpoint === 'mobile' || breakpoint === 'tablet' ? true : collapsed;
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -93,7 +81,7 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex h-dvh items-center justify-center bg-background">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-primary" />
       </div>
     );
@@ -112,9 +100,20 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
   const breadcrumbBoardName = boardId ? decodeURIComponent(boardId) : undefined;
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
+    <div className="flex h-dvh flex-col">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4 pt-[env(safe-area-inset-top)]">
         <div className="flex items-center gap-2">
+          {isMobile && boardId && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setMobileSidebarOpen(true)}
+              aria-label="Open sidebar"
+              className="min-h-[48px] min-w-[48px]"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+          )}
           <Link to="/">
             <h1 className="text-lg font-semibold text-foreground">KanPad</h1>
           </Link>
@@ -159,15 +158,29 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {boardId && (
+      <div className="flex flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)]">
+        {boardId && isMobile && (
+          <MobileBottomSheet
+            open={mobileSidebarOpen}
+            onOpenChange={setMobileSidebarOpen}
+            title="Projects"
+          >
+            <BoardNotesSidebar
+              boardId={Number(boardId)}
+              collapsed={false}
+              onToggle={() => setMobileSidebarOpen(false)}
+              isMobile
+            />
+          </MobileBottomSheet>
+        )}
+        {boardId && !isMobile && (
           <BoardNotesSidebar
             boardId={Number(boardId)}
-            collapsed={collapsed}
+            collapsed={effectiveCollapsed}
             onToggle={toggleSidebar}
           />
         )}
-        <main className="flex-1 overflow-y-auto bg-background p-6">
+        <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

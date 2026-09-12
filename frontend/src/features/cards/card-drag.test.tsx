@@ -45,6 +45,20 @@ const renderWithProviders = (component: React.ReactElement) => {
 };
 
 describe('Card with Drag', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
   const mockCard = { id: 1, title: 'Test Card', column_id: 1, position: 0, created_at: '2024-01-01', updated_at: '2024-01-01' };
 
   it('renders card title', () => {
@@ -59,6 +73,20 @@ describe('Card with Drag', () => {
 });
 
 describe('CardDraggable', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
   it('uses useSortable for within-column reordering', async () => {
     const fs = await import('fs');
     const content = fs.readFileSync('./src/features/cards/card-draggable.tsx', 'utf-8');
@@ -67,6 +95,20 @@ describe('CardDraggable', () => {
 });
 
 describe('DragDropContext', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
   it('includes TouchSensor for mobile support', async () => {
     const fs = await import('fs');
     const content = fs.readFileSync('./src/features/cards/drag-drop-context.tsx', 'utf-8');
@@ -75,6 +117,20 @@ describe('DragDropContext', () => {
 });
 
 describe('ColumnDroppable', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
   it('file exists', async () => {
     const fs = await import('fs');
     expect(fs.existsSync('./src/features/columns/column-droppable.tsx')).toBe(true);

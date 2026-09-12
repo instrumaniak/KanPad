@@ -1,6 +1,6 @@
 # Story 4.6: Notes System
 
-Status: in-progress
+Status: done
 
 ## Story
 

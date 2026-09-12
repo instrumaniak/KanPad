@@ -92,6 +92,17 @@ describe('CardDetailPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
     mockUseCardState.data = { ...mockCard, description: 'A description' };
     mockUseCardState.isLoading = false;
     mockUseCardState.isError = false;

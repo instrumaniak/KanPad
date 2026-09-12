@@ -33,6 +33,7 @@ interface BoardResponse {
   updated_at: string;
   columns?: { id: number; name: string; position: number }[];
   is_archived?: boolean;
+  view_mode: 'board' | 'list';
 }
 
 @Controller('api/boards')
@@ -67,6 +68,7 @@ export class BoardsController {
       created_at: b.created_at.toISOString(),
       updated_at: b.updated_at.toISOString(),
       is_archived: b.is_archived,
+      view_mode: b.view_mode ?? 'board',
     }));
     return { data, total: data.length };
   }
@@ -87,6 +89,7 @@ export class BoardsController {
       created_at: b.created_at.toISOString(),
       updated_at: b.updated_at.toISOString(),
       is_archived: b.is_archived,
+      view_mode: b.view_mode ?? 'board',
     }));
     return { data, total: data.length };
   }
@@ -114,6 +117,7 @@ export class BoardsController {
         position: c.position,
       })),
       is_archived: board.is_archived,
+      view_mode: board.view_mode ?? 'board',
     };
     return { data, message: 'Board created successfully' };
   }
@@ -141,12 +145,13 @@ export class BoardsController {
         position: c.position,
       })),
       is_archived: board.is_archived,
+      view_mode: board.view_mode ?? 'board',
     };
     return { data };
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update board name, color, or project' })
+  @ApiOperation({ summary: 'Update board name, color, project, or view mode' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Board updated' })
   @UsePipes(new ValidationPipe({ transform: true }))
@@ -165,6 +170,7 @@ export class BoardsController {
       created_at: board.created_at.toISOString(),
       updated_at: board.updated_at.toISOString(),
       is_archived: board.is_archived,
+      view_mode: board.view_mode ?? 'board',
     };
     return { data, message: 'Board updated' };
   }
@@ -199,6 +205,7 @@ export class BoardsController {
       created_at: board.created_at.toISOString(),
       updated_at: board.updated_at.toISOString(),
       is_archived: board.is_archived,
+      view_mode: board.view_mode ?? 'board',
     };
     return { data, message: 'Board archived' };
   }
@@ -221,6 +228,7 @@ export class BoardsController {
       created_at: board.created_at.toISOString(),
       updated_at: board.updated_at.toISOString(),
       is_archived: board.is_archived,
+      view_mode: board.view_mode ?? 'board',
     };
     return { data, message: 'Board restored' };
   }

@@ -96,6 +96,9 @@ export class BoardsService {
       }
       board.project_id = dto.project_id;
     }
+    if (dto.view_mode === 'board' || dto.view_mode === 'list') {
+      board.view_mode = dto.view_mode;
+    }
 
     return this.boardRepository.save(board);
   }

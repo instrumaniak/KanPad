@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 interface CardProps {
   card: CardType;
@@ -36,6 +37,7 @@ export function Card({ card, index, isNew }: CardProps) {
   const deleteCard = useDeleteCard();
   const createCardMutation = useCreateCard();
   const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
 
   const handleClick = (e: React.MouseEvent) => {
     if (pointerDownPos.current) {
@@ -82,16 +84,16 @@ export function Card({ card, index, isNew }: CardProps) {
                   description: deletedCard.description ?? undefined,
                   due_date: deletedCard.due_date ?? undefined,
                 });
-                toast({ title: 'Card restored to original position', type: 'success' });
+                showSuccess('Card restored to original position');
               } catch {
-                toast({ title: 'Failed to restore card', type: 'error' });
+                showError('Failed to restore card');
               }
             },
           },
         });
       },
       onError: () => {
-        toast({ title: 'Failed to delete card', type: 'error' });
+        showError('Failed to delete card');
       },
     });
   };

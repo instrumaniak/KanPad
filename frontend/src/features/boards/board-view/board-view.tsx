@@ -6,7 +6,7 @@ import { useBoard, useUpdateBoard, type BoardViewMode } from '../use-boards';
 import { useColumns, useCreateColumn } from '../../columns/use-columns';
 import { Column } from '../../columns/column';
 import { AddColumnButton } from '../../columns/add-column-button';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { DragDropContext } from '../../cards/drag-drop-context';
 import { BoardViewToggle } from './board-view-toggle';
 import { BoardListView } from './board-list-view';
@@ -33,7 +33,7 @@ export function BoardView() {
   const boardName = boardResponse?.data?.name;
   const createColumnMutation = useCreateColumn();
   const updateBoardMutation = useUpdateBoard();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
 
   const [view, setView] = useState<BoardViewMode>('board');
   const [search, setSearch] = useState('');
@@ -142,11 +142,10 @@ export function BoardView() {
         onError: (err) => {
           if (viewRequestId.current !== requestId) return;
           setView(prev);
-          toast({
-            title: 'Failed to save view',
-            description: err instanceof Error ? err.message : 'Something went wrong',
-            type: 'error',
-          });
+          showError(
+            'Failed to save view',
+            err instanceof Error ? err.message : 'Something went wrong',
+          );
         },
       },
     );
@@ -165,13 +164,12 @@ export function BoardView() {
   const handleAddColumn = async () => {
     try {
       await createColumnMutation.mutateAsync({ boardId: id, data: {} });
-      toast({ title: 'Column added', type: 'success' });
+      showSuccess('Column added');
     } catch (err) {
-      toast({
-        title: 'Failed to add column',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to add column',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 

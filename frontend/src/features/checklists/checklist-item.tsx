@@ -7,6 +7,7 @@ import { useUpdateChecklistItem, useDeleteChecklistItem } from './use-checklists
 import type { ChecklistItem as ChecklistItemType } from './checklists.api';
 import { createChecklistItem, updateChecklistItem } from './checklists.api';
 import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 interface ChecklistItemProps {
   item: ChecklistItemType;
@@ -18,6 +19,7 @@ export function ChecklistItem({ item, cardId }: ChecklistItemProps) {
   const [text, setText] = useState(item.text);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const queryClient = useQueryClient();
   const updateMutation = useUpdateChecklistItem();
@@ -47,7 +49,7 @@ export function ChecklistItem({ item, cardId }: ChecklistItemProps) {
         {
           onError: () => {
             setText(item.text);
-            toast({ title: 'Failed to save item text', type: 'destructive' });
+            showError('Failed to save item text');
           },
         },
       );
@@ -87,11 +89,7 @@ export function ChecklistItem({ item, cardId }: ChecklistItemProps) {
                 queryClient.invalidateQueries({ queryKey: ['columns'] });
               } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error';
-                toast({
-                  title: 'Failed to undo delete',
-                  description: message,
-                  type: 'destructive',
-                });
+                showError('Failed to undo delete', message);
               }
             },
           },

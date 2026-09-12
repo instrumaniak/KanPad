@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import type { Column as BoardColumn, Card } from '../../columns/columns.api';
 import {
   sortFlatCards,
@@ -59,6 +60,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const titleCommitGuard = useRef<number | null>(null);
 
   const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const updateCard = useUpdateCard();
   const deleteCardMutation = useDeleteCard();
   const createCardMutation = useCreateCard();
@@ -108,11 +110,10 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
         onSuccess: () => setEditingCardId(null),
         onError: (err) => {
           titleCommitGuard.current = null;
-          toast({
-            title: 'Failed to update card',
-            description: err instanceof Error ? err.message : 'Something went wrong',
-            type: 'error',
-          });
+          showError(
+            'Failed to update card',
+            err instanceof Error ? err.message : 'Something went wrong',
+          );
         },
       },
     );
@@ -146,8 +147,8 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                   ...(deletedSnapshot.due_date ? { due_date: deletedSnapshot.due_date } : {}),
                 },
                 {
-                  onSuccess: () => toast({ title: 'Card restored', type: 'success' }),
-                  onError: () => toast({ title: 'Failed to restore card', type: 'error' }),
+                  onSuccess: () => showSuccess('Card restored'),
+                  onError: () => showError('Failed to restore card'),
                 },
               );
             },
@@ -156,7 +157,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
       },
       onError: () => {
         setDetailCard((d) => d ?? prevDetail);
-        toast({ title: 'Failed to delete card', type: 'error' });
+        showError('Failed to delete card');
       },
     });
   };
@@ -173,7 +174,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
     if (!trimmed || Number.isNaN(columnId)) return;
     const target = sortedColumns.find((c) => c.id === columnId);
     if (!target || (target.board_id !== undefined && target.board_id !== boardId)) {
-      toast({ title: 'Selected column is no longer available', type: 'error' });
+      showError('Selected column is no longer available');
       return;
     }
     createCardMutation.mutate(
@@ -182,14 +183,13 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
         onSuccess: () => {
           setShowAddDialog(false);
           setNewTitle('');
-          toast({ title: 'Card created', type: 'success' });
+          showSuccess('Card created');
         },
         onError: (err) =>
-          toast({
-            title: 'Failed to create card',
-            description: err instanceof Error ? err.message : 'Something went wrong',
-            type: 'error',
-          }),
+          showError(
+            'Failed to create card',
+            err instanceof Error ? err.message : 'Something went wrong',
+          ),
       },
     );
   };

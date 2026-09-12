@@ -1,13 +1,13 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useNote, useDeleteNote } from './use-notes';
 import { NoteDetail } from './note-detail';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { LoadingSkeleton } from '@/components/loading-skeleton';
 
 export function NoteDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const deleteMutation = useDeleteNote();
   const noteId = Number(id);
   const { data, isLoading, error } = useNote(noteId);
@@ -48,11 +48,11 @@ export function NoteDetailPage() {
           { id: noteId },
           {
             onSuccess: () => {
-              toast({ title: 'Note deleted' });
+              showSuccess('Note deleted');
               navigate('/notes');
             },
             onError: () => {
-              toast({ title: 'Failed to delete note', type: 'destructive' });
+              showError('Failed to delete note');
             },
           },
         );

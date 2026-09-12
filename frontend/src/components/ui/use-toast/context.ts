@@ -13,6 +13,7 @@ export interface Toast {
   description?: string;
   type: ToastType;
   action?: ToastAction;
+  isExiting?: boolean;
 }
 
 export interface ToastContextType {

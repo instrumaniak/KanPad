@@ -4,12 +4,12 @@ import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from './use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 export function LoginForm() {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -51,11 +51,7 @@ export function LoginForm() {
       navigate('/');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
-      toast({
-        title: 'Login Error',
-        description: message,
-        type: 'destructive',
-      });
+      showError('Login Error', message);
     } finally {
       setIsSubmitting(false);
     }

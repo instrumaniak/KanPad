@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import {
   useProjects,
   useCreateProject,
@@ -19,12 +20,13 @@ import {
 import { recreateProject } from './projects.api';
 import { Plus, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
 import { LoadingSkeleton } from '@/components/loading-skeleton';
 
 function InlineCreateForm({ onSuccess, onCancel }: { onSuccess: () => void; onCancel: () => void }) {
   const [name, setName] = useState('');
   const createMutation = useCreateProject();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,15 +35,14 @@ function InlineCreateForm({ onSuccess, onCancel }: { onSuccess: () => void; onCa
 
     try {
       await createMutation.mutateAsync(trimmed);
-      toast({ title: 'Project created', type: 'success' });
+      showSuccess('Project created');
       setName('');
       onSuccess();
     } catch (err) {
-      toast({
-        title: 'Failed to create project',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to create project',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 
@@ -86,7 +87,7 @@ function InlineEdit({
 }) {
   const [name, setName] = useState(initialValue);
   const updateMutation = useUpdateProject();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
 
   const handleSave = async () => {
     if (updateMutation.isPending) return;
@@ -99,14 +100,13 @@ function InlineEdit({
 
     try {
       await updateMutation.mutateAsync({ id: projectId, name: trimmed });
-      toast({ title: 'Project renamed', type: 'success' });
+      showSuccess('Project renamed');
       onSave();
     } catch (err) {
-      toast({
-        title: 'Failed to rename project',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to rename project',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 
@@ -148,6 +148,7 @@ function DeleteDialog({
 }) {
   const deleteMutation = useDeleteProject();
   const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const handleDelete = async () => {
     const deletedName = projectName;
@@ -175,11 +176,10 @@ function DeleteDialog({
         },
       });
     } catch (err) {
-      toast({
-        title: 'Failed to delete project',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to delete project',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 
@@ -294,13 +294,11 @@ export function ProjectList() {
     return (
       <div className="mx-auto max-w-2xl">
         <h1 className="mb-6 text-2xl font-bold">My Projects</h1>
-        <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive">
-          <p className="text-sm font-medium">Failed to load projects</p>
-          <p className="text-sm opacity-80">{error instanceof Error ? error.message : 'Something went wrong'}</p>
-          <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
-            Retry
-          </Button>
-        </div>
+        <ErrorState
+          title="Failed to load projects"
+          message={error instanceof Error ? error.message : 'Something went wrong'}
+          onRetry={() => refetch()}
+        />
       </div>
     );
   }

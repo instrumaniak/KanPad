@@ -3,6 +3,7 @@ import { FileText, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,6 +31,7 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
   const { data: notesData, isLoading } = useBoardNotes(boardId);
   const deleteNote = useDeleteNote();
   const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
 
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const { data: editingNoteData, isLoading: isLoadingNote } = useNote(editingNoteId ?? 0);
@@ -58,9 +60,9 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
     deleteTimerRef.current = setTimeout(async () => {
       try {
         await deleteNote.mutateAsync({ id });
-        toast({ title: 'Note deleted', type: 'success' });
+        showSuccess('Note deleted');
       } catch {
-        toast({ title: 'Failed to delete note', type: 'error' });
+        showError('Failed to delete note');
       }
     }, 5000);
 

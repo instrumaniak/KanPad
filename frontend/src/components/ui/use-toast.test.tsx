@@ -138,6 +138,7 @@ describe('ToastProvider', () => {
   });
 
   it('dismisses toast when dismiss button is clicked', async () => {
+    vi.useFakeTimers();
     const TestComponent = () => {
       const { toast } = useToast();
       return (
@@ -159,7 +160,12 @@ describe('ToastProvider', () => {
       dismissButton.click();
     });
 
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
     expect(screen.queryByText('Dismiss me')).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it('allows multiple toasts', async () => {

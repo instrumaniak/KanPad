@@ -4,7 +4,7 @@ import { TagBadge } from './tag-badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { Plus } from 'lucide-react';
 
 const COLOR_PALETTE = ['teal', 'rose', 'amber', 'blue', 'green', 'purple'];
@@ -21,7 +21,7 @@ export function TagPicker({ selectedTagIds, onTagsChange }: TagPickerProps) {
   const [newTagColor, setNewTagColor] = useState(COLOR_PALETTE[0]);
   const { data: tagsData } = useTags();
   const createMutation = useCreateTag();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const allTags = tagsData?.data ?? [];
   const selectedTags = allTags.filter((t) => selectedTagIds.includes(t.id));
@@ -51,7 +51,7 @@ export function TagPicker({ selectedTagIds, onTagsChange }: TagPickerProps) {
           setSearch('');
         },
         onError: (error) => {
-          toast({ title: 'Failed to create tag', description: error.message, type: 'destructive' });
+          showError('Failed to create tag', error.message);
         },
       },
     );

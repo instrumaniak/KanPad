@@ -6,7 +6,7 @@ import { NoteLinkSelector } from './note-link-selector';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { Bold, Italic, Heading, Code, List, Eye, EyeOff, Save, Workflow } from 'lucide-react';
 import { LazyLoadBoundary } from '@/components/lazy-load-boundary';
 import { LazyMarkdownRenderer } from './lazy-markdown-renderer';
@@ -51,7 +51,7 @@ export function NoteEditor({
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const createMutation = useCreateNote();
   const updateMutation = useUpdateNote();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const insertMarkdown = useCallback(
@@ -104,7 +104,7 @@ export function NoteEditor({
             setTimeout(() => setShowSaved(false), 2000);
           },
           onError: () => {
-            toast({ title: 'Failed to auto-save', type: 'destructive' });
+            showError('Failed to auto-save');
           },
         },
       );
@@ -120,7 +120,7 @@ export function NoteEditor({
     linkProjectId,
     linkCardId,
     updateMutation,
-    toast,
+    showError,
   ]);
 
   useEffect(() => {
@@ -142,7 +142,7 @@ export function NoteEditor({
 
   const handleSave = () => {
     if (!title.trim()) {
-      toast({ title: 'Title is required', type: 'destructive' });
+      showError('Title is required');
       return;
     }
     clearTimeout(autoSaveTimer.current);
@@ -161,32 +161,24 @@ export function NoteEditor({
         { id: note.id, data: commonData },
         {
           onSuccess: () => {
-            toast({ title: 'Note saved' });
+            showSuccess('Note saved');
             setDirty(false);
             onSave();
           },
           onError: (error) => {
-            toast({
-              title: 'Failed to save note',
-              description: error.message,
-              type: 'destructive',
-            });
+            showError('Failed to save note', error.message);
           },
         },
       );
     } else {
       createMutation.mutate(commonData, {
         onSuccess: () => {
-          toast({ title: 'Note created' });
+          showSuccess('Note created');
           setDirty(false);
           onSave();
         },
         onError: (error) => {
-          toast({
-            title: 'Failed to create note',
-            description: error.message,
-            type: 'destructive',
-          });
+          showError('Failed to create note', error.message);
         },
       });
     }

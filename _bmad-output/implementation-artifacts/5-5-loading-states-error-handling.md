@@ -1,6 +1,6 @@
 # Story 5.5: Loading States & Error Handling
 
-Status: ready-for-dev
+Status: done
 
 ## Quick Reference
 
@@ -251,34 +251,34 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 
 ## Tasks / Subtasks
 
-- [ ] Create `Spinner` component (AC: #2) — Task #1
-  - [ ] Centralized loading spinner with size variants
-  - [ ] Props: `size?: 'sm' | 'md' | 'lg'`, `className?`
-  - [ ] Consistent styling across app
-  - [ ] Use `animate-spin` with border styling
-  - [ ] Add `role="status"` and `aria-label="Loading"` for accessibility
+- [x] Create `Spinner` component (AC: #2) — Task #1
+  - [x] Centralized loading spinner with size variants
+  - [x] Props: `size?: 'sm' | 'md' | 'lg'`, `className?`
+  - [x] Consistent styling across app
+  - [x] Use `animate-spin` with border styling
+  - [x] Add `role="status"` and `aria-label="Loading"` for accessibility
 
-- [ ] Create `ErrorState` component (AC: #3) — Task #2
-  - [ ] Reusable error display component (like `EmptyState`)
-  - [ ] Props: `title`, `message`, `onRetry?`, `retryLabel?`
-  - [ ] Red border with destructive styling
-  - [ ] Optional retry button
-  - [ ] Accessible with `role="alert"` and `aria-live="assertive"`
-  - [ ] Use error message templates (see Error Message Templates section)
+- [x] Create `ErrorState` component (AC: #3) — Task #2
+  - [x] Reusable error display component (like `EmptyState`)
+  - [x] Props: `title`, `message`, `onRetry?`, `retryLabel?`
+  - [x] Red border with destructive styling
+  - [x] Optional retry button
+  - [x] Accessible with `role="alert"` and `aria-live="assertive"`
+  - [x] Use error message templates (see Error Message Templates section)
 
-- [ ] Create skeleton preset components (AC: #1) — Task #3
-  - [ ] Create `board-list-skeleton.tsx` — grid of card-shaped skeletons
-  - [ ] Create `card-list-skeleton.tsx` — list of shorter card skeletons
-  - [ ] Create `form-skeleton.tsx` — input field skeletons with button
-  - [ ] Export all presets from `loading-skeleton.tsx` as named exports
-  - [ ] Ensure `aria-busy="true"` and `aria-label` for accessibility
+- [x] Create skeleton preset components (AC: #1) — Task #3
+  - [x] Create `board-list-skeleton.tsx` — grid of card-shaped skeletons
+  - [x] Create `card-list-skeleton.tsx` — list of shorter card skeletons
+  - [x] Create `form-skeleton.tsx` — input field skeletons with button
+  - [x] Export all presets from `loading-skeleton.tsx` as named exports
+  - [x] Ensure `aria-busy="true"` and `aria-label` for accessibility
 
-- [ ] Create `RouteErrorBoundary` component — Task #4
-  - [ ] Top-level error boundary for lazy routes
-  - [ ] Add `componentDidCatch` for error logging (see Error Boundary Logging Strategy)
-  - [ ] Fallback UI with retry mechanism (see Error Boundary Reset UX)
-  - [ ] Wrap each route group INSIDE existing `<Suspense>` in `App.tsx`
-  - [ ] Implement reset mechanism (see Error Boundary Reset Mechanism section)
+- [x] Create `RouteErrorBoundary` component — Task #4
+  - [x] Top-level error boundary for lazy routes
+  - [x] Add `componentDidCatch` for error logging (see Error Boundary Logging Strategy)
+  - [x] Fallback UI with retry mechanism (see Error Boundary Reset UX)
+  - [x] Wrap each route group INSIDE existing `<Suspense>` in `App.tsx`
+  - [x] Implement reset mechanism (see Error Boundary Reset Mechanism section)
 
 **Error Boundary vs Suspense Integration:**
 ```tsx
@@ -312,28 +312,28 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 // RouteErrorBoundary wraps INSIDE Suspense, NOT outside
 ```
 
-- [ ] Enhance toast system (AC: #3) — Task #5
-  - [ ] Add CSS transition animations for enter/exit
-  - [ ] Add `slide-in` animation from right
-  - [ ] Add `fade-out` animation on dismiss
-  - [ ] Ensure `prefers-reduced-motion` disables animations
+- [x] Enhance toast system (AC: #3) — Task #5
+  - [x] Add CSS transition animations for enter/exit
+  - [x] Add `slide-in` animation from right
+  - [x] Add `fade-out` animation on dismiss
+  - [x] Ensure `prefers-reduced-motion` disables animations
 
-- [ ] Refactor inline spinners (AC: #2) — Task #6
-  - [ ] Replace inline spinner in `app-layout.tsx` with `Spinner`
-  - [ ] Replace `LoadingFallback` in `App.tsx` with `Spinner`
-  - [ ] Standardize spinner sizes
+- [x] Refactor inline spinners (AC: #2) — Task #6
+  - [x] Replace inline spinner in `app-layout.tsx` with `Spinner`
+  - [x] Replace `LoadingFallback` in `App.tsx` with `Spinner`
+  - [x] Standardize spinner sizes
 
-- [ ] Refactor inline error states (AC: #3) — Task #7
-  - [ ] Replace copy-pasted error UI in `board-list.tsx`
-  - [ ] Replace copy-pasted error UI in `project-list.tsx`
-  - [ ] Replace copy-pasted error UI in `archived-boards.tsx`
-  - [ ] Use new `ErrorState` component
+- [x] Refactor inline error states (AC: #3) — Task #7
+  - [x] Replace copy-pasted error UI in `board-list.tsx`
+  - [x] Replace copy-pasted error UI in `project-list.tsx`
+  - [x] Replace copy-pasted error UI in `archived-boards.tsx`
+  - [x] Use new `ErrorState` component
 
-- [ ] Adopt `useToastHelpers` (AC: #3) — Task #8
-  - [ ] Replace direct `useToast()` calls with `useToastHelpers` (see Migration Plan below)
-  - [ ] Use `showSuccess()`, `showError()`, `showDestructive()` helpers
-  - [ ] Keep `useToast()` for custom action patterns (see Decision Matrix)
-  - [ ] Remove unused direct `useToast()` imports where possible
+- [x] Adopt `useToastHelpers` (AC: #3) — Task #8
+  - [x] Replace direct `useToast()` calls with `useToastHelpers` (see Migration Plan below)
+  - [x] Use `showSuccess()`, `showError()`, `showDestructive()` helpers
+  - [x] Keep `useToast()` for custom action patterns (see Decision Matrix)
+  - [x] Remove unused direct `useToast()` imports where possible
 
 **useToastHelpers Migration Plan:**
 
@@ -364,11 +364,11 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 | `checklist.tsx` | `useToast()` for success/error | MIGRATE to `useToastHelpers` |
 | `label-picker.tsx` | `useToast()` for success/error | MIGRATE to `useToastHelpers` |
 
-- [ ] Add tests for new components — Task #9
-  - [ ] Test `ErrorState` rendering and retry
-  - [ ] Test `Spinner` size variants
-  - [ ] Test `LoadingSkeleton` accessibility
-  - [ ] Test `RouteErrorBoundary` error catching and reset
+- [x] Add tests for new components — Task #9
+  - [x] Test `ErrorState` rendering and retry
+  - [x] Test `Spinner` size variants
+  - [x] Test `LoadingSkeleton` accessibility
+  - [x] Test `RouteErrorBoundary` error catching and reset
 
 ## Dev Notes
 
@@ -903,4 +903,34 @@ Test Coverage by AC:
 ### Completion Notes List
 
 ### File List
+
+**Created:**
+- `frontend/src/components/spinner.tsx`
+- `frontend/src/components/spinner.test.tsx`
+- `frontend/src/components/error-state.tsx`
+- `frontend/src/components/error-state.test.tsx`
+- `frontend/src/components/route-error-boundary.tsx`
+- `frontend/src/components/route-error-boundary.test.tsx`
+- `frontend/src/components/board-list-skeleton.tsx`
+- `frontend/src/components/board-list-skeleton.test.tsx`
+- `frontend/src/components/card-list-skeleton.tsx`
+- `frontend/src/components/card-list-skeleton.test.tsx`
+- `frontend/src/components/form-skeleton.tsx`
+- `frontend/src/components/form-skeleton.test.tsx`
+- `frontend/src/lib/error-messages.ts`
+- `frontend/src/lib/error-messages.test.ts`
+- `frontend/src/components/ui/toast-provider/toast-provider.css`
+- `frontend/src/components/ui/toast-provider/toast-provider.test.tsx`
+
+**Modified:**
+- `frontend/src/components/loading-skeleton.tsx`
+- `frontend/src/App.tsx`
+- `frontend/src/layouts/app-layout.tsx`
+- `frontend/src/features/boards/board-list.tsx`
+- `frontend/src/features/projects/project-list.tsx`
+- `frontend/src/features/boards/archived-boards.tsx`
+- `frontend/src/components/ui/toast-provider/index.tsx`
+- `frontend/src/components/ui/use-toast/context.ts`
+- `frontend/src/components/ui/use-toast.test.tsx`
+- 22 files migrated to useToastHelpers
 

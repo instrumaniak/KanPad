@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { useCreateBoard } from './use-boards';
 import { useProjects } from '../projects/use-projects';
 import { Plus } from 'lucide-react';
@@ -60,7 +60,7 @@ function CreateBoardForm({
   setName: (value: string) => void;
   setSelectedProjectId: (value: number | null) => void;
 }) {
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const createBoard = useCreateBoard();
   const { data: projectsData } = useProjects();
   const navigate = useNavigate();
@@ -75,16 +75,15 @@ function CreateBoardForm({
         name: trimmed,
         project_id: selectedProjectId,
       });
-      toast({ title: 'Board created', type: 'success' });
+      showSuccess('Board created');
       onOpenChange(false);
       onSuccess?.();
       navigate(`/board/${response.data.id}`);
     } catch (err) {
-      toast({
-        title: 'Failed to create board',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to create board',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 

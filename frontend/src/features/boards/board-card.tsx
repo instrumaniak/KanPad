@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { useUpdateBoard, useArchiveBoard, usePermanentDeleteBoard, type Board } from './use-boards';
 import { Pencil, Trash2 } from 'lucide-react';
 import {
@@ -85,7 +85,7 @@ export function InlineEditForm({
   const [name, setName] = useState(initialValue);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(projectId);
   const updateMutation = useUpdateBoard();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
 
   const handleSave = async () => {
     if (updateMutation.isPending) return;
@@ -104,14 +104,13 @@ export function InlineEditForm({
           project_id: selectedProjectId !== projectId ? selectedProjectId : undefined,
         },
       });
-      toast({ title: 'Board updated', type: 'success' });
+      showSuccess('Board updated');
       onSave();
     } catch (err) {
-      toast({
-        title: 'Failed to update board',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to update board',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 
@@ -177,7 +176,7 @@ export function DeleteDialog({
 }) {
   const archiveMutation = useArchiveBoard();
   const permanentDeleteMutation = usePermanentDeleteBoard();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const isArchiveMode = mode === 'archive';
   const mutation = isArchiveMode ? archiveMutation : permanentDeleteMutation;
@@ -192,11 +191,10 @@ export function DeleteDialog({
       onOpenChange(false);
       onDeleted();
     } catch (err) {
-      toast({
-        title: `Failed to ${isArchiveMode ? 'archive' : 'delete'} board`,
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        `Failed to ${isArchiveMode ? 'archive' : 'delete'} board`,
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 

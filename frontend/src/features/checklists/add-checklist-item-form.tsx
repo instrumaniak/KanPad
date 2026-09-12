@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useCreateChecklistItem } from './use-checklists';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 interface AddChecklistItemFormProps {
   checklistId: number;
@@ -14,7 +14,7 @@ export function AddChecklistItemForm({ checklistId, cardId, onComplete }: AddChe
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const createMutation = useCreateChecklistItem();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,7 +32,7 @@ export function AddChecklistItemForm({ checklistId, cardId, onComplete }: AddChe
           inputRef.current?.focus();
         },
         onError: (error) => {
-          toast({ title: 'Failed to add item', description: error.message, type: 'destructive' });
+          showError('Failed to add item', error.message);
         },
       },
     );

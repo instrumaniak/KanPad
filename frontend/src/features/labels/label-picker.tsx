@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Label, Card, LabelColor } from '../cards/cards.api';
 import { useLabels, useCreateLabel } from './use-labels';
 import { useAssignCardLabel, useRemoveCardLabel } from '../cards/use-cards';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -17,7 +17,7 @@ export function LabelPicker({ card }: LabelPickerProps) {
   const assignLabel = useAssignCardLabel();
   const removeLabel = useRemoveCardLabel();
   const createLabel = useCreateLabel();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState<LabelColor>('blue');
@@ -30,7 +30,7 @@ export function LabelPicker({ card }: LabelPickerProps) {
         { cardId: card.id, labelId: label.id },
         {
           onError: () => {
-            toast({ title: 'Failed to remove label', type: 'destructive' });
+            showError('Failed to remove label');
           },
         },
       );
@@ -39,7 +39,7 @@ export function LabelPicker({ card }: LabelPickerProps) {
         { cardId: card.id, labelId: label.id },
         {
           onError: () => {
-            toast({ title: 'Failed to assign label', type: 'destructive' });
+            showError('Failed to assign label');
           },
         },
       );
@@ -56,10 +56,10 @@ export function LabelPicker({ card }: LabelPickerProps) {
           setNewName('');
           setNewColor('blue');
           setIsCreating(false);
-          toast({ title: 'Label created' });
+          showSuccess('Label created');
         },
         onError: () => {
-          toast({ title: 'Failed to create label', type: 'destructive' });
+          showError('Failed to create label');
         },
       },
     );

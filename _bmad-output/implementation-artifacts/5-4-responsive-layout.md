@@ -1,6 +1,6 @@
 # Story 5.4: Responsive Layout
 
-Status: review
+Status: done
 
 ## Story
 

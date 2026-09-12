@@ -1089,18 +1089,15 @@ So that using KanbanFlow is a satisfying experience.
 **When** the card appears
 **Then** it animates in with a subtle slide-up effect
 
+**Given** I drag a card to a target column
+**When** hovering over the target card position
+**Then** a placeholder empty card appears to indicate where the drop will be
+**And** neighboring cards move (animated) to their final positions
+
 **Given** I drop a card in a new position
 **When** the drop completes
 **Then** the card settles with a subtle bounce animation
 **And** neighboring cards animate to their final positions
-
-**Given** I move a card to a "Done" column
-**When** the drop completes
-**Then** a brief checkmark micro-animation plays
-
-**Given** I create my first card on a new board
-**When** the card appears
-**Then** a subtle celebration animation plays
 
 **Given** I have `prefers-reduced-motion` enabled
 **When** animations would play

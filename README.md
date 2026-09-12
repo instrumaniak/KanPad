@@ -2,7 +2,7 @@
 
 Self-hosted _project management & note taking_ tool for solo developers & small teams.
 
-![KanPad screenshot](https://raziur.com/public_assets/projects/kanbanflow/kanbanflow-screenshot-2026-07-04-opt.png)
+![KanPad screenshot](https://raziur.com/public_assets/projects/kanpad/KanPad-09-12-2026_opt.png)
 
 ### Why?
 
@@ -30,10 +30,10 @@ _Core_:
 - [x] Card Due dates with calendar picker
 - [x] Checklists with progress tracking
 - [x] Dark mode support
-- [ ] Notes with markdown & Mermaid diagrams
+- [x] Notes with markdown & Mermaid diagrams
 - [ ] Projects (Organize boards & notes into projects)
-- [ ] Board view toggle (list/kanban)
-- [ ] Card search & filtering
+- [x] Board view toggle (list/kanban)
+- [x] Card search & filtering
 - [ ] Admin panel (user management, registration toggle, activity log)
 - [ ] Team collaboration (shared projects, boards, notes)
 - [ ] Progressive web app (PWA) support + Responsive layout
@@ -131,4 +131,5 @@ The process is same for a typical nodejs application deployment on a cPanel shar
 
 ## Acknowledgement
 
-AI assisted development tools were *heavily* used for planning & development of this project. Special thanks to `opencode` for their generous free tier.
+### AI usage
+AI assisted development tools were *heavily* used for planning & development of this project.

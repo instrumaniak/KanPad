@@ -1,0 +1,34 @@
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.toast-enter {
+  animation: slideInRight 0.3s ease-out;
+}
+
+.toast-exit {
+  animation: fadeOut 0.2s ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter,
+  .toast-exit {
+    animation: none;
+  }
+}

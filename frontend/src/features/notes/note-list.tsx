@@ -24,6 +24,7 @@ import { FileText, Plus, Search } from 'lucide-react';
 import type { Note } from './notes.api';
 import { useDeleteNote } from './use-notes';
 import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 const typeFilters = ['All', 'General', 'Board', 'Project', 'Card'] as const;
 
@@ -38,6 +39,7 @@ export function NoteList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const deleteMutation = useDeleteNote();
   const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -74,10 +76,10 @@ export function NoteList() {
         { id: noteId },
         {
           onSuccess: () => {
-            toast({ title: 'Note deleted' });
+            showSuccess('Note deleted');
           },
           onError: () => {
-            toast({ title: 'Failed to delete note', type: 'destructive' });
+            showError('Failed to delete note');
           },
         },
       );

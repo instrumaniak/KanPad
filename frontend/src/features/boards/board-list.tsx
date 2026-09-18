@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/loading-skeleton';
 import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
 import { useBoards, useRestoreBoard } from './use-boards';
 import { useProjects } from '../projects/use-projects';
 import { CreateBoardModal } from './create-board-modal';
@@ -44,15 +45,11 @@ export function BoardList() {
     return (
       <div className="mx-auto max-w-6xl">
         <h1 className="mb-6 text-2xl font-bold">My Boards</h1>
-        <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive">
-          <p className="text-sm font-medium">Failed to load boards</p>
-          <p className="text-sm opacity-80">
-            {error instanceof Error ? error.message : 'Something went wrong'}
-          </p>
-          <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
-            Retry
-          </Button>
-        </div>
+        <ErrorState
+          title="Failed to load boards"
+          message={error instanceof Error ? error.message : 'Something went wrong'}
+          onRetry={() => refetch()}
+        />
       </div>
     );
   }
@@ -149,48 +146,46 @@ export function BoardList() {
         )}
       </div>
 
-      {deleteTarget &&
-        (() => {
-          const archivedBoard = { id: deleteTarget.id, name: deleteTarget.name };
-          return (
-            <DeleteDialog
-              boardName={deleteTarget.name}
-              boardId={deleteTarget.id}
-              open={!!deleteTarget}
-              onOpenChange={(open) => {
-                if (!open) setDeleteTarget(null);
-              }}
-              onDeleted={() => {
-                setDeleteTarget(null);
-                refetch();
-                toast({
-                  title: 'Board archived',
-                  description: `"${archivedBoard.name}" has been archived.`,
-                  action: {
-                    label: 'Undo',
-                    onClick: async () => {
-                      try {
-                        await restoreMutation.mutateAsync(archivedBoard.id);
-                        refetch();
-                        toast({
-                          title: 'Board restored',
-                          description: 'The board has been restored successfully.',
-                        });
-                      } catch (err) {
-                        toast({
-                          type: 'destructive',
-                          title: 'Failed to restore board',
-                          description: err instanceof Error ? err.message : 'Something went wrong',
-                        });
-                      }
-                    },
-                  },
-                });
-              }}
-              mode="archive"
-            />
-          );
-        })()}
+      {deleteTarget && (
+        <DeleteDialog
+          boardName={deleteTarget.name}
+          boardId={deleteTarget.id}
+          open={!!deleteTarget}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+          onDeleted={() => {
+            const deletedId = deleteTarget.id;
+            const deletedName = deleteTarget.name;
+            setDeleteTarget(null);
+            refetch();
+            toast({
+              title: 'Board archived',
+              description: `"${deletedName}" has been archived.`,
+              action: {
+                label: 'Undo',
+                onClick: async () => {
+                  try {
+                    await restoreMutation.mutateAsync(deletedId);
+                    refetch();
+                    toast({
+                      title: 'Board restored',
+                      description: 'The board has been restored successfully.',
+                    });
+                  } catch (err) {
+                    toast({
+                      type: 'destructive',
+                      title: 'Failed to restore board',
+                      description: err instanceof Error ? err.message : 'Something went wrong',
+                    });
+                  }
+                },
+              },
+            });
+          }}
+          mode="archive"
+        />
+      )}
     </div>
   );
 }

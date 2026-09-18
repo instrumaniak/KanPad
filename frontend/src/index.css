@@ -379,6 +379,10 @@
   }
 }
 
+.no-native-search-cancel input[type="search"]::-webkit-search-cancel-button {
+  display: none;
+}
+
 /* === Reduced Motion: disable all animations on mobile + prefers-reduced-motion === */
 @media (prefers-reduced-motion: reduce) {
   *,

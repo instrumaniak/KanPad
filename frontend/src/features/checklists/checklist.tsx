@@ -17,7 +17,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 interface ChecklistProps {
   checklist: ChecklistType;
@@ -30,7 +30,7 @@ export function Checklist({ checklist, cardId }: ChecklistProps) {
   const [title, setTitle] = useState(checklist.title);
   const deleteMutation = useDeleteChecklist();
   const updateMutation = useUpdateChecklist();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const completedCount = checklist.items.filter((item) => item.is_completed).length;
   const totalCount = checklist.items.length;
@@ -38,7 +38,7 @@ export function Checklist({ checklist, cardId }: ChecklistProps) {
   const handleDelete = () => {
     deleteMutation.mutate({ id: checklist.id, cardId }, {
       onError: () => {
-        toast({ title: 'Failed to delete checklist', type: 'destructive' });
+        showError('Failed to delete checklist');
       },
     });
   };
@@ -55,7 +55,7 @@ export function Checklist({ checklist, cardId }: ChecklistProps) {
         {
           onError: () => {
             setTitle(checklist.title);
-            toast({ title: 'Failed to save title', type: 'destructive' });
+            showError('Failed to save title');
           },
         },
       );

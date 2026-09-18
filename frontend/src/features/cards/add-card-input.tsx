@@ -1,6 +1,6 @@
 import { useState, useRef, type KeyboardEvent, type FocusEvent, type ChangeEvent } from 'react';
 import { useCreateCard, type Card } from './use-cards';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 
 interface AddCardInputProps {
   columnId: number;
@@ -15,7 +15,7 @@ export function AddCardInput({ columnId, nextColumnId, onCardCreated, onCardCrea
   const [isCreating, setIsCreating] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const createCard = useCreateCard();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
 
   const adjustTextareaHeight = (textarea: HTMLTextAreaElement) => {
     textarea.style.height = 'auto';
@@ -58,11 +58,7 @@ export function AddCardInput({ columnId, nextColumnId, onCardCreated, onCardCrea
         } catch (err) {
           const error = err instanceof Error ? err : new Error('Failed to create card');
           onCardCreateError?.(error);
-          toast({
-            title: 'Failed to create card',
-            description: error.message,
-            type: 'error',
-          });
+          showError('Failed to create card', error.message);
         } finally {
           setIsCreating(false);
           inputRef.current?.focus();
@@ -84,11 +80,7 @@ export function AddCardInput({ columnId, nextColumnId, onCardCreated, onCardCrea
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error('Failed to create card');
-          toast({
-            title: 'Failed to create card',
-            description: error.message,
-            type: 'error',
-          });
+          showError('Failed to create card', error.message);
         } finally {
           setIsCreating(false);
         }

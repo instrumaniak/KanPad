@@ -3,6 +3,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { CSSProperties } from 'react';
 import { type Card as CardType, type DragData } from './use-cards';
 import { useState } from 'react';
+import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 
 interface CardDraggableProps {
   card: CardType;
@@ -19,6 +20,7 @@ interface CardDraggableProps {
 
 export function CardDraggable({ card, index, isDragDisabled = false, children }: CardDraggableProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const prefersReducedMotion = usePrefersReducedMotion();
   const {
     attributes,
     listeners,
@@ -35,6 +37,12 @@ export function CardDraggable({ card, index, isDragDisabled = false, children }:
       card: card,
       index,
     } as DragData & { index: number },
+    transition: prefersReducedMotion
+      ? { duration: 1, easing: 'linear' }
+      : {
+          duration: 250,
+          easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+        },
   });
 
   const style: React.CSSProperties = {

@@ -1,27 +1,49 @@
 import * as React from 'react';
 import { ToastContext, type Toast, type ToastAction, type ToastType } from '../use-toast/context';
+import './toast-provider.css';
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
+  const timeoutRefs = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  React.useEffect(() => {
+    const refs = timeoutRefs.current;
+    return () => {
+      refs.forEach((id) => clearTimeout(id));
+      refs.clear();
+    };
+  }, []);
 
   const toast = React.useCallback(
     (options: { title: string; description?: string; type?: ToastType; action?: ToastAction }) => {
-      const id = Math.random().toString(36).slice(2);
+      const id = crypto.randomUUID();
       const type = options.type || 'default';
-      setToasts((prev) => [...prev, { ...options, id, type }]);
+      setToasts((prev) => [...prev, { ...options, id, type, isExiting: false }]);
 
       const duration = type === 'destructive' && options.action ? 5000 : 3000;
       const timeoutId = setTimeout(() => {
+        timeoutRefs.current.delete(id);
         setToasts((prev) => prev.filter((t) => t.id !== id));
       }, duration);
-
-      return () => clearTimeout(timeoutId);
+      timeoutRefs.current.set(id, timeoutId);
     },
     [],
   );
 
   const dismiss = React.useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const existing = timeoutRefs.current.get(id);
+    if (existing) {
+      clearTimeout(existing);
+      timeoutRefs.current.delete(id);
+    }
+    setToasts((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, isExiting: true } : t))
+    );
+    const exitTimeoutId = setTimeout(() => {
+      timeoutRefs.current.delete(`${id}-exit`);
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 200);
+    timeoutRefs.current.set(`${id}-exit`, exitTimeoutId);
   }, []);
 
   return (
@@ -32,7 +54,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           <div
             key={t.id}
             data-testid={`toast-${t.type}`}
-            className={`rounded-lg border p-4 shadow-lg transition-all ${
+            role={t.type === 'destructive' || t.type === 'error' ? 'alert' : 'status'}
+            aria-live={t.type === 'destructive' || t.type === 'error' ? 'assertive' : 'polite'}
+            className={`toast-enter ${t.isExiting ? 'toast-exit' : ''} rounded-lg border p-4 shadow-lg transition-all ${
               t.type === 'destructive' || t.type === 'error'
                 ? 'border-destructive bg-destructive/10 text-destructive'
                 : t.type === 'success'
@@ -49,7 +73,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 {t.action && (
                   <button
                     onClick={() => {
-                      t.action!.onClick();
+                      try {
+                        t.action!.onClick();
+                      } catch (e) {
+                        console.error('Toast action failed:', e);
+                      }
                       dismiss(t.id);
                     }}
                     className="text-sm font-medium underline hover:opacity-80"
@@ -59,6 +87,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 )}
                 <button
                   onClick={() => dismiss(t.id)}
+                  aria-label="Dismiss notification"
                   className="text-muted-foreground hover:text-foreground"
                 >
                   ×

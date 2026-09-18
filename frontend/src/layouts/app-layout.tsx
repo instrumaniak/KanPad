@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Outlet, Navigate, useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/features/auth/use-auth';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/spinner';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -82,7 +83,7 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
   if (isLoading) {
     return (
       <div className="flex h-dvh items-center justify-center bg-background">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-primary" />
+        <Spinner size="md" />
       </div>
     );
   }

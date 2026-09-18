@@ -59,6 +59,17 @@ const renderWithProviders = (component: React.ReactElement) => {
 describe('UI Feedback', () => {
   beforeEach(() => {
     mockSortableState.isDragging = false;
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
   describe('CardDraggable Feedback', () => {
@@ -92,7 +103,7 @@ describe('UI Feedback', () => {
   describe('DragOverlay Feedback', () => {
     it('renders the drag overlay when a card is active (internal state check)', async () => {
        renderWithProviders(
-         <DragDropContext>
+         <DragDropContext boardId={1}>
            <div>Content</div>
          </DragDropContext>
        );

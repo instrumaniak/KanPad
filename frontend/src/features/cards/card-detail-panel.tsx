@@ -24,7 +24,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
@@ -47,7 +47,7 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
   const latestCardRef = useRef(card);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const updateCard = useUpdateCard();
-  const { toast } = useToast();
+  const { showError } = useToastHelpers();
   const { data: cardDetail, isLoading, isError, refetch } = useCard(open ? card.id : 0);
   const displayCard = cardDetail ?? card;
 
@@ -104,14 +104,14 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
           },
           onError: () => {
             setTitle(latestCardRef.current.title);
-            toast({ title: 'Failed to save title', type: 'destructive' });
+            showError('Failed to save title');
           },
         },
       );
     } else {
       isDirtyRef.current = false;
     }
-  }, [title, isSavingTitle, updateCard, safeSetIsSavingTitle, toast]);
+  }, [title, isSavingTitle, updateCard, safeSetIsSavingTitle, showError]);
 
   const handleDescriptionBlur = useCallback(() => {
     if (isSavingDescription) return;
@@ -131,14 +131,14 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
           },
           onError: () => {
             setDescription(latestCardRef.current.description ?? '');
-            toast({ title: 'Failed to save description', type: 'destructive' });
+            showError('Failed to save description');
           },
         },
       );
     } else {
       isDirtyRef.current = false;
     }
-  }, [description, isSavingDescription, updateCard, safeSetIsSavingDescription, toast]);
+  }, [description, isSavingDescription, updateCard, safeSetIsSavingDescription, showError]);
 
   const handleTitleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,16 +170,15 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
           },
           onError: (error) => {
             const message = error instanceof Error ? error.message : 'Unknown error';
-            toast({
-              title: 'Failed to save due date',
-              description: `Please try again. Error: ${message}`,
-              type: 'destructive',
-            });
+            showError(
+              'Failed to save due date',
+              `Please try again. Error: ${message}`,
+            );
           },
         },
       );
     },
-    [updateCard, toast],
+    [updateCard, showError],
   );
 
   const breakpoint = useBreakpoint();

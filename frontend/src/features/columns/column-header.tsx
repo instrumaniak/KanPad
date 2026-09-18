@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { MoreHorizontal, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, MoveHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useUpdateColumn, useDeleteColumn, useSortCards, useMoveAllCards, type Column } from './use-columns';
-import { useToast } from '@/components/ui/use-toast';
+import { useToastHelpers } from '@/lib/toast-helpers';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import {
   Dialog,
@@ -33,7 +33,7 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
   const deleteMutation = useDeleteColumn();
   const sortMutation = useSortCards();
   const moveMutation = useMoveAllCards();
-  const { toast } = useToast();
+  const { showSuccess, showError } = useToastHelpers();
   const breakpoint = useBreakpoint();
   const isMobile = breakpoint === 'mobile';
 
@@ -66,14 +66,13 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
 
     try {
       await updateMutation.mutateAsync({ id: column.id, data: { name: trimmed } });
-      toast({ title: 'Column renamed', type: 'success' });
+      showSuccess('Column renamed');
       setIsEditing(false);
     } catch (err) {
-      toast({
-        title: 'Failed to rename column',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to rename column',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
       setEditValue(column.name);
     }
   };
@@ -91,44 +90,41 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
     try {
       await deleteMutation.mutateAsync(column.id);
       setShowDeleteDialog(false);
-      toast({ title: 'Column deleted', type: 'success' });
+      showSuccess('Column deleted');
       onDeleted?.();
     } catch (err) {
-      toast({
-        title: 'Failed to delete column',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to delete column',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 
   const handleSort = async (order: 'asc' | 'desc') => {
     try {
       await sortMutation.mutateAsync({ columnId: column.id, order });
-      toast({ title: order === 'asc' ? 'Sorted: Oldest first' : 'Sorted: Newest first', type: 'success' });
+      showSuccess(order === 'asc' ? 'Sorted: Oldest first' : 'Sorted: Newest first');
       setShowSortMenu(false);
       setShowMenu(false);
     } catch (err) {
-      toast({
-        title: 'Failed to sort cards',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to sort cards',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 
   const handleMoveAll = async (targetColumnId: number) => {
     try {
       const result = await moveMutation.mutateAsync({ sourceColumnId: column.id, targetColumnId });
-      toast({ title: `${result.data.movedCount} cards moved`, type: 'success' });
+      showSuccess(`${result.data.movedCount} cards moved`);
       setShowMoveMenu(false);
       setShowMenu(false);
     } catch (err) {
-      toast({
-        title: 'Failed to move cards',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        type: 'error',
-      });
+      showError(
+        'Failed to move cards',
+        err instanceof Error ? err.message : 'Something went wrong',
+      );
     }
   };
 

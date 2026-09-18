@@ -5,6 +5,8 @@ import { AuthProvider } from './features/auth/auth-provider';
 import { ToastProvider } from './components/ui/toast-provider';
 import { useProjects } from './features/projects/use-projects';
 import { AppLayout } from './layouts/app-layout';
+import { Spinner } from './components/spinner';
+import { RouteErrorBoundary } from './components/route-error-boundary';
 
 const RegisterForm = lazy(() =>
   import('./features/auth/register-form').then((m) => ({ default: m.RegisterForm }))
@@ -48,7 +50,7 @@ function ForgotPasswordPage() {
 function LoadingFallback() {
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+      <Spinner size="lg" />
     </div>
   );
 }
@@ -77,26 +79,28 @@ function App() {
         <ToastProvider>
           <AuthProvider>
             <Suspense fallback={<LoadingFallback />}>
-              <Routes>
-              <Route path="/register" element={<RegisterForm />} />
-              <Route path="/login" element={<LoginForm />} />
-              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <RouteErrorBoundary>
+                <Routes>
+                  <Route path="/register" element={<RegisterForm />} />
+                  <Route path="/login" element={<LoginForm />} />
+                  <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-              <Route element={<AppLayoutRoute />}>
-                <Route path="/" element={<BoardList />} />
-                <Route path="/archived-boards" element={<ArchivedBoards />} />
-                <Route path="/projects" element={<ProjectList />} />
-                <Route path="/notes" element={<NotesPage />} />
-                <Route path="/notes/:id" element={<NoteDetailPage />} />
-                <Route path="/notes/:id/edit" element={<NoteEditPage />} />
-                <Route
-                  path="/board/:boardId"
-                  element={<BoardView />}
-                />
-              </Route>
+                  <Route element={<AppLayoutRoute />}>
+                    <Route path="/" element={<BoardList />} />
+                    <Route path="/archived-boards" element={<ArchivedBoards />} />
+                    <Route path="/projects" element={<ProjectList />} />
+                    <Route path="/notes" element={<NotesPage />} />
+                    <Route path="/notes/:id" element={<NoteDetailPage />} />
+                    <Route path="/notes/:id/edit" element={<NoteEditPage />} />
+                    <Route
+                      path="/board/:boardId"
+                      element={<BoardView />}
+                    />
+                  </Route>
 
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </RouteErrorBoundary>
             </Suspense>
           </AuthProvider>
         </ToastProvider>

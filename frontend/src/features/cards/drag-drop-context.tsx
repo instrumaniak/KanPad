@@ -1,6 +1,6 @@
 import { DndContext, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
-import type { DragEndEvent, DragStartEvent, DropAnimation } from '@dnd-kit/core';
+import type { DragEndEvent, DragOverEvent, DragStartEvent, DropAnimation } from '@dnd-kit/core';
 import { useCallback, useState, useMemo } from 'react';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { createPortal } from 'react-dom';
@@ -90,7 +90,7 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     }
   }, []);
 
-  const handleDragOver = useCallback((event: { active: { id: string | number; data: { current?: unknown } }; over?: { id: string | number; data: { current?: unknown } } }) => {
+  const handleDragOver = useCallback((event: DragOverEvent) => {
     // Live rearrangement for cross-column drag: update target column cards
     // but do NOT call mutations (those are handled in handleDragEnd)
     const { active, over } = event;

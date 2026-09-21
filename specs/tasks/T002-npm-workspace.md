@@ -10,7 +10,7 @@ Convert the project from two independent npm packages (backend/, frontend/) to a
 
 ## Phase:
 
-1
+0
 
 ## Critical:
 

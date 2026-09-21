@@ -10,7 +10,7 @@ Change the project name `KanbanFlow` to `KanPad` or something else. As the Kanba
 
 ## Phase:
 
-(Add phase number here)
+0
 
 ## Critical:
 

@@ -23,13 +23,14 @@ monitoringTest.describe('Drag and Drop', () => {
   });
 
   async function createBoardWithCards(page: import('@playwright/test').Page, boardName: string) {
-    await page.goto('/');
-    await page.waitForTimeout(1000);
+    const res = await page.request.post('/api/boards', {
+      data: { name: boardName },
+    });
+    const body = await res.json();
+    const boardId = body.data.id;
 
-    await page.getByRole('button', { name: 'Create Board' }).click();
-    await page.getByLabel('Board name').fill(boardName);
-    await page.getByRole('button', { name: 'Create' }).click();
-    await page.waitForTimeout(2000);
+    await page.goto(`/board/${boardId}`);
+    await page.waitForLoadState('networkidle');
 
     const columns = page.locator('[data-column-id]');
     await expect(columns.first()).toBeVisible({ timeout: 10000 });

@@ -10,7 +10,7 @@ T002 (npm workspace adoption) — root `package.json` with workspaces must exist
 
 ## Phase:
 
-2
+0
 
 ## Critical:
 

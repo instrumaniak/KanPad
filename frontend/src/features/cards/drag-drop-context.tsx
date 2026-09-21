@@ -43,6 +43,7 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [activeCard, setActiveCard] = useState<Card | null>(null);
+  const [dragSource, setDragSource] = useState<{ columnId: number; index: number } | null>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
   const dropAnimation: DropAnimation = useMemo(() => ({
     duration: prefersReducedMotion ? 1 : 300,
@@ -84,9 +85,13 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
   }, [queryClient, boardId]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    const activeData = event.active.data.current as DragData;
+    const activeData = event.active.data.current as DragData & { index?: number };
     if (activeData?.card) {
       setActiveCard(activeData.card);
+      setDragSource({
+        columnId: activeData.sourceColumnId,
+        index: activeData.index ?? 0,
+      });
     }
   }, []);
 
@@ -175,29 +180,26 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
 
     // Delay clearing activeCard until bounce animation completes
     // so the drag overlay stays visible during the settlement animation
-    setTimeout(() => setActiveCard(null), animationDuration);
+    setTimeout(() => {
+      setActiveCard(null);
+      setDragSource(null);
+    }, animationDuration);
 
     if (!over) return;
 
-    const activeData = active.data.current as DragData;
+    const activeData = active.data.current as DragData & { index?: number };
     if (!activeData || !activeData.card) return;
 
     const cardId = activeData.cardId;
     const columns = getColumns();
     if (!columns) return;
 
-    // Find which column the card is in and its position
-    let sourceColumn: Column | undefined;
-    let sourceCardIndex = -1;
-
-    for (const col of columns) {
-      const idx = col.cards.findIndex((c) => c.id === cardId);
-      if (idx !== -1) {
-        sourceColumn = col;
-        sourceCardIndex = idx;
-        break;
-      }
-    }
+    // Use original source column from drag start (captured in handleDragStart)
+    // handleDragOver may have already moved the card optimistically in the cache
+    if (!dragSource) return;
+    const sourceColumnId = dragSource.columnId;
+    const sourceCardIndex = dragSource.index;
+    const sourceColumn = columns.find((col) => col.id === sourceColumnId);
 
     if (!sourceColumn || sourceCardIndex === -1) return;
 
@@ -287,7 +289,7 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
           }
           if (col.id === targetColumnId) {
             const movedCard = { ...activeData.card, column_id: targetColumnId, position: insertIndex };
-            const newCards = [...col.cards];
+            const newCards = col.cards.filter((c) => c.id !== cardId);
             newCards.splice(insertIndex, 0, movedCard);
             return { ...col, cards: newCards.map((c, i) => ({ ...c, position: i })) };
           }
@@ -303,10 +305,11 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
         queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
       }
     }
-  }, [moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns, prefersReducedMotion]);
+  }, [dragSource, moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns, prefersReducedMotion]);
 
   const handleDragCancel = useCallback(() => {
     setActiveCard(null);
+    setDragSource(null);
     queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
   }, [queryClient, boardId]);
 

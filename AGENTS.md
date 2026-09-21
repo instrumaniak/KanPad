@@ -15,6 +15,7 @@
 - Parallel Independent Task Execution with context: Use sub-agents for tasks that can be independently done in a background process.
 - after implementation check for errors, run tests, fix linting or type check error
 - Follow project coding conventions & community best practices.
+- add the lessons you learned while implementing tasks & fixing issues in this file (AGENTS.md) so that next time you are better prepared.
 
 ## DB data & migration safety first
 
@@ -24,3 +25,25 @@
 
 - For ALL data modification endpoints, tests MUST verify actual database state, not just API response.
 - For every PATCH/POST/DELETE test, add ONE additional assertion that verifies persistence via a different API call or DB query.
+
+## Frontend API Layer Conventions
+
+- API response types (`ApiResponse<T>`, `ListResponse<T>`, `ApiError`) must be defined in `@/lib/api`, not duplicated across feature API files.
+- Use `apiFetch<T>()` helper instead of raw `fetch()` + `handleResponse()` in API files.
+- Don't copy-paste `FETCH_OPTIONS` or `handleResponse` into each API file.
+
+## React Query Conventions
+
+- Use targeted cache invalidation (`['columns', boardId]`) not global (`['columns']`) unless you need to invalidate all instances.
+- When multiple handlers read from the same cache, capture original state at interaction start in React state. Don't assume cache is unchanged between handlers.
+- In drag-drop code, `handleDragEnd` must use `dragSource` state from `handleDragStart`, not `getColumns()` which may be stale.
+
+## Frontend E2E Test Patterns
+
+- Test setup (creating boards, columns, cards) must use API calls, not UI interactions. UI is only for the behavior under test.
+- Never use `waitForTimeout()` in E2E tests. Use `waitForLoadState('networkidle')`, element assertions, or `page.waitForSelector()` instead.
+
+## Frontend Code Quality
+
+- Use Radix UI components (`DropdownMenu`, `Dialog`) for menus and modals instead of manual implementations with `useRef` and absolute positioning.
+- Don't use `document.querySelector` for focus management - use React refs or callback props instead.

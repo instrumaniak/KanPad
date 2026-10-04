@@ -1,11 +1,11 @@
 ## Project Specification References
 
-- `_bmad-output/project-context.md`
-- `_bmad-output/planning-artifacts/prd.md`
-- `_bmad-output/planning-artifacts/architecture.md`
-- `_bmad-output/planning-artifacts/ux-design-specification.md`
-- `_bmad-output/planning-artifacts/epics.md`
-- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `specs/project-context.md`
+- `specs/planning-artifacts/prd.md`
+- `specs/planning-artifacts/architecture.md`
+- `specs/planning-artifacts/ux-design-specification.md`
+- `specs/planning-artifacts/epics.md`
+- `specs/implementation-artifacts/sprint-status.yaml`
 
 ## General Agent Instructions
 

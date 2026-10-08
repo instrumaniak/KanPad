@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Letters } from 'lucide-react';
 import type { Card as CardType } from './use-cards';
 import type { ReactNode } from 'react';
 import { LabelBadge } from '../labels/label-badge';
@@ -11,28 +12,33 @@ interface CardPreviewProps {
 }
 
 export function CardPreview({ card, actions }: CardPreviewProps) {
-  const dueDateBadge = useMemo(
-    () => getDueDateBadge(card.due_date),
-    [card.due_date],
-  );
+  const dueDateBadge = useMemo(() => getDueDateBadge(card.due_date), [card.due_date]);
+  const hasCornerContent = card.has_description || !!actions;
 
   return (
     <>
-      <div className="flex items-start justify-between gap-2">
+      <div className={`relative flex items-start gap-2${hasCornerContent ? ' pr-6' : ''}`}>
         <span className="flex-1 break-words">{card.title}</span>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
+        {hasCornerContent && (
+          <div className="absolute top-0 right-0 flex items-start gap-1">
+            {card.has_description && (
+              <Letters
+                role="img"
+                className="h-4 w-4 shrink-0 text-muted-foreground"
+                aria-label="Has description"
+                data-testid="card-description-icon"
+              />
+            )}
+            {actions ? <div className="shrink-0">{actions}</div> : null}
+          </div>
+        )}
       </div>
 
       {card.labels && card.labels.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
-          {card.labels.slice(0, 3).map((label) => (
+          {card.labels.map((label) => (
             <LabelBadge key={label.id} label={label} />
           ))}
-          {card.labels.length > 3 && (
-            <span className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              +{card.labels.length - 3}
-            </span>
-          )}
         </div>
       )}
 

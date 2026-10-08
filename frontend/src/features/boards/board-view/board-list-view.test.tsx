@@ -189,7 +189,7 @@ describe('BoardListView', () => {
     });
   });
 
-  it('shows +N overflow when more than 3 labels', () => {
+  it('shows all labels without overflow truncation', () => {
     const manyLabels = [1, 2, 3, 4, 5].map((i) => ({
       id: i,
       name: `L${i}`,
@@ -199,7 +199,16 @@ describe('BoardListView', () => {
     }));
     const colMany = { ...col1, cards: [{ ...col1.cards[0], labels: manyLabels }] };
     render(<BoardListView boardId={1} columns={[colMany, col2] as never} />);
-    expect(screen.getByText('+2')).toBeInTheDocument();
+    for (let i = 1; i <= 5; i++) {
+      expect(screen.getByText(`L${i}`)).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/\+\d+/)).not.toBeInTheDocument();
+  });
+
+  it('shows description icon when card has_description is true', () => {
+    const colDesc = { ...col1, cards: [{ ...col1.cards[0], has_description: true }] };
+    render(<BoardListView boardId={1} columns={[colDesc, col2] as never} />);
+    expect(screen.getByLabelText('Has description')).toBeInTheDocument();
   });
 
   it('disables sort controls when empty', () => {

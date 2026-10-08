@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './features/auth/auth-provider';
 import { ToastProvider } from './components/ui/toast-provider';
-import { useProjects } from './features/projects/use-projects';
 import { AppLayout } from './layouts/app-layout';
 import { Spinner } from './components/spinner';
 import { RouteErrorBoundary } from './components/route-error-boundary';
@@ -55,11 +54,6 @@ function LoadingFallback() {
   );
 }
 
-function AppLayoutRoute() {
-  const { data: projectsData } = useProjects();
-  return <AppLayout projectsData={projectsData} />;
-}
-
 function App() {
   const [queryClient] = useState(
     () =>
@@ -85,7 +79,7 @@ function App() {
                   <Route path="/login" element={<LoginForm />} />
                   <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-                  <Route element={<AppLayoutRoute />}>
+                  <Route element={<AppLayout />}>
                     <Route path="/" element={<BoardList />} />
                     <Route path="/archived-boards" element={<ArchivedBoards />} />
                     <Route path="/projects" element={<ProjectList />} />

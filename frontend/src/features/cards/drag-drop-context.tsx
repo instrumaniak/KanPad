@@ -164,7 +164,15 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
               return { ...col, cards: col.cards.filter((c) => c.id !== cardId) };
             }
             if (col.id === targetColumnId) {
-              const movedCard = { ...activeData.card, column_id: targetColumnId, position: insertIndex };
+              const movedCard = {
+                ...activeData.card,
+                // Columns-cache cards always carry the flag (backend source of
+                // truth); DragData types it optional, so default for the type.
+                // Runtime behavior is unchanged (undefined was already falsy).
+                has_description: activeData.card.has_description ?? false,
+                column_id: targetColumnId,
+                position: insertIndex,
+              };
               const newCards = [...col.cards];
               newCards.splice(insertIndex, 0, movedCard);
               return { ...col, cards: newCards.map((c, i) => ({ ...c, position: i })) };
@@ -290,7 +298,15 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
             return { ...col, cards: col.cards.filter((c) => c.id !== cardId) };
           }
           if (col.id === targetColumnId) {
-            const movedCard = { ...activeData.card, column_id: targetColumnId, position: insertIndex };
+            const movedCard = {
+              ...activeData.card,
+              // Columns-cache cards always carry the flag (backend source of
+              // truth); DragData types it optional, so default for the type.
+              // Runtime behavior is unchanged (undefined was already falsy).
+              has_description: activeData.card.has_description ?? false,
+              column_id: targetColumnId,
+              position: insertIndex,
+            };
             const newCards = col.cards.filter((c) => c.id !== cardId);
             newCards.splice(insertIndex, 0, movedCard);
             return { ...col, cards: newCards.map((c, i) => ({ ...c, position: i })) };

@@ -11,6 +11,11 @@ import { Board } from '../boards/entities/board.entity';
 import { Card } from '../cards/entities/card.entity';
 import { CreateColumnDto } from './dto/create-column.dto';
 import { UpdateColumnDto } from './dto/update-column.dto';
+import {
+  attachChecklistProgress,
+  attachDescriptionFlags,
+  buildCardSummaryQuery,
+} from '../common/card-summary.helpers';
 
 @Injectable()
 export class ColumnsService {
@@ -34,46 +39,53 @@ export class ColumnsService {
 
     const columns = await this.columnRepository.find({
       where: { board_id: boardId },
-      relations: ['cards', 'cards.cardLabels', 'cards.cardLabels.label'],
       order: { position: 'ASC' },
     });
+
+    if (columns.length === 0) {
+      return columns;
+    }
+
+    const columnIds = columns.map((c) => c.id);
+    const cardsByColumn = await this.findSummaryCardsByColumnIds(columnIds);
+
+    for (const column of columns) {
+      column.cards = (cardsByColumn.get(column.id) ?? []).sort((a, b) => a.position - b.position);
+    }
 
     await this.enrichWithProgress(columns);
 
     return columns;
   }
 
+  // List-query helper: loads card summaries without SELECTing description TEXT.
+  // has_description comes from SQL CASE (boolean only); progress via batch aggregation.
+  private async findSummaryCardsByColumnIds(columnIds: number[]): Promise<Map<number, Card[]>> {
+    if (columnIds.length === 0) {
+      return new Map<number, Card[]>();
+    }
+
+    const cards = await buildCardSummaryQuery(this.cardRepository)
+      .where('card.column_id IN (:...columnIds)', { columnIds })
+      .orderBy('card.position', 'ASC')
+      .getMany();
+
+    if (cards.length > 0) {
+      await attachDescriptionFlags(this.cardRepository, cards);
+    }
+
+    const byColumn = new Map<number, Card[]>();
+    for (const card of cards) {
+      const list = byColumn.get(card.column_id) ?? [];
+      list.push(card);
+      byColumn.set(card.column_id, list);
+    }
+    return byColumn;
+  }
+
   private async enrichWithProgress(columns: BoardColumn[]): Promise<void> {
-    const cardIds = columns.flatMap((col) => col.cards.map((c) => c.id));
-    if (cardIds.length === 0) return;
-
-    const placeholders = cardIds.map(() => '?').join(',');
-    const progressRaw: { card_id: number; total: number; completed: number }[] =
-      await this.cardRepository.query(
-        `SELECT cl.card_id, COUNT(ci.id) AS total, COALESCE(SUM(ci.is_completed), 0) AS completed
-         FROM checklists cl
-         LEFT JOIN checklist_items ci ON ci.checklist_id = cl.id
-         WHERE cl.card_id IN (${placeholders})
-         GROUP BY cl.card_id`,
-        cardIds,
-      );
-
-    const progressMap = new Map<number, { completed: number; total: number; percent: number }>();
-    for (const row of progressRaw) {
-      const total = Number(row.total);
-      const completed = Number(row.completed);
-      progressMap.set(row.card_id, {
-        completed,
-        total,
-        percent: total === 0 ? 0 : Math.round((completed / total) * 100),
-      });
-    }
-
-    for (const column of columns) {
-      for (const card of column.cards) {
-        card.checklist_progress = progressMap.get(card.id);
-      }
-    }
+    const cards = columns.flatMap((col) => col.cards);
+    await attachChecklistProgress(this.cardRepository, cards);
   }
 
   async create(boardId: number, userId: number, dto: CreateColumnDto): Promise<BoardColumn> {
@@ -149,18 +161,15 @@ export class ColumnsService {
 
     const sortedColumn = await this.columnRepository.findOne({
       where: { id },
-      relations: ['cards', 'cards.cardLabels', 'cards.cardLabels.label'],
-      order: { position: 'ASC' },
     });
     if (!sortedColumn) {
       throw new NotFoundException('Column not found');
     }
-    return sortedColumn;
-  }
 
-  private async findOneByIdWithCards(id: number, userId: number): Promise<BoardColumn> {
-    await this.findOneById(id, userId);
-    return (await this.columnRepository.findOne({ where: { id }, relations: ['board', 'cards'] }))!;
+    const cardsByColumn = await this.findSummaryCardsByColumnIds([id]);
+    sortedColumn.cards = (cardsByColumn.get(id) ?? []).sort((a, b) => a.position - b.position);
+    await this.enrichWithProgress([sortedColumn]);
+    return sortedColumn;
   }
 
   async moveAllCards(

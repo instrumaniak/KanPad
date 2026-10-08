@@ -47,3 +47,9 @@
 
 - Use Radix UI components (`DropdownMenu`, `Dialog`) for menus and modals instead of manual implementations with `useRef` and absolute positioning.
 - Don't use `document.querySelector` for focus management - use React refs or callback props instead.
+
+## Lessons Learned
+
+- Backend shared list-enrichment (`has_description`, `checklist_progress`, card summary select) lives in `backend/src/common/card-summary.helpers.ts` as pure functions taking `Repository<Card>`. Don't reintroduce per-service copies in `cards.service.ts` / `columns.service.ts`.
+- Don't place shared helpers inside `cards/` or `columns/` feature folders — cross-feature imports risk circular deps (`arch-avoid-circular-deps`). Use neutral `src/common/`.
+- Backend unit-spec mocks: avoid `as any` (triggers `@typescript-eslint/no-unsafe-*`). Use `as unknown as Repository<T>` + `jest.Mock` typed helpers, and assert on the mock variable directly instead of `expect(repo.method)` (avoids `@typescript-eslint/unbound-method`).

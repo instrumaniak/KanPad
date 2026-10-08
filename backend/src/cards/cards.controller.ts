@@ -21,8 +21,10 @@ import { UpdateCardDto } from './dto/update-card.dto';
 import {
   CardResponse,
   CardDetailResponse,
+  CardSummaryResponse,
   toCardResponse,
   toCardDetailResponse,
+  toCardSummaryResponse,
 } from './dto/card-response.dto';
 
 interface SessionData {
@@ -42,9 +44,9 @@ export class CardsController {
   async findAll(
     @Session() session: SessionData,
     @Param('columnId', ParseIntPipe) columnId: number,
-  ): Promise<{ data: CardResponse[] }> {
+  ): Promise<{ data: CardSummaryResponse[] }> {
     const cards = await this.cardsService.findAllByColumnId(columnId, session.userId);
-    return { data: cards.map(toCardResponse) };
+    return { data: cards.map(toCardSummaryResponse) };
   }
 
   @Post('cards')

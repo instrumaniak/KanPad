@@ -18,7 +18,11 @@ describe('CardsController', () => {
     updated_at: string;
   };
 
-  type CardListResponse = { data: CardPayload[] };
+  type CardSummaryPayload = Omit<CardPayload, 'description'> & {
+    has_description: boolean;
+  };
+
+  type CardListResponse = { data: CardSummaryPayload[] };
   type CardMutationResponse = { data: CardPayload; message: string };
 
   const mockCardsService: jest.Mocked<
@@ -56,45 +60,52 @@ describe('CardsController', () => {
   });
 
   describe('findAll', () => {
-    it('should return cards for a column', async () => {
+    it('should return card summaries with has_description and no description', async () => {
       const cards = [
         {
           id: 1,
           title: 'Card 1',
           column_id: 1,
           position: 0,
-          description: null,
+          has_description: false,
           due_date: null,
           created_at: new Date(),
           updated_at: new Date(),
+          cardLabels: [],
         },
         {
           id: 2,
           title: 'Card 2',
           column_id: 1,
           position: 1,
-          description: 'A description',
+          description: 'full TEXT that must never leak on lists',
+          has_description: true,
           due_date: new Date('2026-01-01'),
           created_at: new Date(),
           updated_at: new Date(),
+          cardLabels: [],
         },
       ];
-      mockCardsService.findAllByColumnId.mockResolvedValue(cards as Card[]);
+      mockCardsService.findAllByColumnId.mockResolvedValue(cards as unknown as Card[]);
 
       const result = (await controller.findAll({ userId: 1 }, 1)) as CardListResponse;
 
       expect(result.data).toHaveLength(2);
       expect(result.data).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: 1, title: 'Card 1', description: null, due_date: null }),
+          expect.objectContaining({ id: 1, title: 'Card 1', has_description: false, due_date: null }),
           expect.objectContaining({
             id: 2,
             title: 'Card 2',
-            description: 'A description',
+            has_description: true,
             due_date: expect.any(String) as unknown,
           }),
         ]),
       );
+      // Summary contract: no description TEXT leaked on lists
+      for (const card of result.data) {
+        expect(card).not.toHaveProperty('description');
+      }
     });
   });
 

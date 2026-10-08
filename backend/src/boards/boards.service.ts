@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Board } from './entities/board.entity';
 import { BoardColumn } from '../columns/entities/column.entity';
+import { Project } from '../projects/entities/project.entity';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
 
@@ -13,6 +14,8 @@ export class BoardsService {
     private readonly boardRepository: Repository<Board>,
     @InjectRepository(BoardColumn)
     private readonly columnRepository: Repository<BoardColumn>,
+    @InjectRepository(Project)
+    private readonly projectRepository: Repository<Project>,
   ) {}
 
   async findAllByUserId(
@@ -86,15 +89,22 @@ export class BoardsService {
       board.background_color = dto.background_color;
     }
     if (dto.project_id !== undefined) {
-      if (dto.project_id !== null) {
-        const project = await this.boardRepository.manager.findOne('project', {
+      if (dto.project_id === null) {
+        board.project_id = null;
+        board.project = null;
+      } else {
+        const project = await this.projectRepository.findOne({
           where: { id: dto.project_id, user_id: userId },
         });
         if (!project) {
           throw new ForbiddenException('Project not found or access denied');
         }
+        // Keep the FK column and the relation in sync: the entity maps both
+        // `project_id` (@Column) and `project` (@ManyToOne on the same column),
+        // and save() persists the FK from the relation side.
+        board.project_id = project.id;
+        board.project = project;
       }
-      board.project_id = dto.project_id;
     }
     if (dto.view_mode === 'board' || dto.view_mode === 'list') {
       board.view_mode = dto.view_mode;

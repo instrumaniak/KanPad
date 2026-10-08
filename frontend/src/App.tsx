@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './features/auth/auth-provider';
 import { ToastProvider } from './components/ui/toast-provider';
+import { GuestRoute } from './features/auth/guest-route';
 import { AppLayout } from './layouts/app-layout';
 import { Spinner } from './components/spinner';
 import { RouteErrorBoundary } from './components/route-error-boundary';
@@ -75,9 +76,11 @@ function App() {
             <Suspense fallback={<LoadingFallback />}>
               <RouteErrorBoundary>
                 <Routes>
-                  <Route path="/register" element={<RegisterForm />} />
-                  <Route path="/login" element={<LoginForm />} />
-                  <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                  <Route element={<GuestRoute />}>
+                    <Route path="/register" element={<RegisterForm />} />
+                    <Route path="/login" element={<LoginForm />} />
+                    <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                  </Route>
 
                   <Route element={<AppLayout />}>
                     <Route path="/" element={<BoardList />} />

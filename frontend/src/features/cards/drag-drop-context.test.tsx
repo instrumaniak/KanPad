@@ -76,7 +76,7 @@ describe('DragDropContext', () => {
     expect(screen.getByTestId('children')).toBeInTheDocument();
   });
 
-  it('configures TouchSensor with 500ms activation delay', () => {
+  it('configures TouchSensor so tap-and-hold opens context menu instead of drag', () => {
     renderWithProviders(
       <DragDropContext boardId={1}>
         <div>Content</div>
@@ -87,8 +87,10 @@ describe('DragDropContext', () => {
       (call: [{ name: string }]) => call[0]?.name === 'TouchSensor',
     );
     expect(touchCall).toBeDefined();
-    expect(touchCall[1].activationConstraint.delay).toBe(500);
-    expect(touchCall[1].activationConstraint.tolerance).toBe(5);
+    // Radix ContextMenu long-press is 700ms — drag delay must exceed it.
+    expect(touchCall[1].activationConstraint.delay).toBeGreaterThan(700);
+    expect(touchCall[1].activationConstraint.delay).toBe(750);
+    expect(touchCall[1].activationConstraint.tolerance).toBe(8);
   });
 
   it('provides bounce easing drop animation to DragOverlay', () => {

@@ -3,13 +3,13 @@ import { useDeleteCard, useCreateCard, type Card as CardType } from './use-cards
 import { CardDraggable } from './card-draggable';
 import { CardDetailPanel } from './card-detail-panel';
 import { CardPreview } from './card-preview';
-import { MoreHorizontal, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,7 +20,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { useToastHelpers } from '@/lib/toast-helpers';
 
@@ -33,13 +32,22 @@ interface CardProps {
 export function Card({ card, index, isNew }: CardProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
+  // Suppress only the synthetic click that immediately follows a touch
+  // long-press (menu open), not the next legitimate click minutes later.
+  const suppressUntilRef = useRef(0);
   const deleteCard = useDeleteCard();
   const createCardMutation = useCreateCard();
   const { toast } = useToast();
   const { showSuccess, showError } = useToastHelpers();
 
   const handleClick = (e: React.MouseEvent) => {
+    if (Date.now() < suppressUntilRef.current) {
+      suppressUntilRef.current = 0;
+      pointerDownPos.current = null;
+      return;
+    }
     if (pointerDownPos.current) {
       const dx = e.clientX - pointerDownPos.current.x;
       const dy = e.clientY - pointerDownPos.current.y;
@@ -98,53 +106,51 @@ export function Card({ card, index, isNew }: CardProps) {
     });
   };
 
+  const openDeleteDialog = () => setShowDeleteDialog(true);
+
+  const handleContextMenuOpenChange = (open: boolean) => {
+    setContextMenuOpen(open);
+    if (open) {
+      // Long-press on touch fires a synthetic click after; suppress clicks
+      // only within a short window so later legitimate clicks still work.
+      suppressUntilRef.current = Date.now() + 500;
+    }
+  };
+
   return (
     <>
-      <CardDraggable card={card} index={index} isDragDisabled={false}>
+      <CardDraggable card={card} index={index} isDragDisabled={contextMenuOpen}>
         {({ isDragging }) => (
-          <div
-            role="button"
-            tabIndex={0}
-            aria-label="Open card details"
-            className={`group rounded bg-card p-3 text-sm shadow-sm hover:bg-accent/50 cursor-pointer ${isNew ? 'animate-slide-up' : ''} ${isDragging ? 'shadow-lg scale-[1.02]' : ''}`}
-            onClick={handleClick}
-            onPointerDown={handlePointerDown}
-            onKeyDown={handleKeyDown}
-            style={{
-              cursor: isDragging ? 'grabbing' : 'grab',
-            }}
-          >
-            <CardPreview
-              card={card}
-              actions={
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="p-1 h-auto opacity-0 group-hover:opacity-100 focus:opacity-100"
-                      aria-label="Card menu"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowDeleteDialog(true);
-                      }}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              }
-            />
-          </div>
+          <ContextMenu onOpenChange={handleContextMenuOpenChange}>
+            <ContextMenuTrigger asChild disabled={isDragging}>
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Open card details"
+                aria-haspopup="menu"
+                title="Right-click for card menu"
+                className={`relative rounded bg-card p-3 text-sm shadow-sm hover:bg-accent/50 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring ${isNew ? 'animate-slide-up' : ''} ${isDragging ? 'shadow-lg scale-[1.02]' : ''}`}
+                onClick={handleClick}
+                onPointerDown={handlePointerDown}
+                onKeyDown={handleKeyDown}
+                onContextMenu={(e) => e.stopPropagation()}
+                style={{
+                  cursor: isDragging ? 'grabbing' : 'grab',
+                }}
+              >
+                <CardPreview card={card} />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent onClick={(e) => e.stopPropagation()}>
+              <ContextMenuItem
+                onSelect={openDeleteDialog}
+                className="text-destructive focus:text-destructive"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         )}
       </CardDraggable>
       <CardDetailPanel card={card} open={isPanelOpen} onOpenChange={setIsPanelOpen} />

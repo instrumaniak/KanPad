@@ -64,8 +64,10 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     }),
     useSensor(TouchSensor, {
       activationConstraint: {
-        delay: 500,
-        tolerance: 5,
+        // Must exceed Radix ContextMenu long-press (700ms) so tap-and-hold
+        // opens the menu when stationary instead of starting a drag.
+        delay: 750,
+        tolerance: 8,
       },
     }),
     useSensor(KeyboardSensor, {

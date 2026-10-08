@@ -129,6 +129,25 @@ describe('Card', () => {
 
       expect(screen.queryByText(/\s{3}/)).not.toBeInTheDocument();
     });
+
+    it('shows description icon on the tile when has_description is true', () => {
+      renderWithProviders(<Card card={{ ...mockCard, has_description: true }} index={0} />);
+
+      expect(screen.getByTestId('card-description-icon')).toBeInTheDocument();
+    });
+
+    it('hides description icon on the tile when has_description is false', () => {
+      renderWithProviders(<Card card={{ ...mockCard, has_description: false }} index={0} />);
+
+      expect(screen.queryByTestId('card-description-icon')).not.toBeInTheDocument();
+    });
+
+    it('exposes the context menu to assistive technology', () => {
+      renderWithProviders(<Card card={mockCard} index={0} />);
+
+      const cardDiv = screen.getByRole('button', { name: /open card details/i });
+      expect(cardDiv).toHaveAttribute('aria-haspopup', 'menu');
+    });
   });
 
   describe('Card labels display', () => {
@@ -167,10 +186,35 @@ describe('Card', () => {
   });
 
   describe('Card menu and deletion', () => {
-    it('shows card menu trigger button', () => {
+    it('does not render a hover menu button — context menu is right-click only', () => {
       renderWithProviders(<Card card={mockCard} index={0} />);
-      const menuButton = screen.getByRole('button', { name: /card menu/i });
-      expect(menuButton).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /card menu/i })).not.toBeInTheDocument();
+    });
+
+    it('opens context menu on right-click without opening detail panel', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<Card card={mockCard} index={0} />);
+
+      const cardDiv = screen.getByRole('button', { name: /open card details/i });
+      await user.pointer({ target: cardDiv, keys: '[MouseRight]' });
+      fireEvent.contextMenu(cardDiv);
+
+      const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
+      expect(deleteItem).toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('opens delete dialog from context menu', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<Card card={mockCard} index={0} />);
+
+      const cardDiv = screen.getByRole('button', { name: /open card details/i });
+      fireEvent.contextMenu(cardDiv);
+
+      const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
+      await user.click(deleteItem);
+
+      expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
     });
 
     it('calls delete mutation when confirming delete', async () => {
@@ -181,11 +225,8 @@ describe('Card', () => {
 
       renderWithProviders(<Card card={mockCard} index={0} />);
 
-      const card = screen.getByText('Test Card').closest('div')!;
-      await user.hover(card);
-
-      const menuButton = screen.getByRole('button', { name: /card menu/i });
-      await user.click(menuButton);
+      const cardDiv = screen.getByRole('button', { name: /open card details/i });
+      fireEvent.contextMenu(cardDiv);
 
       const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
       await user.click(deleteItem);
@@ -213,11 +254,8 @@ describe('Card', () => {
 
         renderWithProviders(<Card card={mockCard} index={0} />);
 
-        const card = screen.getByText('Test Card').closest('div')!;
-        await user.hover(card);
-
-        const menuButton = screen.getByRole('button', { name: /card menu/i });
-        await user.click(menuButton);
+        const cardDiv = screen.getByRole('button', { name: /open card details/i });
+        fireEvent.contextMenu(cardDiv);
 
         const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
         await user.click(deleteItem);
@@ -256,11 +294,8 @@ describe('Card', () => {
 
         renderWithProviders(<Card card={mockCard} index={0} />);
 
-        const card = screen.getByText('Test Card').closest('div')!;
-        await user.hover(card);
-
-        const menuButton = screen.getByRole('button', { name: /card menu/i });
-        await user.click(menuButton);
+        const cardDiv = screen.getByRole('button', { name: /open card details/i });
+        fireEvent.contextMenu(cardDiv);
 
         const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
         await user.click(deleteItem);
@@ -295,11 +330,8 @@ describe('Card', () => {
 
         renderWithProviders(<Card card={mockCard} index={0} />);
 
-        const card = screen.getByText('Test Card').closest('div')!;
-        await user.hover(card);
-
-        const menuButton = screen.getByRole('button', { name: /card menu/i });
-        await user.click(menuButton);
+        const cardDiv = screen.getByRole('button', { name: /open card details/i });
+        fireEvent.contextMenu(cardDiv);
 
         const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
         await user.click(deleteItem);
@@ -332,11 +364,8 @@ describe('Card', () => {
 
         renderWithProviders(<Card card={mockCard} index={0} />);
 
-        const card = screen.getByText('Test Card').closest('div')!;
-        await user.hover(card);
-
-        const menuButton = screen.getByRole('button', { name: /card menu/i });
-        await user.click(menuButton);
+        const cardDiv = screen.getByRole('button', { name: /open card details/i });
+        fireEvent.contextMenu(cardDiv);
 
         const deleteItem = await screen.findByRole('menuitem', { name: /delete/i });
         await user.click(deleteItem);

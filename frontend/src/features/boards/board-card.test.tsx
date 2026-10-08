@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
-import { BoardCard, InlineEditForm, DeleteDialog } from './board-card';
+import { BoardCard, DeleteDialog } from './board-card';
 import { ToastProvider } from '@/components/ui/toast-provider';
 
 vi.mock('react-router-dom', async () => {
@@ -98,63 +98,6 @@ describe('BoardCard', () => {
     renderWithToastAndRouter(<BoardCard board={boardWithProject} onEdit={vi.fn()} onDelete={vi.fn()} />);
     
     expect(screen.getByText('My Project')).toBeInTheDocument();
-  });
-});
-
-describe('InlineEditForm', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('renders with initial value', () => {
-    renderWithToastAndRouter(
-      <InlineEditForm
-        initialValue="Test Board"
-        boardId={1}
-        backgroundColor="#0079BF"
-        projectId={null}
-        projects={[]}
-        onSave={vi.fn()}
-        onCancel={vi.fn()}
-      />
-    );
-    
-    const input = screen.getByLabelText('Board name');
-    expect(input).toHaveValue('Test Board');
-  });
-
-  it('renders project select', () => {
-    renderWithToastAndRouter(
-      <InlineEditForm
-        initialValue="Test"
-        boardId={1}
-        backgroundColor="#0079BF"
-        projectId={null}
-        projects={[]}
-        onSave={vi.fn()}
-        onCancel={vi.fn()}
-      />
-    );
-    
-    expect(screen.getByLabelText('Board name')).toHaveValue('Test');
-    expect(screen.getByText('Project')).toBeInTheDocument();
-  });
-
-  it('calls onCancel on Escape key', () => {
-    const onCancel = vi.fn();
-    renderWithToastAndRouter(
-      <InlineEditForm
-        initialValue="Test"
-        boardId={1}
-        backgroundColor="#0079BF"
-        projectId={null}
-        projects={[]}
-        onSave={vi.fn()}
-        onCancel={onCancel}
-      />
-    );
-    
-    const input = screen.getByLabelText('Board name');
-    fireEvent.keyDown(input, { key: 'Escape' });
-    expect(onCancel).toHaveBeenCalled();
   });
 });
 

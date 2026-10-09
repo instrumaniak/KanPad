@@ -4,6 +4,7 @@ import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { BoardsService } from './boards.service';
 import { Board } from './entities/board.entity';
 import { BoardColumn } from '../columns/entities/column.entity';
+import { Project } from '../projects/entities/project.entity';
 
 describe('BoardsService', () => {
   let service: BoardsService;
@@ -22,12 +23,17 @@ describe('BoardsService', () => {
     save: jest.fn(),
   };
 
+  const mockProjectRepository = {
+    findOne: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BoardsService,
         { provide: getRepositoryToken(Board), useValue: mockBoardRepository },
         { provide: getRepositoryToken(BoardColumn), useValue: mockColumnRepository },
+        { provide: getRepositoryToken(Project), useValue: mockProjectRepository },
       ],
     }).compile();
 
@@ -158,17 +164,65 @@ describe('BoardsService', () => {
 
     it('should throw ForbiddenException if project not found or access denied', async () => {
       const board = { id: 1, name: 'Board', background_color: '#0079BF', user_id: 1 };
-      const mockManager = {
-        findOne: jest.fn().mockResolvedValue(null),
-      };
-      const repositoryWithManager = mockBoardRepository as typeof mockBoardRepository & {
-        manager: typeof mockManager;
-      };
-      repositoryWithManager.manager = mockManager;
 
       mockBoardRepository.findOne.mockResolvedValue(board as Board);
+      mockProjectRepository.findOne.mockResolvedValue(null);
 
       await expect(service.update(1, 1, { project_id: 999 })).rejects.toThrow(ForbiddenException);
+      expect(mockProjectRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 999, user_id: 1 },
+      });
+    });
+
+    it('should assign project and persist', async () => {
+      const board = {
+        id: 1,
+        name: 'Board',
+        background_color: '#0079BF',
+        user_id: 1,
+        project_id: null,
+        project: null,
+      };
+      const project = { id: 4, user_id: 1 } as Project;
+      const updatedBoard = { ...board, project_id: 4, project };
+
+      mockBoardRepository.findOne.mockResolvedValue(board as unknown as Board);
+      mockProjectRepository.findOne.mockResolvedValue(project);
+      mockBoardRepository.save.mockResolvedValue(updatedBoard as unknown as Board);
+
+      const result = await service.update(1, 1, { project_id: 4 });
+
+      expect(result.project_id).toBe(4);
+      expect(mockBoardRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: 4, project }),
+      );
+
+      // Verify persistence via follow-up findOne DB query (not just response)
+      mockBoardRepository.findOne.mockResolvedValue(updatedBoard as unknown as Board);
+      const persisted = await service.findOne(1, 1);
+      expect(persisted.project_id).toBe(4);
+    });
+
+    it('should unassign project (null) and clear the relation', async () => {
+      const board = {
+        id: 1,
+        name: 'Board',
+        background_color: '#0079BF',
+        user_id: 1,
+        project_id: 4,
+        project: { id: 4, user_id: 1 },
+      };
+
+      mockBoardRepository.findOne.mockResolvedValue(board as unknown as Board);
+      mockBoardRepository.save.mockImplementation((b: unknown) => Promise.resolve(b as Board));
+
+      const result = await service.update(1, 1, { project_id: null });
+
+      expect(result.project_id).toBeNull();
+      expect(mockBoardRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: null, project: null }),
+      );
+      expect(mockProjectRepository.findOne).not.toHaveBeenCalled();
     });
 
     it('should update view_mode from board to list and persist', async () => {

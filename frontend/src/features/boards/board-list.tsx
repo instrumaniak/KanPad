@@ -3,38 +3,26 @@ import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/loading-skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorState } from '@/components/error-state';
-import { useBoards, useRestoreBoard } from './use-boards';
-import { useProjects } from '../projects/use-projects';
-import { CreateBoardModal } from './create-board-modal';
-import { BoardCard, InlineEditForm, DeleteDialog } from './board-card';
+import { useBoards, useRestoreBoard, type Board } from './use-boards';
+import { BoardFormModal } from './board-form-modal';
+import { BoardCard, DeleteDialog } from './board-card';
 import { useToast } from '@/components/ui/use-toast';
 import { Plus, Layout, Archive, FolderKanban } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export function BoardList() {
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingBoard, setEditingBoard] = useState<{ id: number; name: string } | null>(null);
+  const [editingBoard, setEditingBoard] = useState<Board | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
   const { data: boardsData, isLoading, isError, error, refetch } = useBoards();
-  const { data: projectsData } = useProjects();
   const restoreMutation = useRestoreBoard();
   const { toast } = useToast();
 
   const boards = boardsData?.data ?? [];
-  const projects = projectsData?.data ?? [];
 
-  const handleEdit = useCallback((id: number, name: string) => {
-    setEditingBoard({ id, name });
-  }, []);
-
-  const handleEditSave = useCallback(() => {
-    setEditingBoard(null);
-    refetch();
-  }, [refetch]);
-
-  const handleEditCancel = useCallback(() => {
-    setEditingBoard(null);
+  const handleEdit = useCallback((board: Board) => {
+    setEditingBoard(board);
   }, []);
 
   const handleDelete = useCallback((id: number, name: string) => {
@@ -83,7 +71,8 @@ export function BoardList() {
             onClick: () => setShowCreateModal(true),
           }}
         />
-        <CreateBoardModal
+        <BoardFormModal
+          mode="create"
           open={showCreateModal}
           onOpenChange={setShowCreateModal}
           onSuccess={() => refetch()}
@@ -118,35 +107,37 @@ export function BoardList() {
 
       {isLoading ? <LoadingSkeleton /> : null}
 
-      {showCreateModal && (
-        <div className="mb-6">
-          <CreateBoardModal
-            open={showCreateModal}
-            onOpenChange={setShowCreateModal}
-            onSuccess={() => refetch()}
-          />
-        </div>
-      )}
-
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-        {boards.map((board) =>
-          editingBoard?.id === board.id ? (
-            <InlineEditForm
-              key={board.id}
-              initialValue={editingBoard.name}
-              boardId={board.id}
-              projectId={board.project_id}
-              projects={projects}
-              onSave={handleEditSave}
-              onCancel={handleEditCancel}
-            />
-          ) : (
-            <BoardCard key={board.id} board={board} onEdit={handleEdit} onDelete={handleDelete} />
-          ),
-        )}
+        {boards.map((board) => (
+          <BoardCard key={board.id} board={board} onEdit={handleEdit} onDelete={handleDelete} />
+        ))}
       </div>
 
-      {deleteTarget && (
+      <BoardFormModal
+        mode="create"
+        open={showCreateModal}
+        onOpenChange={setShowCreateModal}
+        onSuccess={() => refetch()}
+      />
+
+      <BoardFormModal
+        mode="edit"
+        open={editingBoard ? true : false}
+        onOpenChange={(open) => {
+          if (!open) setEditingBoard(null);
+        }}
+        onSuccess={() => {
+          setEditingBoard(null);
+          refetch();
+        }}
+        initialBoard={
+          editingBoard
+            ? { id: editingBoard.id, name: editingBoard.name, project_id: editingBoard.project_id }
+            : null
+        }
+      />
+
+      {deleteTarget ? (
         <DeleteDialog
           boardName={deleteTarget.name}
           boardId={deleteTarget.id}
@@ -185,7 +176,7 @@ export function BoardList() {
           }}
           mode="archive"
         />
-      )}
+      ) : null}
     </div>
   );
 }

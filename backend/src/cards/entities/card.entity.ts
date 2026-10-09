@@ -58,4 +58,7 @@ export class Card {
   checklists!: Checklist[];
 
   checklist_progress?: { completed: number; total: number; percent: number };
+
+  // Transient, populated by list queries via SQL CASE — never selected as TEXT.
+  has_description?: boolean;
 }

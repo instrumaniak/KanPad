@@ -8,6 +8,8 @@ describe('CardPreview', () => {
     title: 'Preview Card',
     column_id: 1,
     position: 0,
+    has_description: false,
+    due_date: null as string | null,
     labels: [
       { id: 1, name: 'Bug', color: 'red', created_at: '2024-01-01', updated_at: '2024-01-01' },
       { id: 2, name: 'Feature', color: 'green', created_at: '2024-01-01', updated_at: '2024-01-01' },
@@ -33,14 +35,49 @@ describe('CardPreview', () => {
     dateNowSpy.mockRestore();
   });
 
-  it('renders the shared card body content', () => {
+  it('renders the shared card body content with all labels', () => {
     render(<CardPreview card={{ ...baseCard, due_date: null }} />);
 
     expect(screen.getByText('Preview Card')).toBeInTheDocument();
     expect(screen.getByText('Bug')).toBeInTheDocument();
     expect(screen.getByText('Feature')).toBeInTheDocument();
     expect(screen.getByText('Urgent')).toBeInTheDocument();
-    expect(screen.getByText('+1')).toBeInTheDocument();
+    expect(screen.getByText('Important')).toBeInTheDocument();
+    expect(screen.queryByText(/\+\d+/)).not.toBeInTheDocument();
+  });
+
+  it('shows description icon when has_description is true', () => {
+    render(<CardPreview card={{ ...baseCard, due_date: null, has_description: true }} />);
+
+    expect(screen.getByLabelText('Has description')).toBeInTheDocument();
+    expect(screen.getByTestId('card-description-icon')).toBeInTheDocument();
+  });
+
+  it('hides description icon when has_description is false', () => {
+    render(<CardPreview card={{ ...baseCard, due_date: null, has_description: false }} />);
+
+    expect(screen.queryByLabelText('Has description')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('card-description-icon')).not.toBeInTheDocument();
+  });
+
+  it('pins description icon and actions top-right of the title row', () => {
+    const { container } = render(
+      <CardPreview
+        card={{ ...baseCard, due_date: null, has_description: true }}
+        actions={<button type="button">Menu</button>}
+      />,
+    );
+
+    const header = container.firstChild as HTMLElement | null;
+    expect(header?.className).toContain('relative');
+    expect(header?.className).toContain('pr-6');
+
+    const icon = screen.getByTestId('card-description-icon');
+    const cluster = icon.closest('div');
+    expect(cluster?.className).toContain('absolute');
+    expect(cluster?.className).toContain('right-0');
+    expect(cluster?.className).toContain('top-0');
+    expect(cluster?.textContent).toContain('Menu');
   });
 
   it('renders optional actions beside the title', () => {

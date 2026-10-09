@@ -11,6 +11,9 @@ export interface Card {
   title: string;
   column_id: number;
   position: number;
+  // Board columns list returns CardSummaryResponse (backend source of truth):
+  // has_description boolean, no description TEXT.
+  has_description: boolean;
   due_date: string | null;
   labels?: Label[];
   checklist_progress?: { completed: number; total: number; percent: number };

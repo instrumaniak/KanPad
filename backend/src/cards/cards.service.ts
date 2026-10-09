@@ -7,6 +7,7 @@ import { Label } from '../labels/entities/label.entity';
 import { CreateCardDto } from './dto/create-card.dto';
 import { UpdateCardDto } from './dto/update-card.dto';
 import { BoardColumn } from '../columns/entities/column.entity';
+import { attachCardListEnrichments, buildCardSummaryQuery } from '../common/card-summary.helpers';
 
 @Injectable()
 export class CardsService {
@@ -51,11 +52,21 @@ export class CardsService {
   async findAllByColumnId(columnId: number, userId: number): Promise<Card[]> {
     await this.findColumnById(columnId, userId);
 
-    return this.cardRepository.find({
-      where: { column_id: columnId },
-      relations: ['cardLabels', 'cardLabels.label', 'checklists', 'checklists.items'],
-      order: { position: 'ASC' },
-    });
+    // Query-level performance: never SELECT description TEXT on lists.
+    // has_description is computed via SQL CASE (boolean only, no TEXT transfer).
+    // Checklist progress uses batch aggregation, not checklist/item row loading.
+    const cards = await buildCardSummaryQuery(this.cardRepository)
+      .where('card.column_id = :columnId', { columnId })
+      .orderBy('card.position', 'ASC')
+      .getMany();
+
+    if (cards.length === 0) {
+      return cards;
+    }
+
+    await attachCardListEnrichments(this.cardRepository, cards);
+
+    return cards;
   }
 
   async update(id: number, userId: number, dto: UpdateCardDto): Promise<Card> {

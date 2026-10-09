@@ -32,13 +32,25 @@ export interface Card {
   title: string;
   column_id: number;
   position: number;
-  description: string | null;
+  // List responses (GET columns/:id/cards, GET boards/:id/columns) return
+  // has_description only — description TEXT is never selected (backend source of truth).
+  // Detail responses (GET/POST/PATCH /cards) return full description.
+  description?: string | null;
+  has_description?: boolean;
   due_date: string | null;
   labels?: Label[];
   checklists?: ChecklistData[];
   checklist_progress?: { completed: number; total: number; percent: number };
   created_at: string;
   updated_at: string;
+}
+
+export interface CardSummary extends Card {
+  has_description: boolean;
+}
+
+export interface CardDetail extends Card {
+  description: string | null;
 }
 
 export interface ApiResponse<T> {
@@ -125,7 +137,7 @@ export async function deleteCard(id: number): Promise<ApiResponse<void>> {
   return handleResponse(response);
 }
 
-export async function fetchCards(columnId: number): Promise<ApiResponse<Card[]>> {
+export async function fetchCards(columnId: number): Promise<ApiResponse<CardSummary[]>> {
   let response: Response;
   try {
     response = await fetch(`/api/columns/${columnId}/cards`, FETCH_OPTIONS);
@@ -150,7 +162,7 @@ export async function assignLabelToCard(cardId: number, labelId: number): Promis
   return handleResponse(response);
 }
 
-export async function fetchCard(id: number): Promise<ApiResponse<Card>> {
+export async function fetchCard(id: number): Promise<ApiResponse<CardDetail>> {
   let response: Response;
   try {
     response = await fetch(`/api/cards/${id}`, FETCH_OPTIONS);

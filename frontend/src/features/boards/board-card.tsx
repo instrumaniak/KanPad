@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { useToastHelpers } from '@/lib/toast-helpers';
-import { useUpdateBoard, useArchiveBoard, usePermanentDeleteBoard, type Board } from './use-boards';
+import { useArchiveBoard, usePermanentDeleteBoard, type Board } from './use-boards';
 import { Pencil, Trash2 } from 'lucide-react';
 import {
   Dialog,
@@ -16,7 +14,7 @@ import {
 
 interface BoardCardProps {
   board: Board;
-  onEdit: (id: number, name: string) => void;
+  onEdit: (board: Board) => void;
   onDelete: (id: number, name: string) => void;
 }
 
@@ -37,7 +35,7 @@ export function BoardCard({ board, onEdit, onDelete }: BoardCardProps) {
             className="h-7 w-7"
             onClick={(e) => {
               e.stopPropagation();
-              onEdit(board.id, board.name);
+              onEdit(board);
             }}
             aria-label={`Edit board ${board.name}`}
           >
@@ -60,101 +58,6 @@ export function BoardCard({ board, onEdit, onDelete }: BoardCardProps) {
       {board.project && (
         <div className="text-xs text-muted-foreground">{board.project.name}</div>
       )}
-    </div>
-  );
-}
-
-interface InlineEditFormProps {
-  initialValue: string;
-  boardId: number;
-  projectId: number | null;
-  projects: Array<{ id: number; name: string }>;
-  onSave: () => void;
-  onCancel: () => void;
-  backgroundColor?: string;
-}
-
-export function InlineEditForm({
-  initialValue,
-  boardId,
-  projectId,
-  projects,
-  onSave,
-  onCancel,
-}: InlineEditFormProps) {
-  const [name, setName] = useState(initialValue);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(projectId);
-  const updateMutation = useUpdateBoard();
-  const { showSuccess, showError } = useToastHelpers();
-
-  const handleSave = async () => {
-    if (updateMutation.isPending) return;
-
-    const trimmed = name.trim();
-    if (!trimmed || (trimmed === initialValue && selectedProjectId !== projectId)) {
-      onCancel();
-      return;
-    }
-
-    try {
-      await updateMutation.mutateAsync({
-        id: boardId,
-        data: {
-          name: trimmed !== initialValue ? trimmed : undefined,
-          project_id: selectedProjectId !== projectId ? selectedProjectId : undefined,
-        },
-      });
-      showSuccess('Board updated');
-      onSave();
-    } catch (err) {
-      showError(
-        'Failed to update board',
-        err instanceof Error ? err.message : 'Something went wrong',
-      );
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSave();
-    } else if (e.key === 'Escape') {
-      onCancel();
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="mb-3">
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={handleSave}
-          aria-label="Board name"
-          autoFocus
-          onFocus={(e) => e.currentTarget.select()}
-          className="font-semibold"
-          disabled={updateMutation.isPending}
-        />
-      </div>
-
-      <div>
-        <label className="text-sm font-medium">Project</label>
-        <select
-          value={selectedProjectId ?? ''}
-          onChange={(e) =>
-            setSelectedProjectId(e.target.value ? parseInt(e.target.value, 10) : null)
-          }
-          className="mt-1 flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-        >
-          <option value="">No project</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </div>
     </div>
   );
 }

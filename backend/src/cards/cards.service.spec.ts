@@ -24,6 +24,7 @@ describe('CardsService', () => {
     findOne: jest.fn(),
     remove: jest.fn(),
     update: jest.fn(),
+    query: jest.fn(),
     createQueryBuilder: jest.fn(),
   };
 
@@ -176,6 +177,90 @@ describe('CardsService', () => {
           due_date: new Date('2026-01-01'),
         }),
       );
+    });
+  });
+
+  describe('findAllByColumnId (summary, no description TEXT)', () => {
+    const mockQbForCards = (cards: unknown[], flags: unknown[]) => {
+      const qb: Record<string, jest.Mock> = {};
+      qb.select = jest.fn().mockReturnValue(qb);
+      qb.addSelect = jest.fn().mockReturnValue(qb);
+      qb.leftJoinAndSelect = jest.fn().mockReturnValue(qb);
+      qb.where = jest.fn().mockReturnValue(qb);
+      qb.orderBy = jest.fn().mockReturnValue(qb);
+      qb.getMany = jest.fn().mockResolvedValue(cards);
+      qb.getRawMany = jest.fn().mockResolvedValue(flags);
+      mockCardRepository.createQueryBuilder.mockImplementation(() => qb);
+      return qb;
+    };
+
+    it('should return cards with has_description flags and progress, without description', async () => {
+      mockColumnRepository.findOne.mockResolvedValue(mockColumn);
+      const mockCards = [
+        { id: 1, title: 'Card 1', column_id: 1, position: 0 },
+        { id: 2, title: 'Card 2', column_id: 1, position: 1 },
+      ];
+      const qb = mockQbForCards(mockCards, [
+        { id: 1, has_description: 0 },
+        { id: 2, has_description: 1 },
+      ]);
+      mockCardRepository.query.mockResolvedValueOnce([{ card_id: 2, total: 2, completed: 1 }]);
+
+      const result = await service.findAllByColumnId(1, mockUserId);
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toMatchObject({ id: 1, has_description: false });
+      expect(result[1]).toMatchObject({ id: 2, has_description: true });
+      expect(result[1].checklist_progress).toEqual({ completed: 1, total: 2, percent: 50 });
+      expect(result[0]).not.toHaveProperty('description');
+      // Verify main select excludes description
+      expect(qb.select).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          'card.id',
+          'card.title',
+          'card.column_id',
+          'card.position',
+          'card.due_date',
+          'card.created_at',
+          'card.updated_at',
+        ]),
+      );
+      const selectedCols: string[] = qb.select.mock.calls[0][0];
+      expect(selectedCols.join(' ')).not.toContain('description');
+      // Flag query computes has_description via SQL, never selecting TEXT
+      expect(qb.addSelect).toHaveBeenCalledWith(
+        expect.stringContaining('CASE WHEN'),
+        'has_description',
+      );
+    });
+
+    it('should coerce string flags from raw queries to boolean', async () => {
+      mockColumnRepository.findOne.mockResolvedValue(mockColumn);
+      const mockCards = [
+        { id: 1, title: 'Card 1', column_id: 1, position: 0 },
+        { id: 2, title: 'Card 2', column_id: 1, position: 1 },
+      ];
+      // MySQL getRawMany returns strings, not numbers
+      mockQbForCards(mockCards, [
+        { id: '1', has_description: '0' },
+        { id: '2', has_description: '1' },
+      ]);
+      mockCardRepository.query.mockResolvedValueOnce([]);
+
+      const result = await service.findAllByColumnId(1, mockUserId);
+
+      expect(result[0]).toMatchObject({ id: 1, has_description: false });
+      expect(result[1]).toMatchObject({ id: 2, has_description: true });
+    });
+
+    it('should return empty array without extra queries when no cards', async () => {
+      mockColumnRepository.findOne.mockResolvedValue(mockColumn);
+      mockQbForCards([], []);
+
+      const result = await service.findAllByColumnId(1, mockUserId);
+
+      expect(result).toEqual([]);
+      expect(mockCardRepository.query).not.toHaveBeenCalled();
     });
   });
 

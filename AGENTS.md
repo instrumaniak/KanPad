@@ -1,11 +1,11 @@
 ## Project Specification References
 
-- `_bmad-output/project-context.md`
-- `_bmad-output/planning-artifacts/prd.md`
-- `_bmad-output/planning-artifacts/architecture.md`
-- `_bmad-output/planning-artifacts/ux-design-specification.md`
-- `_bmad-output/planning-artifacts/epics.md`
-- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `specs/project-context.md`
+- `specs/planning-artifacts/prd.md`
+- `specs/planning-artifacts/architecture.md`
+- `specs/planning-artifacts/ux-design-specification.md`
+- `specs/planning-artifacts/epics.md`
+- `specs/implementation-artifacts/sprint-status.yaml`
 
 ## General Agent Instructions
 
@@ -47,3 +47,17 @@
 
 - Use Radix UI components (`DropdownMenu`, `Dialog`) for menus and modals instead of manual implementations with `useRef` and absolute positioning.
 - Don't use `document.querySelector` for focus management - use React refs or callback props instead.
+
+## Lessons Learned
+
+- Backend shared list-enrichment (`has_description`, `checklist_progress`, card summary select) lives in `backend/src/common/card-summary.helpers.ts` as pure functions taking `Repository<Card>`. Don't reintroduce per-service copies in `cards.service.ts` / `columns.service.ts`.
+- Don't place shared helpers inside `cards/` or `columns/` feature folders — cross-feature imports risk circular deps (`arch-avoid-circular-deps`). Use neutral `src/common/`.
+- Backend unit-spec mocks: avoid `as any` (triggers `@typescript-eslint/no-unsafe-*`). Use `as unknown as Repository<T>` + `jest.Mock` typed helpers, and assert on the mock variable directly instead of `expect(repo.method)` (avoids `@typescript-eslint/unbound-method`).
+- Frontend board create/edit shares one `BoardFormModal(mode)` + top-level `BoardFormFields` in `features/boards/board-form-modal.tsx`. Don't reintroduce `InlineEditForm` in `board-card.tsx` or per-mode form copies. Reset edit state via `key={edit-${id}}` remount, not `useEffect` prop-to-state sync. `BoardCard.onEdit` passes full `Board` (incl. `project_id`), modal self-fetches projects via `useProjects`.
+- Backend `Board` maps `project_id` twice (`@Column` + `@ManyToOne/@JoinColumn` on the same column). `save()` persists the FK from the **relation side**: when updating `project_id`, always set `board.project` too (entity or `null`), never the FK column alone. Ownership checks must use an injected `Repository<Project>` (`TypeOrmModule.forFeature` + `@InjectRepository(Project)`) — never `manager.findOne('project', ...)` string lookup (throws 500).
+- `npx shadcn@latest add <component>` can misresolve the `@` alias (check `info --json` `resolvedPaths`): after adding, verify placement with `git status`. Move stray `@/components/ui/*.tsx` into `src/components/ui/`, fix the generated `from "cn"` import to `@/lib/utils`, and remove the bogus `cn` npm dep it adds (`radix-ui` meta package already covers Select/Dialog primitives).
+- Radix `SelectItem` values must be non-empty strings — never `value=""`. For a "No project" null-option use a sentinel (e.g. `NO_PROJECT_VALUE = 'none'`) mapped back to `null` in `onValueChange`.
+- Radix `Select` in vitest/jsdom needs `Element.prototype.hasPointerCapture` / `setPointerCapture` / `releasePointerCapture` / `scrollIntoView` mocks in `src/test-setup.ts`; drive it with `user-event` click on the `combobox` trigger + `findByRole('option')`, not `fireEvent.change`. `<label htmlFor>` associates with `SelectTrigger`'s `<button>` (button is labelable), so `getByLabelText` / `getByRole('combobox', { name })` keep working after migrating from native `<select>`.
+- Chained create-then-use mutations (e.g. create project → create board in `BoardFormModal`): cache the first result in a `useRef` keyed by input so a second-step failure + retry reuses it instead of duplicating/orphaning. Guard the submit handler with a synchronous `submittingRef` (React Query `isPending` flips only after re-render, so rapid double submits slip through). While any mutation is pending, block Dialog dismissal: guard `Dialog onOpenChange` in the modal shell (pending state lifted via `onPendingChange`) and `preventDefault()` `onInteractOutside`/`onEscapeKeyDown` on `DialogContent`.
+- Assert navigation in modal tests by partially mocking `react-router-dom` (`vi.hoisted` for the `mockNavigate` + `importOriginal` spread keeps `MemoryRouter` real). Deterministic double-submit race test: two synchronous `fireEvent.click`s back-to-back (no `await` between) — the second handler must hit the ref guard before microtasks flush.
+- Split modal close paths: user dismissal (`Dialog onOpenChange`, Cancel) goes through the pending guard; programmatic submit closes (success, pristine) use a raw `onClose` prop — the guard would see the just-set `submittingRef` and refuse to close. Cache chained-creation results in a `Map<key, id>` (not a single entry) so A→B→A rename sequences don't duplicate.

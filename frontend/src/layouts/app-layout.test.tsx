@@ -70,25 +70,25 @@ describe('AppLayout', () => {
   });
 
   it('renders header with app name', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
+    renderWithRouter(<AppLayout />);
 
     expect(screen.getByText('KanPad')).toBeInTheDocument();
   });
 
   it('renders user email in header', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
+    renderWithRouter(<AppLayout />);
 
     expect(screen.getByText('test@example.com')).toBeInTheDocument();
   });
 
   it('renders theme toggle button', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
+    renderWithRouter(<AppLayout />);
 
     expect(screen.getByLabelText('Toggle theme')).toBeInTheDocument();
   });
 
   it('renders Outlet for nested routes', () => {
-    renderWithRouter(<AppLayout projectsData={{ data: [], total: 0 }} />);
+    renderWithRouter(<AppLayout />);
 
     expect(screen.getByTestId('outlet')).toBeInTheDocument();
   });
@@ -97,7 +97,7 @@ describe('AppLayout', () => {
     render(
       <MemoryRouter initialEntries={['/boards/42']}>
         <Routes>
-          <Route path="/boards/:boardId" element={<AppLayout projectsData={{ data: [], total: 0 }} />} />
+          <Route path="/boards/:boardId" element={<AppLayout />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -110,7 +110,7 @@ describe('AppLayout', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <Routes>
-          <Route path="/" element={<AppLayout projectsData={{ data: [], total: 0 }} />} />
+          <Route path="/" element={<AppLayout />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -124,7 +124,7 @@ describe('AppLayout', () => {
     render(
       <MemoryRouter initialEntries={['/boards/42']}>
         <Routes>
-          <Route path="/boards/:boardId" element={<AppLayout projectsData={{ data: [], total: 0 }} />} />
+          <Route path="/boards/:boardId" element={<AppLayout />} />
         </Routes>
       </MemoryRouter>,
     );

@@ -76,6 +76,19 @@ describe('ColumnsService', () => {
     manager: mockCardManager,
   };
 
+  const mockQueryBuilderForCards = (cards: unknown[], flags: unknown[]) => {
+    const qb: Record<string, jest.Mock> = {};
+    qb.select = jest.fn().mockReturnValue(qb);
+    qb.addSelect = jest.fn().mockReturnValue(qb);
+    qb.leftJoinAndSelect = jest.fn().mockReturnValue(qb);
+    qb.where = jest.fn().mockReturnValue(qb);
+    qb.orderBy = jest.fn().mockReturnValue(qb);
+    qb.getMany = jest.fn().mockResolvedValue(cards);
+    qb.getRawMany = jest.fn().mockResolvedValue(flags);
+    mockCardRepository.createQueryBuilder.mockImplementation(() => qb);
+    return qb;
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -103,27 +116,74 @@ describe('ColumnsService', () => {
   });
 
   describe('findAllByBoardId', () => {
-    it('should return columns for a board', async () => {
+    it('should return columns for a board without selecting description', async () => {
       const mockBoard = { id: 1, user_id: 1 };
       const mockColumns = [
-        { id: 1, name: 'To Do', position: 0, board_id: 1, cards: [] },
-        { id: 2, name: 'In Progress', position: 1, board_id: 1, cards: [] },
+        { id: 1, name: 'To Do', position: 0, board_id: 1 },
+        { id: 2, name: 'In Progress', position: 1, board_id: 1 },
       ];
 
       mockBoardRepository.findOne.mockResolvedValue(mockBoard);
       mockColumnRepository.find.mockResolvedValue(mockColumns);
+      const qb = mockQueryBuilderForCards([], []);
 
       const result = await service.findAllByBoardId(1, 1);
 
-      expect(result).toEqual(mockColumns);
+      expect(result).toHaveLength(2);
+      expect(result[0].cards).toEqual([]);
       expect(mockBoardRepository.findOne).toHaveBeenCalledWith({
         where: { id: 1, user_id: 1 },
       });
       expect(mockColumnRepository.find).toHaveBeenCalledWith({
         where: { board_id: 1 },
-        relations: ['cards', 'cards.cardLabels', 'cards.cardLabels.label'],
         order: { position: 'ASC' },
       });
+      // Main card query must not request description TEXT
+      expect(qb.select).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          'card.id',
+          'card.title',
+          'card.column_id',
+          'card.position',
+          'card.due_date',
+          'card.created_at',
+          'card.updated_at',
+        ]),
+      );
+      const selectedCols: string[] = qb.select.mock.calls[0][0];
+      expect(selectedCols.join(' ')).not.toContain('description');
+    });
+
+    it('should attach has_description flags without selecting description TEXT', async () => {
+      const mockBoard = { id: 1, user_id: 1 };
+      const mockColumns = [{ id: 1, name: 'To Do', position: 0, board_id: 1 }];
+      const mockCards = [
+        { id: 1, title: 'Card 1', column_id: 1, position: 0 },
+        { id: 2, title: 'Card 2', column_id: 1, position: 1 },
+      ];
+
+      mockBoardRepository.findOne.mockResolvedValue(mockBoard);
+      mockColumnRepository.find.mockResolvedValue(mockColumns);
+      const qb = mockQueryBuilderForCards(mockCards, [
+        { id: 1, has_description: 0 },
+        { id: 2, has_description: 1 },
+      ]);
+      mockCardRepository.query.mockResolvedValueOnce([]);
+
+      const result = await service.findAllByBoardId(1, 1);
+
+      expect(result[0].cards).toHaveLength(2);
+      expect(result[0].cards[0]).toMatchObject({ id: 1, has_description: false });
+      expect(result[0].cards[1]).toMatchObject({ id: 2, has_description: true });
+      for (const card of result[0].cards) {
+        expect(card).not.toHaveProperty('description');
+      }
+      // Flag query computes has_description via SQL CASE, never selecting TEXT
+      expect(qb.addSelect).toHaveBeenCalledWith(
+        expect.stringContaining('CASE WHEN'),
+        'has_description',
+      );
+      expect(qb.addSelect.mock.calls[0][0]).not.toContain('card.description,');
     });
 
     it('should attach checklist_progress to cards via batch aggregation', async () => {
@@ -134,12 +194,13 @@ describe('ColumnsService', () => {
           name: 'To Do',
           position: 0,
           board_id: 1,
-          cards: [{ id: 1, title: 'Card 1', column_id: 1, position: 0 }],
         },
       ];
+      const mockCards = [{ id: 1, title: 'Card 1', column_id: 1, position: 0 }];
 
       mockBoardRepository.findOne.mockResolvedValue(mockBoard);
       mockColumnRepository.find.mockResolvedValue(mockColumns);
+      mockQueryBuilderForCards(mockCards, [{ id: 1, has_description: 0 }]);
       mockCardRepository.query.mockResolvedValueOnce([{ card_id: 1, total: 3, completed: 1 }]);
 
       const result = await service.findAllByBoardId(1, 1);
@@ -160,12 +221,13 @@ describe('ColumnsService', () => {
           name: 'To Do',
           position: 0,
           board_id: 1,
-          cards: [{ id: 1, title: 'Card 1', column_id: 1, position: 0 }],
         },
       ];
+      const mockCards = [{ id: 1, title: 'Card 1', column_id: 1, position: 0 }];
 
       mockBoardRepository.findOne.mockResolvedValue(mockBoard);
       mockColumnRepository.find.mockResolvedValue(mockColumns);
+      mockQueryBuilderForCards(mockCards, [{ id: 1, has_description: false }]);
       mockCardRepository.query.mockResolvedValueOnce([]);
 
       const result = await service.findAllByBoardId(1, 1);
@@ -181,12 +243,13 @@ describe('ColumnsService', () => {
           name: 'To Do',
           position: 0,
           board_id: 1,
-          cards: [{ id: 1, title: 'Card 1', column_id: 1, position: 0 }],
         },
       ];
+      const mockCards = [{ id: 1, title: 'Card 1', column_id: 1, position: 0 }];
 
       mockBoardRepository.findOne.mockResolvedValue(mockBoard);
       mockColumnRepository.find.mockResolvedValue(mockColumns);
+      mockQueryBuilderForCards(mockCards, [{ id: 1, has_description: 1 }]);
       mockCardRepository.query.mockResolvedValueOnce([{ card_id: 1, total: 0, completed: 0 }]);
 
       const result = await service.findAllByBoardId(1, 1);
@@ -328,34 +391,43 @@ describe('ColumnsService', () => {
   });
 
   describe('sortCards', () => {
-    it('should sort cards by created_at ascending', async () => {
+    it('should sort cards by created_at ascending without selecting description', async () => {
       const mockColumn = {
         id: 1,
         name: 'To Do',
         board: { user_id: 1 },
-        cards: [
-          { id: 1, title: 'Card 1', created_at: new Date('2026-01-01'), position: 0 },
-          { id: 2, title: 'Card 2', created_at: new Date('2026-01-02'), position: 1 },
-        ],
       };
+      const cardsForSort = [
+        { id: 1, title: 'Card 1', created_at: new Date('2026-01-01'), position: 0 },
+        { id: 2, title: 'Card 2', created_at: new Date('2026-01-02'), position: 1 },
+      ];
+      const summaryCards = [
+        { id: 2, title: 'Card 2', column_id: 1, position: 0 },
+        { id: 1, title: 'Card 1', column_id: 1, position: 1 },
+      ];
 
-      mockColumnRepository.findOne.mockResolvedValueOnce(mockColumn).mockResolvedValueOnce({
-        ...mockColumn,
-        cards: [
-          { id: 2, title: 'Card 2', created_at: new Date('2026-01-02'), position: 0 },
-          { id: 1, title: 'Card 1', created_at: new Date('2026-01-01'), position: 1 },
-        ],
-      });
-      mockCardRepository.find.mockResolvedValue(mockColumn.cards);
+      mockColumnRepository.findOne
+        .mockResolvedValueOnce(mockColumn)
+        .mockResolvedValueOnce({ ...mockColumn });
+      mockCardRepository.find.mockResolvedValue(cardsForSort);
       mockCardRepository.save.mockResolvedValue([]);
+      mockQueryBuilderForCards(summaryCards, [
+        { id: 1, has_description: 0 },
+        { id: 2, has_description: 1 },
+      ]);
+      mockCardRepository.query.mockResolvedValueOnce([]);
 
-      await service.sortCards(1, 1, 'asc');
+      const result = await service.sortCards(1, 1, 'asc');
 
       expect(mockCardRepository.find).toHaveBeenCalledWith({
         where: { column_id: 1 },
         order: { created_at: 'ASC' },
       });
       expect(mockCardRepository.save).toHaveBeenCalledTimes(1);
+      expect(result.cards).toHaveLength(2);
+      for (const card of result.cards) {
+        expect(card).not.toHaveProperty('description');
+      }
     });
 
     it('should sort cards by created_at descending', async () => {
@@ -363,21 +435,26 @@ describe('ColumnsService', () => {
         id: 1,
         name: 'To Do',
         board: { user_id: 1 },
-        cards: [
-          { id: 1, title: 'Card 1', created_at: new Date('2026-01-01'), position: 0 },
-          { id: 2, title: 'Card 2', created_at: new Date('2026-01-02'), position: 1 },
-        ],
       };
+      const cardsForSort = [
+        { id: 1, title: 'Card 1', created_at: new Date('2026-01-01'), position: 0 },
+        { id: 2, title: 'Card 2', created_at: new Date('2026-01-02'), position: 1 },
+      ];
+      const summaryCards = [
+        { id: 1, title: 'Card 1', column_id: 1, position: 0 },
+        { id: 2, title: 'Card 2', column_id: 1, position: 1 },
+      ];
 
-      mockColumnRepository.findOne.mockResolvedValueOnce(mockColumn).mockResolvedValueOnce({
-        ...mockColumn,
-        cards: [
-          { id: 1, title: 'Card 1', created_at: new Date('2026-01-01'), position: 0 },
-          { id: 2, title: 'Card 2', created_at: new Date('2026-01-02'), position: 1 },
-        ],
-      });
-      mockCardRepository.find.mockResolvedValue(mockColumn.cards);
+      mockColumnRepository.findOne
+        .mockResolvedValueOnce(mockColumn)
+        .mockResolvedValueOnce({ ...mockColumn });
+      mockCardRepository.find.mockResolvedValue(cardsForSort);
       mockCardRepository.save.mockResolvedValue([]);
+      mockQueryBuilderForCards(summaryCards, [
+        { id: 1, has_description: 0 },
+        { id: 2, has_description: 0 },
+      ]);
+      mockCardRepository.query.mockResolvedValueOnce([]);
 
       await service.sortCards(1, 1, 'desc');
 

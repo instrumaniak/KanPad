@@ -34,6 +34,7 @@ export type CardDetailResponse = CardResponse;
 export interface CardSummaryResponse {
   id: number;
   title: string;
+  has_description: boolean;
   column_id: number;
   position: number;
   due_date: string | null;
@@ -47,9 +48,21 @@ export function toCardSummaryResponse(card: Card): CardSummaryResponse {
   const progress: { completed: number; total: number; percent: number } | undefined =
     card.checklist_progress;
 
+  // Prefer pre-computed SQL flag (list queries never SELECT description TEXT).
+  // Fallback trims whitespace so '   ' counts as no description.
+  // Coerce number/string raw flags (MySQL getRawMany returns '0'/'1').
+  const rawFlag: unknown = card.has_description;
+  const hasDescription =
+    typeof rawFlag === 'boolean'
+      ? rawFlag
+      : typeof rawFlag === 'number' || typeof rawFlag === 'string'
+        ? Number(rawFlag) === 1
+        : !!card.description?.trim();
+
   return {
     id: card.id,
     title: card.title,
+    has_description: hasDescription,
     column_id: card.column_id,
     position: card.position,
     due_date: card.due_date ? card.due_date.toISOString() : null,

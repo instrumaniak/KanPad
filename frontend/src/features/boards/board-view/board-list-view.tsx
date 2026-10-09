@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, Trash2, Letters } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -293,25 +293,28 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                       />
                     ) : (
                       <span
-                        className="break-words font-medium"
+                        className="flex items-center gap-1 break-words font-medium"
                         onClick={(e) => {
                           e.stopPropagation();
                           startTitleEdit(card);
                         }}
                       >
-                        {card.title}
+                        <span className="flex-1">{card.title}</span>
+                        {card.has_description && (
+                          <Letters
+                            role="img"
+                            className="h-4 w-4 shrink-0 text-muted-foreground"
+                            aria-label="Has description"
+                            data-testid="card-description-icon"
+                          />
+                        )}
                       </span>
                     )}
                     <span className="flex flex-wrap items-center gap-1">
                       <Badge variant="secondary">{card.columnName}</Badge>
-                      {(card.labels ?? []).slice(0, 3).map((label) => (
+                      {(card.labels ?? []).map((label) => (
                         <LabelBadge key={label.id} label={label} />
                       ))}
-                      {(card.labels?.length ?? 0) > 3 && (
-                        <span className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                          +{(card.labels?.length ?? 0) - 3}
-                        </span>
-                      )}
                       {dueBadge && (
                         <span
                           className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${dueBadge.className}`}

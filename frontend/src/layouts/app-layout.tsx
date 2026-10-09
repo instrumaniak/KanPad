@@ -16,8 +16,6 @@ import { useTheme } from '@/hooks/use-theme';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { BoardNotesSidebar } from '@/features/notes';
 import { MobileBottomSheet } from '@/components/mobile-bottom-sheet';
-import { Breadcrumbs } from './breadcrumbs';
-import type { ListResponse, Project } from '@/features/projects/projects.api';
 
 const STORAGE_KEY = 'sidebar-collapsed';
 
@@ -39,11 +37,11 @@ function persistCollapsed(collapsed: boolean) {
   }
 }
 
-export function AppLayout({ projectsData }: { projectsData?: ListResponse<Project> }) {
+export function AppLayout() {
   const { user, isLoading, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
-  const { projectId, boardId } = useParams();
+  const { boardId } = useParams();
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return true;
     const stored = getStoredCollapsed();
@@ -92,14 +90,6 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
     return <Navigate to="/login" replace />;
   }
 
-  // Derive breadcrumb data from route params and projects data
-  const activeProject = projectId
-    ? projectsData?.data.find((p) => String(p.id) === projectId)
-    : undefined;
-  const breadcrumbProjectName =
-    activeProject?.name ?? (projectId ? decodeURIComponent(projectId) : undefined);
-  const breadcrumbBoardName = boardId ? decodeURIComponent(boardId) : undefined;
-
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4 pt-[env(safe-area-inset-top)]">
@@ -118,14 +108,6 @@ export function AppLayout({ projectsData }: { projectsData?: ListResponse<Projec
           <Link to="/">
             <h1 className="text-lg font-semibold text-foreground">KanPad</h1>
           </Link>
-        </div>
-
-        <div className="hidden items-center gap-2 sm:flex">
-          <Breadcrumbs
-            projectName={breadcrumbProjectName}
-            boardName={breadcrumbBoardName}
-            projectId={projectId}
-          />
         </div>
 
         <div className="flex items-center gap-1">

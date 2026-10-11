@@ -4,7 +4,7 @@ use axum::{
     extract::State,
     http::{header, StatusCode},
     response::IntoResponse,
-    routing::{get, patch},
+    routing::{get, patch, post},
     Json,
 };
 
@@ -21,10 +21,12 @@ use crate::{
 use super::{
     store::{
         check_board_owned, close_column_gap, delete_column_row, fetch_column_owned, fetch_columns,
-        insert_column, max_position_for_update, rename_column, to_response,
+        fetch_source_card_ids_for_update, insert_column, max_card_position_for_update,
+        max_position_for_update, move_cards_into, rename_column, to_response,
     },
     types::{
-        ColumnBody, ColumnListBody, CreateColumnInput, UpdateColumnInput, DEFAULT_COLUMN_NAME,
+        ColumnBody, ColumnListBody, CreateColumnInput, MoveCardsBody, MoveCardsData,
+        MoveCardsInput, UpdateColumnInput, DEFAULT_COLUMN_NAME,
     },
 };
 
@@ -43,8 +45,9 @@ async fn load_summaries(
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
-/// CRUD only: sort (`{sort_order}`, T23b) and move-cards (T23c) land in their
-/// own tasks, so those paths 404 from the router until then.
+/// Sort (`{sort_order}`, T23b) lands in its own task, so that shape 404s
+/// from the router until then; the Nest verb path `/:id/move-all` is deleted
+/// (its `move-cards` replacement lives here).
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
         .route(
@@ -55,6 +58,7 @@ pub fn router() -> axum::Router<crate::state::AppState> {
             "/columns/{id}",
             patch(rename_column_handler).delete(delete_column),
         )
+        .route("/columns/{id}/move-cards", post(move_cards))
 }
 
 /// `GET /api/v1/boards/{boardId}/columns → 200 {data[]}` (nested unpaginated,
@@ -201,4 +205,87 @@ pub async fn delete_column(
     close_column_gap(&mut *tx, owned.board_id.get(), owned.position).await?;
     tx.commit().await.map_err(AppError::Db)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// State-class 400 for move-cards (`error.rs` is outside T23c touch scope,
+/// so no new `AppError` variant): a hand-built garde report renders the
+/// shared 400 `validation-error` problem+json with `errors[]`.
+fn move_state_error(field: &'static str, message: &'static str) -> AppError {
+    let mut report = garde::Report::new();
+    report.append(garde::Path::new(field), garde::Error::new(message));
+    AppError::Validation(report)
+}
+
+/// `POST /api/v1/columns/{id}/move-cards{target_column_id} → 200
+/// {data: {moved_count}}` (moves every card out of the source column,
+/// appended at the target's `MAX(position)+1` in ONE tx; the source select
+/// is `ORDER BY position ASC` so the target mirrors source order). Same-id
+/// and cross-board targets are state errors → 400 `errors[]`; an empty
+/// source is a success (`{moved_count: 0}`), never an error.
+/// Foreign/missing source or target id → 404 (no oracle, never 403);
+/// garbage id → 400 `invalid-path`; bad body → 400 via `ValidJson`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/columns/{id}/move-cards",
+    request_body = MoveCardsInput,
+    responses(
+        (status = 200, description = "Cards moved", body = MoveCardsBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Column not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn move_cards(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::ColumnId>,
+    ValidJson(input): ValidJson<MoveCardsInput>,
+) -> Result<Json<MoveCardsBody>, AppError> {
+    use crate::error::Internal;
+    let user_id = auth.user_id.get();
+    let source_id = id.get();
+    let target_id = input.target_column_id;
+    if source_id == target_id {
+        return Err(move_state_error(
+            "target_column_id",
+            "Cards already in this column",
+        ));
+    }
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    let source = fetch_column_owned(&mut *tx, user_id, source_id).await?;
+    let target = fetch_column_owned(&mut *tx, user_id, target_id).await?;
+    if source.board_id.get() != target.board_id.get() {
+        return Err(move_state_error(
+            "target_column_id",
+            "Cannot move cards between different boards",
+        ));
+    }
+    // Locking selects run in ascending column-id order (stable lock order,
+    // never a reload+save loop downstream).
+    let (source_ids, target_max) = if source_id < target_id {
+        let ids = fetch_source_card_ids_for_update(&mut *tx, source_id).await?;
+        let max = max_card_position_for_update(&mut *tx, target_id).await?;
+        (ids, max)
+    } else {
+        let max = max_card_position_for_update(&mut *tx, target_id).await?;
+        let ids = fetch_source_card_ids_for_update(&mut *tx, source_id).await?;
+        (ids, max)
+    };
+    let moved_count = i64::try_from(source_ids.len()).map_err(|_| AppError::Internal(Internal))?;
+    if !source_ids.is_empty() {
+        let mut assignments = Vec::with_capacity(source_ids.len());
+        for (index, card_id) in source_ids.iter().enumerate() {
+            let offset = i32::try_from(index + 1).map_err(|_| AppError::Internal(Internal))?;
+            let position = target_max
+                .checked_add(offset)
+                .ok_or(AppError::Internal(Internal))?;
+            assignments.push((*card_id, position));
+        }
+        move_cards_into(&mut *tx, source_id, target_id, &assignments).await?;
+    }
+    tx.commit().await.map_err(AppError::Db)?;
+    Ok(Json(MoveCardsBody {
+        data: MoveCardsData { moved_count },
+    }))
 }

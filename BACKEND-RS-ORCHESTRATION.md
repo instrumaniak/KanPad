@@ -48,7 +48,7 @@
 | T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | DONE merged c0e3ef1 (commit adeea93; 14/14 errors + full suite green) | ses_ed649d952ffecL08IPMMU1UcCL |
 | T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | DONE merged e1119c3 (commit 1e1a6e8; order-asserted yaml, grep gates live-tested, docker build substituted w/ review — disk infeasible) | ses_ed649d77bffedDan6nSONLwTKq |
 | T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | DONE merged acac0d5 (commit 90c35d8; harness+12 fixtures+label_seed; suite green twice) | ses_ed649d777ffeSB3nv6SKKWepOj |
-| T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | DONE merged 28db999 (commit cbd6266; 26 lib + 27 api green; orchestrator fixed fmt + 2 needless_as_bytes) | ses_ed638a92fffe9SlwO4j05L5Bb4 (session died in restart, work finished by orchestrator) |
+| T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | DONE merged 28db999 + compat f7f9ae7 (cherry-picked aabb125; full suite 36 lib + 47 api green w/ live DB) | ses_ed638a92fffe9SlwO4j05L5Bb4 (session died in restart, work finished by orchestrator) |
 | T08 validation core | `rs-t08-validation` | `KanPad-wt/wt-t08` | T04 | dispatched | ses_ed638a92bffeLexI6j2gRF26X9 |
 
 ## Stale sessions (closed, no action)
@@ -61,6 +61,13 @@
   inspected. Applied to wave 2.
 
 ## Lessons (orchestrator fixes applied during T03 finish)
+- Post-merge compile debt is real: T05's rebase compiled pre-T08 but the merge
+  broke `tests/api/helpers.rs` (Settings literal vs expanded struct). Fixed via
+  cherry-pick f7f9ae7 (aabb125). ALWAYS re-verify `--all-targets` after merges.
+- Shared `CARGO_TARGET_DIR` across worktrees can print a bogus sub-second
+  "Finished" (stale fingerprints) — after any merge/rebase, `touch` a source
+  file first or treat instant passes as suspect. T10's worktree predates
+  f7f9ae7; its merge rebase will bring the fix.
 - Reused target dir moved across paths breaks utoipa-swagger-ui build (stale
   OUT_DIR in embed.rs `#[folder]`): fix with `cargo clean -p utoipa-swagger-ui`.
 - `tests/api.rs` suite mods need `#[path = "api/<name>.rs"]` (bare `mod x;`

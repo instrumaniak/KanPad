@@ -18,8 +18,14 @@
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
 | T01 contract+compose | (merged, branch deleted) | — | none | DONE be37720 | ses_ed6b464b8ffe0k6NoBgUExmLOh |
-| T03 crate skeleton | `rs-t03-skeleton` | `KanPad-wt/wt-t03` | none | re-dispatched | ses_ed6710402ffeyqCiQZYBKUjLAT |
-| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | re-dispatched | ses_ed6710404ffe96EwnFmEsCVC19 |
+| T03 crate skeleton | `rs-t03-skeleton` | `KanPad-wt/wt-t03` | none | DONE merged e0bfc23 (commit 7fc7462, 57 files; fmt/clippy/test/prepare-check/export-openapi/migrate-info all green) | ses_ed6710404ffe96EwnFmEsCVC19 |
+| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | running (0001_baseline.sql drafted) | ses_ed6710402ffeyqCiQZYBKUjLAT |
+
+## Lessons (orchestrator fixes applied during T03 finish)
+- Reused target dir moved across paths breaks utoipa-swagger-ui build (stale
+  OUT_DIR in embed.rs `#[folder]`): fix with `cargo clean -p utoipa-swagger-ui`.
+- `tests/api.rs` suite mods need `#[path = "api/<name>.rs"]` (bare `mod x;`
+  resolves to `tests/x.rs`). Noted in-file; future suite tasks must follow it.
 
 ## Queue (do not start until gate green)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)

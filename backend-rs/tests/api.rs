@@ -11,6 +11,8 @@ mod auth_register;
 mod auth_session;
 #[path = "api/boards_create.rs"]
 mod boards_create;
+#[path = "api/boards_list.rs"]
+mod boards_list;
 #[path = "api/create_admin.rs"]
 mod create_admin;
 #[path = "api/errors.rs"]

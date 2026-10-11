@@ -9,25 +9,29 @@ use axum::{
 };
 
 use crate::{
+    common::pagination::Page,
     error::AppError,
-    extract::{AuthSession, ValidJson, ValidPath},
+    extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
     state::AppState,
 };
 
 use super::{
     store::{
-        check_project_owned, fetch_board, fetch_board_columns, insert_board,
-        insert_default_columns, to_response,
+        check_project_owned, count_boards, fetch_board, fetch_board_columns, fetch_board_page,
+        insert_board, insert_default_columns, to_list_response, to_response,
     },
-    types::{BoardDetailBody, CreateBoardInput, DEFAULT_BOARD_COLOR},
+    types::{
+        BoardDetailBody, BoardListQuery, BoardListResponse, CreateBoardInput, DEFAULT_BOARD_COLOR,
+    },
 };
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
-/// List/update/delete routes land in T21b/T22; this task owns create+detail.
+/// Update/delete routes land in T22; this task owns create+detail (T21a)
+/// plus list (T21b).
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
-        .route("/boards", post(create_board))
+        .route("/boards", post(create_board).get(list_boards))
         .route("/boards/{id}", get(get_board))
 }
 
@@ -84,6 +88,52 @@ pub async fn create_board(
             data: to_response(row, columns),
         }),
     ))
+}
+
+/// `GET /api/v1/boards?project_id&archived&sort&order&page&limit → 200
+/// Page<Board>` (flat items — no nested `columns[]`). Archived boards are
+/// hidden unless `archived=true`; `project_id` scopes to that project (a
+/// foreign or missing id matches zero rows — empty page, never a 403/404
+/// oracle). There is deliberately NO `GET /boards/archived` duplicate:
+/// `archived` in that position fails the `:id` int-parse → 400
+/// `invalid-path`, never a 200 list.
+#[utoipa::path(
+    get,
+    path = "/api/v1/boards",
+    params(BoardListQuery),
+    responses(
+        (status = 200, description = "Board page"),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn list_boards(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidQuery(filters): ValidQuery<BoardListQuery>,
+    pagination: PaginationParams,
+) -> Result<Json<Page<BoardListResponse>>, AppError> {
+    let user_id = auth.user_id.get();
+    let include_archived = filters.include_archived();
+    let total = count_boards(&state.pool, user_id, filters.project_id, include_archived).await?;
+    let rows = fetch_board_page(
+        &state.pool,
+        user_id,
+        filters.project_id,
+        include_archived,
+        filters.resolved_sort(),
+        filters.resolved_order(),
+        pagination.page,
+        pagination.limit,
+    )
+    .await?;
+    Ok(Json(Page::new(
+        rows.into_iter().map(to_list_response).collect(),
+        pagination.page,
+        pagination.limit,
+        total,
+    )))
 }
 
 /// `GET /api/v1/boards/{id} → 200 {data:{…board,columns[]}}` (nested

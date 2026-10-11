@@ -76,7 +76,19 @@
 ## Phase 1 — Auth (T10 unblocked: T02+T04+T07+T08 all merged)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T10 register | `rs-t10-register` | `KanPad-wt/wt-t10` | T02+T04+T07+T08 | dispatched | ses_ed625f90bffesbq8x70oyxEP6p |
+| T10 register | `rs-t10-register` | `KanPad-wt/wt-t10` | T02+T04+T07+T08 | DONE merged 5fe3cd3 (register 201+cookie+6 labels+Argon2id; 48/48 api green x2) | ses_ed625f90bffesbq8x70oyxEP6p |
+| T11 login/logout/me+sessions | `rs-t11-auth` | `KanPad-wt/wt-t11` | T02+T04+T07+T08+T10 | queued | pending |
+
+## Early-T52 applied (during T10 merge, 2026-10-11)
+- T02-D3 RESOLVED in code: `CREATE SCHEMA IF NOT EXISTS` + sweeper index
+  INLINE in CREATE TABLE (commit d9c4c39). Parallel `#[sqlx::test]` setups
+  raced 1007 (schema) then 1061 (standalone CREATE INDEX on the shared
+  table); full suite flaked until both fixed, now 48/48 x2. App tables keep
+  fail-fast. T52 still owes the §30 TEXT correction (store shape
+  char(22)/blob/timestamp(6) + inline-index rule).
+- Merge-verify discipline confirmed again: shared test DB (:3337 `kanpad`)
+  needed `migrate run` first or `query!` compile checks fail (1146); always
+  ensure the compile-time DB is migrated before trusting red/green.
 
 ## Queue (later phases)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)

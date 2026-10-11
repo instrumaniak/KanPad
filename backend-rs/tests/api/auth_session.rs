@@ -3,12 +3,18 @@
 //!
 //! Single `#[sqlx::test]` setup on purpose (the `tower_sessions.session`
 //! store table is server-global, shared by every suite in this process): all
-//! scenarios run sequentially in one test with distinct emails. The suite
-//! owns this process's ONE coordinated session wipe at startup (via T07
-//! `clear_sessions`, in the no-live-jar prefix — concurrent suites hold no
-//! live jars yet, and register/login mint fresh ones, so the wipe is a
-//! no-op for them); no suite may wipe mid-flight after that, and NOBODY
-//! drops the shared schema (baseline DDL is `IF NOT EXISTS` since early-T52,
+//! scenarios run sequentially in one test with distinct emails.
+//!
+//! Session-isolation rule (rs-fix-session-isolation): NO suite in this
+//! process may `DELETE`/`UPDATE`-all/`DROP` the shared store. The old single
+//! coordinated wipe at startup is retired — under parallel scheduling it
+//! lands mid-flight of other suites' live jars and 401s them (3 flakes,
+//! latest `boards_state` 401 at create). Cross-suite rows are harmless:
+//! every suite mints its own user+jar, nothing asserts absolute store
+//! counts, and logout asserts by id-set difference. Tests needing a
+//! dirty/clean row scope their SQL to rows they minted (see
+//! `login_fresh_session` + the `WHERE id = ?` expiry below). NOBODY drops
+//! the shared schema (baseline DDL is `IF NOT EXISTS` since early-T52,
 //! so the old fail-fast `DROP SCHEMA` hygiene is retired — a concurrent drop
 //! 500s in-flight suites with 1049 `Unknown database 'tower_sessions'`).
 //!
@@ -37,8 +43,6 @@ use serde_json::Value;
 use sqlx::MySqlPool;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::MySqlStore;
-
-use crate::helpers::clear_sessions;
 
 const PROBLEM_JSON: &str = "application/problem+json";
 
@@ -154,18 +158,60 @@ async fn session_ids(pool: &MySqlPool) -> Vec<String> {
         .expect("session ids read")
 }
 
+/// Log in once and return `(jar, store_row_id)` for exactly the session
+/// that login minted.
+///
+/// The `tower_sessions.session` table is server-global (shared by every
+/// suite in this process), so row ownership is resolved by id-set
+/// difference around the login: `after − before` must be exactly one row.
+/// If a concurrent suite minted alongside us (delta != 1) the attempt is
+/// discarded WITHOUT touching any row and retried, so we can never
+/// expire/delete a stranger's session. Retries converge immediately in
+/// practice (the window is a single in-process roundtrip); the discarded
+/// jars stay valid and are harmless leftovers.
+async fn login_fresh_session(app: impl Fn() -> Router, pool: &MySqlPool) -> (String, String) {
+    for _ in 0..25 {
+        let before = session_ids(pool).await;
+        let (status, headers, bytes) = send(
+            app(),
+            post(
+                "/api/v1/auth/login",
+                "login-user@example.com",
+                "Str0ng!pass",
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "expiry-probe login: {}",
+            json_of(&bytes)
+        );
+        let jar = cookie_jar(&headers);
+        assert!(!jar.is_empty(), "probe login sets a session cookie");
+        let after = session_ids(pool).await;
+        let fresh: Vec<&String> = after.iter().filter(|id| !before.contains(id)).collect();
+        if fresh.len() == 1 {
+            return (jar, fresh[0].clone());
+        }
+        // Ambiguous window — a concurrent suite minted too. Discard this
+        // jar untouched (its row stays valid) and retry.
+    }
+    panic!("could not isolate a freshly minted session row after retries");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn auth_session_full_flow(pool: MySqlPool) {
     let app = || app_on_pool(&pool, None, None);
 
-    // 0. This process's ONE coordinated session wipe (see module docs): the
-    //    store table is server-global, so concurrent suites' deletes/drops
-    //    mid-flight would 401/500 this suite's live jars — exactly one wipe,
-    //    here, before any jar exists. Concurrent suites hold no live jars
-    //    yet at this point (their prefixes only register/log in, which mint
-    //    fresh sessions), so the wipe is a no-op for them. Doubles as T07's
-    //    relocated `clear_sessions` smoke proof (statement succeeds).
-    clear_sessions(&pool).await.expect("coordinated wipe runs");
+    // 0. NO session wipe: the store table is server-global, so even this
+    //    startup `DELETE` races parallel suites' live jars and 401s them
+    //    mid-flight (3 flakes and counting — the "no live jars yet"
+    //    assumption does not hold under cargo's parallel scheduling).
+    //    Leftover rows are harmless: per-test DBs are fresh every process,
+    //    every suite mints its own user+jar, and no assertion below counts
+    //    absolute rows (logout uses id-set difference).
 
     // 1. Register (T10) establishes the pre-login session cookie; login
     //    rotates it (`cycle_id` fixation defense: pre != post).
@@ -503,17 +549,31 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     );
 
     // 10. Expired session row (past TIMESTAMP — the store uses
-    //     `timestamp(6)`, not epoch-ms) is ignored -> 401.
+    //     `timestamp(6)`, not epoch-ms) is ignored -> 401. Scoped to ONE row
+    //     this suite minted (`WHERE id = ?`): the store is server-global, so
+    //     the old bare `UPDATE ... session` (no WHERE) expired concurrent
+    //     suites' live jars too — the same race class as the retired wipe.
+    let (expiry_jar, expiry_id) = login_fresh_session(&app, &pool).await;
     sqlx::query(
-        "UPDATE `tower_sessions`.`session` SET `expiry_date` = '2000-01-01 00:00:00.000000'",
+        "UPDATE `tower_sessions`.`session` SET `expiry_date` = '2000-01-01 00:00:00.000000' WHERE `id` = ?",
     )
+    .bind(&expiry_id)
     .execute(&pool)
     .await
-    .expect("sessions expired");
-    let (status, headers, bytes) = send(app(), get("/api/v1/auth/me", Some(&login_jar))).await;
+    .expect("own session expired");
+    let (status, headers, bytes) = send(app(), get("/api/v1/auth/me", Some(&expiry_jar))).await;
     let expired_body = json_of(&bytes);
     assert_eq!(status, StatusCode::UNAUTHORIZED, "expired: {expired_body}");
     assert_problem(status, &headers, &expired_body, "unauthorized");
+    // Control: an unexpired jar must still validate, proving the expiry
+    // touched only our row (what the old global UPDATE violated).
+    let (status, _, bytes) = send(app(), get("/api/v1/auth/me", Some(&login_jar))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "unexpired jar survives scoped expiry: {}",
+        json_of(&bytes)
+    );
     // Re-login for the remaining scenarios.
     let (status, headers, bytes) = send(
         app(),

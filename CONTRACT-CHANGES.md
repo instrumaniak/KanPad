@@ -131,6 +131,26 @@ the surfaced 400:
 `U1 /api/users` stays **unmounted** in the rewrite — user helpers are internal
 only. There is no user-listing or user-admin surface in v1.
 
+Source parity (not a behavior break — Nest ships no user routes either):
+`backend/src/users/users.controller.ts:1-6` is an empty
+`@Controller('api/users')` (zero handlers); `users.service.ts:14-19`
+(`findById`), `:21-26` (`findByEmail`), `:28-31` (`create`) are internal
+only. The rewrite mirrors that as `backend-rs/src/features/users/*`
+(internal repository helper, deliberately no `routes.rs` — `versioned_routes`
+never merges a users router, so `GET`/`POST /api/v1/users` and the deprecated
+`/api/users` alias all 404 from the router as JSON problem, asserted in
+`tests/api/users.rs`). Query ownership stays in `features::auth::store`
+(T10/T11 own the SQL + behavior coverage: `find_user_by_id`,
+`find_user_by_email`, `insert_user_row`); `users::store` re-exports that
+owner with zero new `query!` macros (zero `.sqlx/` entries).
+
+Rationale for no v1 user surface: user reads go through
+`GET /api/v1/auth/me` (fresh-row re-lookup; deleted → 401, demoted → 403),
+admin creation via the T12 CLI. A listing/admin endpoint would be an
+enumeration + privilege oracle with no Nest precedent — out of scope.
+Erasure stays manual per the §11 GDPR runbook (referenced, not repeated
+here).
+
 ## 10. Auth notes
 
 - `register → 201 {data:{id,email,role}} + Set-Cookie + Location: /api/v1/auth/me`;

@@ -12,7 +12,7 @@ use crate::common::{
     ids::{BoardId, ColumnId, ProjectId},
     validation::{
         validate_not_blank, validate_optional_hex_color, validate_optional_not_blank,
-        validate_optional_view_mode,
+        validate_optional_view_mode, SORT_ORDERS,
     },
 };
 
@@ -55,17 +55,78 @@ pub struct UpdateBoardInput {
     pub is_archived: Option<bool>,
 }
 
+/// Allowed `?sort=` keys for `GET /api/v1/boards` (whitelisted `match` in
+/// the store — never interpolated, so violations 400 here instead).
+pub const BOARD_SORTS: [&str; 3] = ["name", "created_at", "updated_at"];
+
+/// Default list sort (matches Nest `findAllByUserId` `updated_at DESC`).
+pub const DEFAULT_BOARD_SORT: &str = "updated_at";
+
+/// Default list order.
+pub const DEFAULT_BOARD_ORDER: &str = "desc";
+
+/// `?sort=` allowlist: `name` | `created_at` | `updated_at`.
+fn validate_optional_board_sort(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(sort) = value {
+        if !BOARD_SORTS.contains(&sort.as_str()) {
+            return Err(garde::Error::new(format!(
+                "sort must be one of: {}",
+                BOARD_SORTS.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `?order=` allowlist: `asc` | `desc` (mirrors the column `sort_order` enum).
+fn validate_optional_list_order(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(order) = value {
+        if !SORT_ORDERS.contains(&order.as_str()) {
+            return Err(garde::Error::new(format!(
+                "order must be one of: {}",
+                SORT_ORDERS.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// `GET /api/v1/boards` query (T21b handler; pagination rides the shared
 /// strict [`crate::extract::PaginationParams`] extractor).
-#[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
+#[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct BoardListQuery {
     /// Project filter (`>= 1`); garbage (`?project_id=abc`) never reaches
-    /// garde — axum rejects it as 400 `invalid-query` first.
+    /// garde — axum rejects it as 400 `invalid-query` first. A foreign or
+    /// missing id matches zero rows (empty page, never a 403/404 oracle).
     #[garde(range(min = 1))]
     pub project_id: Option<i32>,
     /// `archived=true` includes archived boards, else hidden.
     #[garde(skip)]
     pub archived: Option<bool>,
+    /// Sort key allowlist (`name` | `created_at` | `updated_at`).
+    #[garde(custom(validate_optional_board_sort))]
+    pub sort: Option<String>,
+    /// Sort direction (`asc` | `desc`).
+    #[garde(custom(validate_optional_list_order))]
+    pub order: Option<String>,
+}
+
+impl BoardListQuery {
+    /// Whether archived boards are included (`archived=true` only).
+    pub fn include_archived(&self) -> bool {
+        self.archived.unwrap_or(false)
+    }
+
+    /// Resolved sort key (validated allowlist; defaults to `updated_at`).
+    pub fn resolved_sort(&self) -> &str {
+        self.sort.as_deref().unwrap_or(DEFAULT_BOARD_SORT)
+    }
+
+    /// Resolved sort direction (validated enum; defaults to `desc`).
+    pub fn resolved_order(&self) -> &str {
+        self.order.as_deref().unwrap_or(DEFAULT_BOARD_ORDER)
+    }
 }
 
 /// One nested column in a board detail body (`id`, `name`, `position` only —
@@ -128,6 +189,34 @@ pub struct BoardDetailBody {
     pub data: BoardDetailResponse,
 }
 
+/// Wire board list item: the flat board shape (mirrors the Nest
+/// `findAll`/`findArchived` mapping — no nested `columns[]`, no
+/// `description`/`content` keys). Timestamps render as UTC ISO-8601 strings
+/// (same fixed shape as detail — `NaiveDateTime` has no utoipa `ToSchema`
+/// impl with the `chrono` feature off, so the store formats once instead of
+/// leaking the representation into every handler).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct BoardListResponse {
+    /// `boards.id` (`INT` ↔ `i32` newtype).
+    pub id: BoardId,
+    /// Board name.
+    pub name: String,
+    /// Background hex color.
+    pub background_color: String,
+    /// Owning project id (`null` = standalone).
+    pub project_id: Option<ProjectId>,
+    /// Owning project ref (`null` = standalone).
+    pub project: Option<ProjectRef>,
+    /// `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC).
+    pub created_at: String,
+    /// `updated_at`, same shape.
+    pub updated_at: String,
+    /// Archive flag.
+    pub is_archived: bool,
+    /// View mode (`board` | `list`).
+    pub view_mode: String,
+}
+
 /// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
 /// fixed-shape UTC ISO-8601 string (micros always present, lexicographically
 /// sortable). Boards-local owner (same shape as the projects helper; kept
@@ -139,6 +228,7 @@ pub fn format_timestamp(value: &chrono::NaiveDateTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use garde::Validate;
 
     #[test]
     fn timestamp_renders_fixed_shape_utc() {
@@ -153,5 +243,40 @@ mod tests {
     #[test]
     fn default_board_color_is_nest_parity() {
         assert_eq!(DEFAULT_BOARD_COLOR, "#0079BF");
+    }
+
+    #[test]
+    fn list_query_defaults_match_nest_ordering() {
+        let query = BoardListQuery {
+            project_id: None,
+            archived: None,
+            sort: None,
+            order: None,
+        };
+        assert!(query.validate().is_ok());
+        assert!(!query.include_archived());
+        assert_eq!(query.resolved_sort(), "updated_at");
+        assert_eq!(query.resolved_order(), "desc");
+    }
+
+    #[test]
+    fn list_query_rejects_sort_and_order_violations() {
+        for (sort, order) in [
+            (Some("evil".to_string()), None),
+            (Some("name;DROP TABLE boards".to_string()), None),
+            (None, Some("sideways".to_string())),
+            (None, Some("name".to_string())),
+        ] {
+            let query = BoardListQuery {
+                project_id: None,
+                archived: None,
+                sort,
+                order,
+            };
+            assert!(
+                query.validate().is_err(),
+                "must reject sort/order violation"
+            );
+        }
     }
 }

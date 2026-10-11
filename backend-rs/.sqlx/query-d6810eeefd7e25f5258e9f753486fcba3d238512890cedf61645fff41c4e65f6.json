@@ -1,0 +1,64 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT p.`id`, p.`name`, CAST(COUNT(b.`id`) AS SIGNED) AS `board_count`, p.`created_at` AS \"created_at: chrono::NaiveDateTime\", p.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `projects` p LEFT JOIN `boards` b ON b.`project_id` = p.`id` AND b.`user_id` = p.`user_id` WHERE p.`id` = ? AND p.`user_id` = ? GROUP BY p.`id`, p.`name`, p.`created_at`, p.`updated_at`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 1020
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "board_count",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 21
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at: chrono::NaiveDateTime",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 26
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at: chrono::NaiveDateTime",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 26
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d6810eeefd7e25f5258e9f753486fcba3d238512890cedf61645fff41c4e65f6"
+}

@@ -38,9 +38,9 @@
 ## Wave 2 (T04+T06+T07 parallel; T05+T08 after T04 merges)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | queued | pending |
-| T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | queued | pending |
-| T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | queued | pending |
+| T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | dispatched | ses_ed649d952ffecL08IPMMU1UcCL |
+| T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | dispatched | ses_ed649d77bffedDan6nSONLwTKq |
+| T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | dispatched | ses_ed649d777ffeSB3nv6SKKWepOj |
 | T05 config/obs/versioning | — | — | T03 (+T04 if lib.rs collides) | HOLD until T04 merges | — |
 | T08 validation core | — | — | T04 | HOLD until T04 merges | — |
 

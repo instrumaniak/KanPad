@@ -450,7 +450,10 @@ async fn boards_list_filters_full_flow(pool: MySqlPool) {
     }
     for (query, what) in [
         ("?sort=evil", "unknown sort key"),
-        ("?sort=name%3BDROP%20TABLE%20boards", "sort injection attempt"),
+        (
+            "?sort=name%3BDROP%20TABLE%20boards",
+            "sort injection attempt",
+        ),
         ("?order=sideways", "unknown order"),
         ("?order=name", "order/sort swap"),
         ("?page=0", "zero page"),

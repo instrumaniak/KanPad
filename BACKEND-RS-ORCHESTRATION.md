@@ -106,7 +106,7 @@
 | T21a boards create+detail | `rs-t21a-boards` | `KanPad-wt/wt-t21a` | T02+T04+T07+T08+T11+T20 | DONE merged 97209fc (one-tx 3 cols, nested ASC detail; 54/54) | ses_ed502dd37ffePnTP9juvZfsLwy |
 | T21b boards list+filters | `rs-t21b-list` | `KanPad-wt/wt-t21b` | T21a | DONE merged d4116d8 (Page, shared WHERE builder, /archived 400; 55/55; no .sqlx change) | ses_ed4e60f3affeTfFDok3KNC2fiP |
 | T22 boards update+state+delete | `rs-t22-state` | `KanPad-wt/wt-t22` | T21a+T21b | DONE merged 5fd6dc7 (PATCH null-detach, 409 active-delete, verb 404s; 56/56) | ses_ed4d48460ffe1ZrAH18PJDFUzF |
-| FIX session-wipe race | `rs-fix-session-isolation` | `KanPad-wt/wt-fixsess` | T22 | dispatched (blocking: flake hit 3 runs) | pending |
+| FIX session-wipe race | `rs-fix-session-isolation` | `KanPad-wt/wt-fixsess` | T22 | dispatched (blocking: flake hit 3 runs) | ses_ed4b8a97bffeZR0z4rOlJAUuqP |
 
 ## Findings from T22 (for T52/AGENTS.md)
 - sqlx `QueryBuilder::separated()` inserts separator between EVERY push: a `` `col` = `` prefix push must use `push_bind_unseparated`. In code comment.

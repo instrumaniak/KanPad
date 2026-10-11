@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
 tower = { version = "0.5", features = ["timeout"] }
-tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit", "fs", "sensitive-headers"] }
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }
 tower_governor = "=0.8.0"
@@ -16,7 +16,7 @@ argon2 = "0.5"
 bcrypt = "0.17"
 garde = { version = "0.22", features = ["derive"] }
 axum-valid = { version = "0.20", features = ["garde"] }
-secrecy = "0.10"
+secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1"
 utoipa = "5"
 utoipa-axum = "0.2"
@@ -28,6 +28,7 @@ time = "0.3"
 dotenvy = "0.15"
 envy = "0.4"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

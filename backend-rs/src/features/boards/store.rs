@@ -391,3 +391,111 @@ where
         })
         .collect())
 }
+
+/// Partial board update (T22 `PATCH`): every field optional. `project_id`
+/// mirrors the DTO double `Option` — `None` leaves the link untouched,
+/// `Some(None)` detaches (`NULL`), `Some(Some(..))` relinks (the caller
+/// ownership-checks via [`check_project_owned`] first, so a foreign id never
+/// reaches the write). An all-`None` patch is a no-op (returns without
+/// emitting `UPDATE`, so empty `{}` bodies stay 200 without touching the
+/// row).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BoardPatch<'a> {
+    /// New `boards.name` (`None` = untouched).
+    pub name: Option<&'a str>,
+    /// New `boards.background_color` (`None` = untouched).
+    pub background_color: Option<&'a str>,
+    /// Project link change (`None` = untouched).
+    pub project_id: Option<Option<i32>>,
+    /// New `boards.view_mode` (`None` = untouched; pre-validated enum).
+    pub view_mode: Option<&'a str>,
+    /// New `boards.is_archived` (`None` = untouched; idempotent flip).
+    pub is_archived: Option<bool>,
+}
+
+impl BoardPatch<'_> {
+    /// Whether every field is untouched (no `UPDATE` to emit).
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.background_color.is_none()
+            && self.project_id.is_none()
+            && self.view_mode.is_none()
+            && self.is_archived.is_none()
+    }
+}
+
+/// Apply a [`BoardPatch`] to an owned board (`WHERE id + user_id`, so a
+/// foreign id matches zero rows — the caller pre-reads via [`fetch_board`]
+/// for the 404 instead of trusting affected-rows, which would misreport an
+/// idempotent no-change write as missing). `updated_at` bumps via the
+/// column's `ON UPDATE CURRENT_TIMESTAMP(6)`; `view_mode` is CHECK-guarded
+/// at the DB level too (defense in depth behind the DTO enum).
+#[tracing::instrument(skip(ex))]
+pub async fn apply_board_patch<'e, E>(
+    ex: E,
+    user_id: i32,
+    id: i32,
+    patch: BoardPatch<'_>,
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    if patch.is_empty() {
+        return Ok(());
+    }
+    let mut builder = QueryBuilder::new("UPDATE `boards` SET ");
+    {
+        // `Separated` inserts `", "` between EVERY push — including between a
+        // `` `col` = `` prefix and its placeholder — so each value rides
+        // `push_bind_unseparated` (the `push` prefix already consumed the
+        // separator slot). Plain `push_bind` here emits `` `col` = , ? ``
+        // (1064 at runtime; see T22 probe).
+        let mut set = builder.separated(", ");
+        if let Some(name) = patch.name {
+            set.push("`name` = ");
+            set.push_bind_unseparated(name);
+        }
+        if let Some(background_color) = patch.background_color {
+            set.push("`background_color` = ");
+            set.push_bind_unseparated(background_color);
+        }
+        if let Some(project_id) = patch.project_id {
+            set.push("`project_id` = ");
+            set.push_bind_unseparated(project_id);
+        }
+        if let Some(view_mode) = patch.view_mode {
+            set.push("`view_mode` = ");
+            set.push_bind_unseparated(view_mode);
+        }
+        if let Some(is_archived) = patch.is_archived {
+            set.push("`is_archived` = ");
+            set.push_bind_unseparated(i8::from(is_archived));
+        }
+    }
+    builder.push(" WHERE `id` = ");
+    builder.push_bind(id);
+    builder.push(" AND `user_id` = ");
+    builder.push_bind(user_id);
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Hard-delete an owned board (`WHERE id + user_id`). Columns/cards/notes
+/// cascade via `ON DELETE CASCADE` FKs — no manual cleanup loop. The caller
+/// pre-reads the row (404) and enforces the archived-only rule (active →
+/// 409 [`AppError::Conflict`]); this statement only runs for archived boards.
+#[tracing::instrument(skip(ex))]
+pub async fn delete_board_row<'e, E>(ex: E, user_id: i32, id: i32) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "DELETE FROM `boards` WHERE `id` = ? AND `user_id` = ?",
+        id,
+        user_id
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
+}

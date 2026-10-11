@@ -17,22 +17,29 @@ use crate::{
 
 use super::{
     store::{
-        check_project_owned, count_boards, fetch_board, fetch_board_columns, fetch_board_page,
-        insert_board, insert_default_columns, to_list_response, to_response,
+        apply_board_patch, check_project_owned, count_boards, delete_board_row, fetch_board,
+        fetch_board_columns, fetch_board_page, insert_board, insert_default_columns,
+        to_list_response, to_response, BoardPatch,
     },
     types::{
-        BoardDetailBody, BoardListQuery, BoardListResponse, CreateBoardInput, DEFAULT_BOARD_COLOR,
+        BoardDetailBody, BoardListQuery, BoardListResponse, CreateBoardInput, UpdateBoardInput,
+        DEFAULT_BOARD_COLOR,
     },
 };
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
-/// Update/delete routes land in T22; this task owns create+detail (T21a)
-/// plus list (T21b).
+/// There are deliberately NO verb routes (`/:id/archive`, `/:id/restore`,
+/// `/:id/permanent` — deleted per `21-api-standard-shapes.md`): archive /
+/// restore are `is_archived` flips on `PATCH`, permanent delete is `DELETE`
+/// on an archived board, so those paths 404 from the router.
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
         .route("/boards", post(create_board).get(list_boards))
-        .route("/boards/{id}", get(get_board))
+        .route(
+            "/boards/{id}",
+            get(get_board).patch(patch_board).delete(delete_board),
+        )
 }
 
 /// `POST /api/v1/boards{name,background_color?,project_id?} → 201 {data} +
@@ -161,4 +168,94 @@ pub async fn get_board(
     Ok(Json(BoardDetailBody {
         data: to_response(row, columns),
     }))
+}
+
+/// `PATCH /api/v1/boards/{id} → 200 {data:{…board,columns[]}}` (every field
+/// optional; present values validate like create). The board is pre-read for
+/// ownership (foreign/missing id → 404, never 403 — affected-rows is NOT the
+/// oracle since an idempotent no-change write reports zero), a `project_id`
+/// relink is ownership-checked the same way (foreign → 404, also never 403),
+/// then the patch applies in ONE tx and the response re-reads the stored
+/// rows (never echoes). Archive/restore are plain `is_archived` flips —
+/// idempotent by construction. Empty `{}` is a no-op 200.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/boards/{id}",
+    request_body = UpdateBoardInput,
+    responses(
+        (status = 200, description = "Board updated", body = BoardDetailBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Board or project not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn patch_board(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::BoardId>,
+    ValidJson(input): ValidJson<UpdateBoardInput>,
+) -> Result<Json<BoardDetailBody>, AppError> {
+    let user_id = auth.user_id.get();
+    let board_id = id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    fetch_board(&mut *tx, user_id, board_id).await?;
+    if let Some(Some(project_id)) = input.project_id {
+        check_project_owned(&mut *tx, user_id, project_id).await?;
+    }
+    apply_board_patch(
+        &mut *tx,
+        user_id,
+        board_id,
+        BoardPatch {
+            name: input.name.as_deref(),
+            background_color: input.background_color.as_deref(),
+            project_id: input.project_id,
+            view_mode: input.view_mode.as_deref(),
+            is_archived: input.is_archived,
+        },
+    )
+    .await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    // DB re-read: the response reflects the stored rows, never echoes.
+    let row = fetch_board(&state.pool, user_id, board_id).await?;
+    let columns = fetch_board_columns(&state.pool, board_id).await?;
+    Ok(Json(BoardDetailBody {
+        data: to_response(row, columns),
+    }))
+}
+
+/// `DELETE /api/v1/boards/{id} → 204` (hard delete, empty body). Deleting an
+/// ACTIVE board is a wrong-state operation → 409 `conflict` problem+json
+/// (never 403 — the board IS owned, its state forbids the op); only archived
+/// boards delete (archive first via `PATCH {is_archived:true}`). Columns,
+/// cards, and notes cascade via `ON DELETE CASCADE` FKs. Foreign/missing id
+/// → 404 (no oracle, never 403); garbage id → 400 `invalid-path`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/boards/{id}",
+    responses(
+        (status = 204, description = "Board deleted"),
+        (status = 400, description = "Invalid board id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Board not found"),
+        (status = 409, description = "Board is not archived")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn delete_board(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::BoardId>,
+) -> Result<StatusCode, AppError> {
+    let user_id = auth.user_id.get();
+    let board_id = id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    let row = fetch_board(&mut *tx, user_id, board_id).await?;
+    if !row.is_archived {
+        return Err(AppError::Conflict);
+    }
+    delete_board_row(&mut *tx, user_id, board_id).await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    Ok(StatusCode::NO_CONTENT)
 }

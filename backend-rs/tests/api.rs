@@ -13,6 +13,8 @@ mod auth_session;
 mod boards_create;
 #[path = "api/boards_list.rs"]
 mod boards_list;
+#[path = "api/boards_state.rs"]
+mod boards_state;
 #[path = "api/create_admin.rs"]
 mod create_admin;
 #[path = "api/errors.rs"]

@@ -35,7 +35,10 @@ pub struct CreateBoardInput {
 }
 
 /// `PATCH /api/v1/boards/{id}` body (T22 handler): every field optional;
-/// present values validate the same rules as create.
+/// present values validate the same rules as create. `project_id` is a
+/// double `Option` so explicit `null` (detach) stays observable: missing →
+/// `None` (untouched), `null` → `Some(None)` (detach), int →
+/// `Some(Some(..))` (relink, ownership-checked to 404).
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
 pub struct UpdateBoardInput {
     /// Board name: present means non-blank, `<= 255` chars.
@@ -44,15 +47,41 @@ pub struct UpdateBoardInput {
     /// Background hex color, optional.
     #[garde(custom(validate_optional_hex_color))]
     pub background_color: Option<String>,
-    /// Owning project id (`>= 1`); null detaches.
-    #[garde(range(min = 1))]
-    pub project_id: Option<i32>,
+    /// Owning project link (`>= 1`); explicit `null` detaches.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(validate_optional_project_link))]
+    pub project_id: Option<Option<i32>>,
     /// View mode enum (`board` | `list`).
     #[garde(custom(validate_optional_view_mode))]
     pub view_mode: Option<String>,
     /// Archive flag flip (idempotent archive/restore; bool needs no rule).
     #[garde(skip)]
     pub is_archived: Option<bool>,
+}
+
+/// `Option<Option<T>>` field decoder: plain serde maps both a missing field
+/// and explicit `null` to outer `None`, so detach (`null`) would be
+/// indistinguishable from untouched (missing). With
+/// `#[serde(default, deserialize_with)]`, missing → `None` via the default,
+/// while any present value (incl. `null`) runs the decoder: `null` →
+/// `Some(None)`, int → `Some(Some(..))`.
+fn deserialize_some<'de, D>(deserializer: D) -> Result<Option<Option<i32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<i32>::deserialize(deserializer).map(Some)
+}
+
+/// Project-link rule for [`UpdateBoardInput::project_id`]: untouched (`None`)
+/// and detach (`Some(None)`) always pass; a relink id must be `>= 1`
+/// (ownership itself is store logic → 404, never 403).
+fn validate_optional_project_link(value: &Option<Option<i32>>, _context: &()) -> garde::Result {
+    if let Some(Some(project_id)) = value {
+        if *project_id < 1 {
+            return Err(garde::Error::new("project_id must be at least 1"));
+        }
+    }
+    Ok(())
 }
 
 /// Allowed `?sort=` keys for `GET /api/v1/boards` (whitelisted `match` in

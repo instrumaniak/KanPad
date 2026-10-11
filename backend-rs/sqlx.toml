@@ -1,0 +1,2 @@
+[sqlx]
+database-url-var = "DATABASE_URL"

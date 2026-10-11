@@ -1,0 +1,42 @@
+[package]
+name = "backend-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit"] }
+tower-sessions = "0.14"
+tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }
+tower_governor = "=0.8.0"
+argon2 = "0.5"
+bcrypt = "0.17"
+garde = { version = "0.22", features = ["derive"] }
+axum-valid = { version = "0.20", features = ["garde"] }
+secrecy = "0.10"
+zeroize = "1"
+utoipa = "5"
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+time = "0.3"
+dotenvy = "0.15"
+envy = "0.4"
+tracing = "0.1"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+rpassword = "7"
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

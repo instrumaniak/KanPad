@@ -1,11 +1,29 @@
-//! Custom extractors. Validation itself is `axum-valid` `Valid(Json/Query)`
-//! (T08); only [`PaginationParams`] lives here in T04 (`AuthSession` is T11).
+//! Custom extractors. Validation itself is garde derives on the feature DTOs
+//! (T08); this module holds the state-generic validated-body/query wrappers
+//! plus [`PaginationParams`] (T04; `AuthSession` is T11).
+//!
+//! [`ValidJson`] / [`ValidQuery`] are the `Valid(Json<T>)` /
+//! `Valid(Query<T>)` extractors from `20-api-contract.md`: they run the
+//! inner axum extractor (content-type, 2 MiB body limit, type parsing —
+//! failures map to the shared `invalid-json` / `invalid-query` arms) and
+//! then `garde::Validate::validate` with the unit context (failures map to
+//! `AppError::Validation` → 400 problem+json with `errors[]`).
+//!
+//! Note on `axum-valid`: its `Garde<E>` extractor does exactly this
+//! extract-then-validate sequence, but the pinned `axum-valid 0.20`
+//! validates against `garde 0.20` while this crate's DTOs derive
+//! `garde 0.22` — the types do not unify, so `Garde` cannot wrap them
+//! (its `Context: FromRef<State>` bound additionally has no blanket
+//! `FromRef<S> for ()`). Validating directly with the unit context is
+//! behavior-identical and state-generic; upgrade `axum-valid` past the
+//! garde-0.22 line before switching wrappers to `Garde` (T52 candidate).
 
 use axum::{
-    extract::{FromRequestParts, Query},
+    extract::{FromRequest, FromRequestParts, Json, Query, Request},
     http::request::Parts,
 };
-use serde::Deserialize;
+use garde::Validate;
+use serde::{de::DeserializeOwned, Deserialize};
 
 use crate::error::AppError;
 
@@ -112,6 +130,127 @@ where
         } else {
             Err(AppError::Validation(report))
         }
+    }
+}
+
+/// Validated JSON body: `Valid(Json<T>)` in `20-api-contract.md` terms.
+///
+/// Handlers take `ValidJson<CreateBoardInput>` etc. instead of `Json<T>`.
+/// Unknown JSON fields are ignored (serde default, matching Nest — no
+/// `deny_unknown_fields`); wrong content-type / malformed JSON / over-limit
+/// bodies map to the shared `invalid-json` arm (over-limit included: the
+/// 2 MiB `DefaultBodyLimit` surfaces as the catch-all 400, never bare 413).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidJson<T>(pub T);
+
+impl<T> ValidJson<T> {
+    /// Unwrap to the validated body.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::ops::Deref for ValidJson<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T, S> FromRequest<S> for ValidJson<T>
+where
+    T: DeserializeOwned + Validate<Context = ()>,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let Json(value) = Json::<T>::from_request(req, state)
+            .await
+            .map_err(AppError::Json)?;
+        value.validate().map_err(AppError::Validation)?;
+        Ok(Self(value))
+    }
+}
+
+/// Validated query string: `Valid(Query<T>)` in `20-api-contract.md` terms.
+///
+/// Type-parse failures (`?tag_id=abc`) never reach garde — axum rejects
+/// them as 400 `invalid-query` through the shared arm; garde rule failures
+/// (unknown enum value, `0` id) map to `AppError::Validation` → 400
+/// problem+json with `errors[]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidQuery<T>(pub T);
+
+impl<T> ValidQuery<T> {
+    /// Unwrap to the validated query.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::ops::Deref for ValidQuery<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T, S> FromRequestParts<S> for ValidQuery<T>
+where
+    T: DeserializeOwned + Validate<Context = ()>,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Query(value) = Query::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(AppError::Query)?;
+        value.validate().map_err(AppError::Validation)?;
+        Ok(Self(value))
+    }
+}
+
+/// Strict path params (`GET /api/v1/boards/{id}` and friends).
+///
+/// Handlers take `ValidPath<BoardId>` instead of `Path<BoardId>`: a raw
+/// `Path<T>` rejection bypasses `AppError` (axum renders its own plain-text
+/// 400), while this wrapper routes int-parse failures through
+/// `AppError::Path` → 400 problem+json (`invalid-path`, never plain-text).
+/// Resource routers (T21+) must use this wrapper for every `{id}` param.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidPath<T>(pub T);
+
+impl<T> ValidPath<T> {
+    /// Unwrap to the parsed path params.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::ops::Deref for ValidPath<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T, S> FromRequestParts<S> for ValidPath<T>
+where
+    T: DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let axum::extract::Path(value) = axum::extract::Path::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(AppError::Path)?;
+        Ok(Self(value))
     }
 }
 

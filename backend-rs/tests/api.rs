@@ -9,3 +9,5 @@
 mod errors;
 #[path = "api/health.rs"]
 mod health;
+#[path = "api/helpers.rs"]
+mod helpers;

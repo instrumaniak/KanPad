@@ -44,6 +44,15 @@
 | T05 config/obs/versioning | — | — | T03 (+T04 if lib.rs collides) | HOLD until T04 merges | — |
 | T08 validation core | — | — | T04 | HOLD until T04 merges | — |
 
+## Stale sessions (closed, no action)
+- `ses_ed6b1914...` (pre-restart T02) reported post-merge: verified merge, changed
+  nothing. Cross-checks from its report: store version in T03 `Cargo.lock` is
+  exactly `0.15.0` (matches T02's DDL reference — no checksum risk); Nest-tip
+  dump confirms `utf8mb4_unicode_ci` + all §30 index names present.
+- Dispatch hygiene (from its duplicate-dispatch note): one live executor per
+  task; re-dispatch only after prior session is confirmed dead + worktree state
+  inspected. Applied to wave 2.
+
 ## Lessons (orchestrator fixes applied during T03 finish)
 - Reused target dir moved across paths breaks utoipa-swagger-ui build (stale
   OUT_DIR in embed.rs `#[folder]`): fix with `cargo clean -p utoipa-swagger-ui`.

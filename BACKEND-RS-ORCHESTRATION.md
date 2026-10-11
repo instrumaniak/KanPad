@@ -13,9 +13,9 @@
 ## Wave 1 (in-progress)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T01 contract+compose | `rs-t01-compose` | `/tmp/opencode/kanpad/wt-t01` | none | dispatched (ses_ed6b464b8ffe0k6NoBgUExmLOh) | ses_ed6b464b8ffe0k6NoBgUExmLOh |
-| T03 crate skeleton | `rs-t03-skeleton` | `/tmp/opencode/kanpad/wt-t03` | none (parallel w/ T02) | dispatched (ses_ed6b4648cffeTTMKAFtdD0GrNB) | ses_ed6b4648cffeTTMKAFtdD0GrNB |
-| T02 baseline DB | `rs-t02-baseline` | `/tmp/opencode/kanpad/wt-t02` | T01 (compose) — allowed to start with ephemeral `docker run mysql:8.4`, re-validate vs compose after T01 merges | queued after T01 | pending |
+| T01 contract+compose | `rs-t01-compose` | `/tmp/opencode/kanpad/wt-t01` | none | MERGED be37720 | ses_ed6b464b8ffe0k6NoBgUExmLOh |
+| T03 crate skeleton | `rs-t03-skeleton` | `/tmp/opencode/kanpad/wt-t03` | none (parallel w/ T02) | running (ses_ed6b4648cffeTTMKAFtdD0GrNB) — on pre-T01 base, merge later, no file conflict expected | ses_ed6b4648cffeTTMKAFtdD0GrNB |
+| T02 baseline DB | `rs-t02-baseline` | `/tmp/opencode/kanpad/wt-t02` | T01 DONE (rebased onto ae7f787) | dispatched | ses_ed6b1914fffe25Qs2hjPhFWyhq |
 
 ## Queue (do not start until gate green)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)

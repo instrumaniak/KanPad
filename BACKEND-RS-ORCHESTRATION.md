@@ -100,9 +100,9 @@
 ## Phase 2 kickoff (T12+T13+T20 parallel; all disjoint except tests/api.rs mod line)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T12 create-admin CLI | `rs-t12-admin` | `KanPad-wt/wt-t12` | T02+T10 | dispatched | pending |
-| T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | dispatched | pending |
-| T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | dispatched | pending |
+| T12 create-admin CLI | `rs-t12-admin` | `KanPad-wt/wt-t12` | T02+T10 | dispatched | ses_ed52073f0ffeqscI5AvOgfMTz6 |
+| T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | dispatched | ses_ed52073caffeQqbz9QQhyjiCSC |
+| T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | dispatched | ses_ed52073c8ffel22pkjLyG539re |
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)
 - T10 register → T11 auth sessions (blocks all Phase 2) → T12/T13
 - Phase 2 chain: T20 → T21a → T21b → T22 → T23a → {T23b,T23c,T24a} → T24b/T25/T26a → T24c/T26b/T27a → T27b

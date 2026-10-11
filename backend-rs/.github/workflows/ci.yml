@@ -1,0 +1,415 @@
+# KanPad backend-rs CI (T06 docker/CI contract).
+#
+# NOTE on location: this file lives at backend-rs/.github/workflows/ci.yml per
+# specs/api-rewrite-rs-specs/50-tasks.md T06 ("Touch only"). GitHub Actions
+# discovers workflows ONLY at the repo-root .github/workflows/, so this
+# workflow does NOT auto-run until a root-level caller exists (orchestrator /
+# T52 decision: move it, or add a root workflow that reuses it). Authored so
+# the move is a pure path rename (all paths below are repo-root-relative).
+#
+# Step order is normative (T06 AC): fmt -> clippy -D warnings -> migrate run +
+# migrate info (pending=0) -> SHOW CREATE TABLE assert (T02 gate) ->
+# sqlx prepare --check (canonical form) -> test -> openapi snapshot ->
+# gen:api --check -> tsc -> docker build (SQLX_OFFLINE=true) ->
+# vitest / playwright pinned to :3001.
+#
+# .sqlx/ commit rule (enforced by the prepare --check step): any `query!`
+# change must run `cargo sqlx prepare --workspace --all -- --all-targets` and
+# commit the result. Never bake DATABASE_URL into the image; never set
+# SQLX_OFFLINE in dev .env (only the Dockerfile builder sets it).
+
+name: backend-rs CI
+
+on:
+  push:
+    paths:
+      - 'backend-rs/**'
+      - 'frontend/**'
+  pull_request:
+    paths:
+      - 'backend-rs/**'
+      - 'frontend/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI_DB_NAME: kanpad_ci
+  MYSQL_ROOT_PASSWORD: ci_root_pw
+  # 10-architecture.md: DATABASE_URL always carries ?charset=utf8mb4.
+  DATABASE_URL: mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- backend
+  backend:
+    name: backend (fmt -> clippy -> migrate -> prepare --check -> test -> snapshot)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_pw
+          MYSQL_DATABASE: kanpad_ci
+        ports:
+          - '3306:3306'
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pci_root_pw"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+          --health-start-period=20s
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain (stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      # -- 1. fmt ---------------------------------------------------------
+      - name: fmt --check
+        working-directory: backend-rs
+        run: cargo fmt --check
+
+      # -- 2. clippy ------------------------------------------------------
+      - name: clippy --workspace --all-targets -D warnings
+        working-directory: backend-rs
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # -- lint grep gates (10-architecture.md code policy) ---------------
+      # unwrap()/expect() are allowed ONLY at the main() boundary
+      # (src/main.rs, anyhow boundary) and inside #[cfg(test)] modules
+      # ("allowed in tests only"). The awk filter strips #[cfg(test)]
+      # module bodies (brace-aware) before matching.
+      - name: grep gate — no unwrap()/expect() outside main.rs and #[cfg(test)]
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(find src -name '*.rs' ! -name 'main.rs' | while read -r f; do
+            awk '
+              /^[[:space:]]*#\[cfg\(test\)\]/ { skip=1; depth=0; seen=0; next }
+              skip {
+                line=$0
+                opens = gsub(/\{/, "&", line)
+                closes = gsub(/\}/, "&", line)
+                if (opens > 0) { seen=1 }
+                depth += opens - closes
+                if (seen && depth <= 0) { skip=0 }
+                next
+              }
+              { print FILENAME ":" FNR ":" $0 }
+            ' "$f"
+          done | grep -E '\.(unwrap|expect)\(' || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: unwrap()/expect() outside src/main.rs and #[cfg(test)]:'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: no unwrap()/expect() outside src/main.rs and #[cfg(test)]'
+
+      # format!-interpolated SQL values are banned in store.rs (SQL must be
+      # fully parameterized `?` bindings; see 00-overview.md constitution).
+      - name: grep gate — no format! in store.rs
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          if grep -rn --include='store.rs' 'format!' src/; then
+            echo 'FAIL: format! found in store.rs (SQL must use ? bindings)'
+            exit 1
+          fi
+          echo 'OK: no format! in store.rs'
+
+      # -- 3. migrate run + migrate info (pending=0) -----------------------
+      # sqlx-cli pinned exactly as T02 specifies (NOT the backend-rs binary:
+      # its `migrate` subcommand is still the T03 stub until wired later).
+      - name: Cache sqlx-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/sqlx
+          key: sqlx-cli-0.8.6-${{ runner.os }}
+
+      - name: Install sqlx-cli 0.8.6
+        run: |
+          set -euo pipefail
+          if ! command -v sqlx >/dev/null 2>&1; then
+            cargo install sqlx-cli --version 0.8.6 --no-default-features --features mysql,rustls
+          fi
+          cargo sqlx --version
+
+      - name: migrate run
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          cargo sqlx database create
+          cargo sqlx migrate run
+          cargo sqlx migrate info
+
+      # pending=0 cross-check that does not depend on `migrate info` output
+      # formatting: applied rows in the sqlx journal must equal migration files.
+      - name: migrate info asserts pending=0
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mysql-client
+          applied="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B \
+            -e 'SELECT COUNT(*) FROM _sqlx_migrations;' "$CI_DB_NAME")"
+          files="$(ls backend-rs/migrations/*.sql | wc -l)"
+          echo "applied=$applied files=$files"
+          [ "$applied" -eq "$files" ] || { echo 'FAIL: pending migrations remain'; exit 1; }
+          echo 'OK: pending=0'
+
+      # -- 4. SHOW CREATE TABLE assert (T02 gate enforcement) --------------
+      # Baseline rule (30-db-schema.md): app tables are explicit
+      # ENGINE=InnoDB + utf8mb4/utf8mb4_unicode_ci (fail fast, no IF NOT EXISTS).
+      # Documented exceptions, asserted below exactly as T02 proved them:
+      #   * _sqlx_migrations is sqlx-owned tooling, not app DDL (excluded).
+      #   * tower_sessions.session is store-owned DDL VERBATIM (keeps the
+      #     store's IF NOT EXISTS, no explicit ENGINE/CHARSET/COLLATE), so it
+      #     inherits server defaults: assert ENGINE=InnoDB + charset utf8mb4
+      #     (prefix — guards the prod latin1 regression) and LOG the actual
+      #     collation instead of pinning it (T02 deviation 11).
+      - name: SHOW CREATE TABLE engine/charset/collation assert
+        run: |
+          set -euo pipefail
+          app_bad="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e \
+            "SELECT CONCAT(TABLE_NAME, ' ', ENGINE, ' ', TABLE_COLLATION)
+             FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = '$CI_DB_NAME'
+               AND TABLE_TYPE = 'BASE TABLE'
+               AND TABLE_NAME <> '_sqlx_migrations'
+               AND (ENGINE <> 'InnoDB' OR TABLE_COLLATION <> 'utf8mb4_unicode_ci');")"
+          if [ -n "$app_bad" ]; then
+            echo 'FAIL: app tables violating InnoDB/utf8mb4_unicode_ci:'
+            echo "$app_bad"
+            exit 1
+          fi
+          echo 'OK: all app tables are InnoDB/utf8mb4_unicode_ci'
+          session_row="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e \
+            "SELECT CONCAT(TABLE_NAME, ' ', ENGINE, ' ', TABLE_COLLATION)
+             FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = 'tower_sessions' AND TABLE_NAME = 'session';")"
+          echo "store-owned session table: $session_row"
+          case "$session_row" in
+            'session InnoDB utf8mb4'*) echo 'OK: session table InnoDB + utf8mb4 charset' ;;
+            *) echo 'FAIL: session table must be InnoDB with a utf8mb4 collation'; exit 1 ;;
+          esac
+
+      # -- 5. sqlx prepare --check (canonical exact form) ------------------
+      - name: sqlx prepare --check --workspace --all -- --all-targets
+        working-directory: backend-rs
+        run: cargo sqlx prepare --check --workspace --all -- --all-targets
+
+      # -- 6. test ---------------------------------------------------------
+      - name: cargo test --workspace --all-targets
+        working-directory: backend-rs
+        run: cargo test --workspace --all-targets
+
+      # -- supply-chain ----------------------------------------------------
+      - name: cargo audit
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install --locked cargo-audit
+          fi
+          cargo audit
+
+      # deny.toml does not exist yet (no task owns it); fall back to the
+      # cargo-deny default config via `init` so both checks still run.
+      - name: cargo deny check licenses + advisories
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          if ! command -v cargo-deny >/dev/null 2>&1; then
+            cargo install --locked cargo-deny
+          fi
+          if [ ! -f deny.toml ]; then
+            cargo deny init
+          fi
+          cargo deny check advisories
+          cargo deny check licenses
+
+      # -- 7. openapi snapshot (ACTIVE; T40a fills DTO coverage) -----------
+      # export-openapi boots NO pool/sessions, so this also proves the
+      # binary builds offline. SQLX_OFFLINE=true here mirrors the Dockerfile.
+      - name: openapi snapshot — export matches committed openapi.json
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          SQLX_OFFLINE=true cargo run --locked --offline -- export-openapi > /tmp/openapi.ci.json
+          diff -u openapi.json /tmp/openapi.ci.json
+
+  # ------------------------------------------------------------------ web
+  # gen:api --check -> tsc -> vite build (dist feeds the docker image).
+  web:
+    name: web (gen:api --check -> tsc -> vite build)
+    runs-on: ubuntu-latest
+    needs: [backend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      # T40b owns `gen:api` (openapi-typescript regen from
+      # backend-rs/openapi.json). Until then this step is a live placeholder:
+      # it runs the real --check when the script exists, otherwise it still
+      # fails the job on an unparseable openapi.json (never silently green).
+      - name: gen:api --check (placeholder until T40b wires typegen)
+        run: |
+          set -euo pipefail
+          if npm run --prefix frontend | grep -q 'gen:api'; then
+            npm run --prefix frontend gen:api -- --check
+          else
+            echo 'gen:api not wired yet (T40b owns it); validating openapi.json parses'
+            node -e "JSON.parse(require('fs').readFileSync('backend-rs/openapi.json','utf8')); console.log('openapi.json parses OK')"
+          fi
+
+      - name: tsc --noEmit
+        working-directory: frontend
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: vite build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Upload frontend dist (feeds docker public/)
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+
+  # --------------------------------------- docker build + :3001 e2e (pinned)
+  docker-e2e:
+    name: docker build (offline) + vitest + playwright pinned to :3001
+    runs-on: ubuntu-latest
+    needs: [backend, web]
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_pw
+          MYSQL_DATABASE: kanpad_ci
+        ports:
+          - '3306:3306'
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pci_root_pw"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+          --health-start-period=20s
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Populate backend-rs/public from frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend-rs/public
+
+      - name: Dockerfile contract gates (no DATABASE_URL, offline flags)
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          if grep -v '^[[:space:]]*#' Dockerfile | grep -n 'DATABASE_URL'; then
+            echo 'FAIL: Dockerfile must never reference DATABASE_URL outside comments (runtime env only)'
+            exit 1
+          fi
+          grep -q 'SQLX_OFFLINE=true' Dockerfile || { echo 'FAIL: Dockerfile must set SQLX_OFFLINE=true'; exit 1; }
+          grep -q -- '--locked --offline' Dockerfile || { echo 'FAIL: Dockerfile build must use --locked --offline'; exit 1; }
+          grep -q 'COPY .sqlx' Dockerfile || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
+          grep -Eq 'COPY .*public/' Dockerfile || { echo 'FAIL: Dockerfile must COPY public/ (SPA fallback)'; exit 1; }
+          echo 'OK: Dockerfile contract gates pass'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # SQLX_OFFLINE=true comes from the Dockerfile ENV (backed by the
+      # committed .sqlx/ cache + Cargo.lock); no DATABASE_URL is passed here.
+      - name: docker build backend-rs
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend-rs
+          tags: kanpad-rust:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image must not bake DATABASE_URL
+        run: |
+          set -euo pipefail
+          if docker inspect kanpad-rust:ci --format '{{.Config.Env}}' | grep -q 'DATABASE_URL'; then
+            echo 'FAIL: image bakes DATABASE_URL'
+            exit 1
+          fi
+          echo 'OK: image carries no DATABASE_URL'
+
+      # Serve :3001 smoke. SESSION_SECRET is runtime-only (test value, >=32
+      # bytes per boot validation); DB migrations are unnecessary for this
+      # smoke because /health is liveness (DB-free) and /api-docs serves the
+      # embedded openapi.json. T05 adds the /ready + SPA-fallback asserts.
+      - name: Serve :3001 + smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name kanpad-rust-ci --network host \
+            -e PORT=3001 \
+            -e NODE_ENV=test \
+            -e SESSION_SECRET=ci-test-secret-that-is-longer-than-32-bytes \
+            -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4' \
+            kanpad-rust:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3001/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          echo "E2E_BASE_URL=http://localhost:3001" >> "$GITHUB_ENV"
+          curl -fsS http://localhost:3001/health | grep -q '"status":"ok"'
+          echo 'OK: GET /health -> {status: ok}'
+          curl -fsS http://localhost:3001/api-docs/openapi.json > /tmp/openapi.3001.json
+          diff -u backend-rs/openapi.json /tmp/openapi.3001.json
+          echo 'OK: /api-docs/openapi.json matches committed openapi.json'
+          docker exec kanpad-rust-ci test -f /app/public/index.html
+          echo 'OK: SPA index present at /app/public/index.html'
+          docker stop kanpad-rust-ci && docker rm kanpad-rust-ci
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: vitest vs :3001 config (unit; needs no server)
+        working-directory: frontend
+        run: npm run test
+
+      # Playwright is PINNED here, wired fully in T41/T50: browsers install
+      # (cached) + the :3001 smoke above prove the target; the spec files
+      # still boot Nest :3000 via webServer (playwright.config.ts), so
+      # `playwright test` itself must NOT run until T41/T50 retarget it.
+      - name: playwright pinned (browsers installed; full run in T41/T50)
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --only-shell
+          npx playwright --version
+          echo 'PIN: e2e target is http://localhost:3001 (full `playwright test` wired in T41/T50)'

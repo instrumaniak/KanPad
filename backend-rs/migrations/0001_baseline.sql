@@ -28,29 +28,38 @@
 --  10. cards.due_date normalized to DATETIME(6) NULL (was precision-0 datetime).
 --  11. Store-owned session schema tower_sessions.session replaces the Nest
 --      public-schema session table (no rename, no row port, force re-login).
---      Table DDL is verbatim from tower-sessions-sqlx-store 0.15
+--      Table columns/PK are verbatim from tower-sessions-sqlx-store 0.15
 --      MySqlStore::migrate() (keeps the store IF NOT EXISTS: documented
 --      exception). IDX_session_expiry_date is a baseline addition for the
 --      sweeper: the store migrate() creates no index (verified against the
 --      0.15.0 crate source), so SHOW CREATE TABLE differs from a pure
---      migrate() run by exactly this index.
+--      migrate() run by exactly this index. The index is declared INLINE in
+--      the CREATE TABLE (not a separate CREATE INDEX) so parallel
+--      #[sqlx::test] setups don't race on this server-global table (1061).
 --  12. sqlx journal is _sqlx_migrations (TypeORM journal abandoned).
 --  13. AUTO_INCREMENT=N table options stripped (nondeterministic checksums).
 
 -- First statement: store-owned session schema.
-CREATE SCHEMA tower_sessions;
+-- `IF NOT EXISTS` (early-T52 amendment of T02-D3, 2026-10-11): the schema is
+-- server-global, so parallel `#[sqlx::test]` migrator setups raced on it
+-- (1007) and repeat setups failed. App tables below keep fail-fast (no
+-- `IF NOT EXISTS`) — only this server-global statement is idempotent.
+CREATE SCHEMA IF NOT EXISTS tower_sessions;
 
--- Store-owned session table, DDL verbatim from
--- tower-sessions-sqlx-store 0.15 MySqlStore::migrate().
+-- Store-owned session table: column shape verbatim from
+-- tower-sessions-sqlx-store 0.15 MySqlStore::migrate() (char(22)/blob/
+-- timestamp(6), PK(id), no store-side index). The sweeper index below is a
+-- baseline addition (see deviation 11): declared INLINE (not a separate
+-- CREATE INDEX) so parallel `#[sqlx::test]` migrator setups stay race-free —
+-- a standalone CREATE INDEX on this server-global table fails the loser with
+-- 1061. `IF NOT EXISTS` likewise covers concurrent first-creates.
 CREATE TABLE IF NOT EXISTS `tower_sessions`.`session` (
   `id` CHAR(22) NOT NULL,
   `data` BLOB NOT NULL,
   `expiry_date` TIMESTAMP(6) NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `IDX_session_expiry_date` (`expiry_date`)
 );
-
--- Sweeper index (baseline addition, see deviation 11 above).
-CREATE INDEX `IDX_session_expiry_date` ON `tower_sessions`.`session` (`expiry_date`);
 
 CREATE TABLE `users` (
   `id` INT NOT NULL AUTO_INCREMENT,

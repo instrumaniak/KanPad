@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id` FROM `users` WHERE `role` = 'admin' ORDER BY `id` LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 11
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "712f24adafd7e13868f77a91c90015ebf0dae54e8eb65ed1bd6e08befdcbd319"
+}

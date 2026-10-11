@@ -48,7 +48,7 @@
 | T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | DONE merged c0e3ef1 (commit adeea93; 14/14 errors + full suite green) | ses_ed649d952ffecL08IPMMU1UcCL |
 | T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | DONE merged e1119c3 (commit 1e1a6e8; order-asserted yaml, grep gates live-tested, docker build substituted w/ review — disk infeasible) | ses_ed649d77bffedDan6nSONLwTKq |
 | T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | DONE merged acac0d5 (commit 90c35d8; harness+12 fixtures+label_seed; suite green twice) | ses_ed649d777ffeSB3nv6SKKWepOj |
-| T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | dispatched (+public/ gitignore) | ses_ed638a92fffe9SlwO4j05L5Bb4 |
+| T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | DONE merged 28db999 (commit cbd6266; 26 lib + 27 api green; orchestrator fixed fmt + 2 needless_as_bytes) | ses_ed638a92fffe9SlwO4j05L5Bb4 (session died in restart, work finished by orchestrator) |
 | T08 validation core | `rs-t08-validation` | `KanPad-wt/wt-t08` | T04 | dispatched | ses_ed638a92bffeLexI6j2gRF26X9 |
 
 ## Stale sessions (closed, no action)
@@ -66,7 +66,12 @@
 - `tests/api.rs` suite mods need `#[path = "api/<name>.rs"]` (bare `mod x;`
   resolves to `tests/x.rs`). Noted in-file; future suite tasks must follow it.
 
-## Queue (do not start until gate green)
+## Phase 1 — Auth (T10 unblocked: T02+T04+T07+T08 all merged)
+| Task | Branch | Worktree | Depends | Status | Subagent session |
+|------|--------|----------|---------|--------|------------------|
+| T10 register | `rs-t10-register` | `KanPad-wt/wt-t10` | T02+T04+T07+T08 | queued | pending |
+
+## Queue (later phases)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)
 - T10 register → T11 auth sessions (blocks all Phase 2) → T12/T13
 - Phase 2 chain: T20 → T21a → T21b → T22 → T23a → {T23b,T23c,T24a} → T24b/T25/T26a → T24c/T26b/T27a → T27b

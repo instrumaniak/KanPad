@@ -20,7 +20,7 @@
 //! otherwise).
 
 use chrono::NaiveDateTime;
-use sqlx::MySqlExecutor;
+use sqlx::{MySql, MySqlExecutor, QueryBuilder};
 
 use crate::{
     common::ids::{BoardId, ColumnId},
@@ -217,6 +217,88 @@ where
     .execute(ex)
     .await
     .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Card ids of one column in `created_at` order (`desc` = newest first; `id
+/// ASC` tiebreaks equal timestamps so the rewrite is deterministic). One
+/// query per fn (T20 style): the direction rides a whitelisted `match`,
+/// never `format!` of input. Runs inside the caller's sort tx (`FOR UPDATE`
+/// locks exactly the rows the `CASE` rewrite below will move).
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_card_ids_for_sort<'e, E>(
+    ex: E,
+    column_id: i32,
+    desc: bool,
+) -> Result<Vec<i32>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    // Each `query!` site expands to its own anonymous `Record` type, so the
+    // branches map to `Vec<i32>` independently (they never unify).
+    let ordered: Vec<i32> = if desc {
+        sqlx::query!(
+            "SELECT `id` FROM `cards` WHERE `column_id` = ? \
+              ORDER BY `created_at` DESC, `id` ASC FOR UPDATE",
+            column_id
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?
+        .into_iter()
+        .map(|row| row.id)
+        .collect()
+    } else {
+        sqlx::query!(
+            "SELECT `id` FROM `cards` WHERE `column_id` = ? \
+              ORDER BY `created_at` ASC, `id` ASC FOR UPDATE",
+            column_id
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?
+        .into_iter()
+        .map(|row| row.id)
+        .collect()
+    };
+    Ok(ordered)
+}
+
+/// Rewrite card positions to the given id order with ONE set-based
+/// `UPDATE ... CASE` (`ordered_ids[0]` becomes position 0 — never N saves).
+/// Empty input skips the statement (a `CASE` with no `WHEN` is invalid SQL).
+/// Dynamic arity defeats `query!` literals, so this rides `QueryBuilder`;
+/// ids/positions ride `push_bind` only (never `push` of values). `push_bind`
+/// emits a bare `?` with no surrounding spaces, so every `push` fragment
+/// that follows a bind carries a leading space (see `30-db-schema.md`).
+#[tracing::instrument(skip(ex))]
+pub async fn rewrite_card_positions<'e, E>(
+    ex: E,
+    column_id: i32,
+    ordered_ids: &[i32],
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    if ordered_ids.is_empty() {
+        return Ok(());
+    }
+    let mut builder: QueryBuilder<'_, MySql> =
+        QueryBuilder::new("UPDATE `cards` SET `position` = CASE `id` ");
+    for (position, id) in ordered_ids.iter().enumerate() {
+        let slot = i32::try_from(position).map_err(|_| AppError::Internal(Internal))?;
+        // `push_bind` emits a bare `?` (no surrounding spaces), so every
+        // `push` fragment that FOLLOWS a bind carries a leading space (the
+        // initial `QueryBuilder::new` fragment already ends with one, so the
+        // first loop `WHEN`'s extra space is harmless).
+        builder.push(" WHEN ");
+        builder.push_bind(*id);
+        builder.push(" THEN ");
+        builder.push_bind(slot);
+    }
+    builder.push(" ELSE `position` END WHERE `column_id` = ");
+    builder.push_bind(column_id);
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
     Ok(())
 }
 

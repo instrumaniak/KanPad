@@ -17,6 +17,8 @@ mod boards_list;
 mod boards_state;
 #[path = "api/columns_crud.rs"]
 mod columns_crud;
+#[path = "api/columns_sort.rs"]
+mod columns_sort;
 #[path = "api/create_admin.rs"]
 mod create_admin;
 #[path = "api/errors.rs"]

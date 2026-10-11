@@ -647,7 +647,7 @@ mod tests {
             ("production", "__Host-connect.sid"),
         ] {
             // Production refuses HASH_COST<2 at boot, so pin t=2 there.
-            let vars = if env == &"production" {
+            let vars = if env == "production" {
                 with_overrides(&[("NODE_ENV", env), ("HASH_COST", "2")])
             } else {
                 with_overrides(&[("NODE_ENV", env)])
@@ -655,7 +655,7 @@ mod tests {
             let _env = SavedEnv::set(&vars);
             let settings = Settings::load().expect("env must load");
             assert_eq!(settings.session_cookie_name(), name, "env: {env}");
-            assert_eq!(settings.is_production(), env == &"production");
+            assert_eq!(settings.is_production(), env == "production");
         }
         // Struct-level (no env): same rule.
         let mut settings = Settings::default();

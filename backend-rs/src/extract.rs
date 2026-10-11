@@ -26,11 +26,7 @@ use garde::Validate;
 use serde::{de::DeserializeOwned, Deserialize};
 use tower_sessions::Session;
 
-use crate::{
-    common::ids::UserId,
-    error::AppError,
-    state::AppState,
-};
+use crate::{common::ids::UserId, error::AppError, state::AppState};
 
 /// Strict pagination query (`?page=&limit=`).
 ///
@@ -287,13 +283,25 @@ pub struct AuthSession {
 impl FromRequestParts<AppState> for AuthSession {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let session = Session::from_request_parts(parts, state)
             .await
             .map_err(|_| AppError::Unauthorized)?;
-        let user_id: Option<i32> = session.get("user_id").await.map_err(|_| AppError::Unauthorized)?;
-        let email: Option<String> = session.get("email").await.map_err(|_| AppError::Unauthorized)?;
-        let role: Option<String> = session.get("role").await.map_err(|_| AppError::Unauthorized)?;
+        let user_id: Option<i32> = session
+            .get("user_id")
+            .await
+            .map_err(|_| AppError::Unauthorized)?;
+        let email: Option<String> = session
+            .get("email")
+            .await
+            .map_err(|_| AppError::Unauthorized)?;
+        let role: Option<String> = session
+            .get("role")
+            .await
+            .map_err(|_| AppError::Unauthorized)?;
         match (user_id, email, role) {
             (Some(id), Some(email), Some(role))
                 if id > 0 && !email.is_empty() && !role.is_empty() =>

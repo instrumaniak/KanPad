@@ -51,10 +51,7 @@ pub struct AuthRow {
 /// login route runs [`dummy_verify`] on this branch so unknown emails cost
 /// the same Argon2 work as known ones — no enumeration oracle).
 #[tracing::instrument(skip(ex))]
-pub async fn find_auth_row_by_email<'e, E>(
-    ex: E,
-    email: &str,
-) -> Result<Option<AuthRow>, AppError>
+pub async fn find_auth_row_by_email<'e, E>(ex: E, email: &str) -> Result<Option<AuthRow>, AppError>
 where
     E: MySqlExecutor<'e>,
 {
@@ -99,7 +96,9 @@ pub fn verify_bcrypt_truncated(password: &str, hash: &str) -> bool {
         return false;
     }
     let bytes = password.as_bytes();
-    let truncated = &bytes[..bytes.len().min(crate::common::validation::MAX_PASSWORD_BYTES)];
+    let truncated = &bytes[..bytes
+        .len()
+        .min(crate::common::validation::MAX_PASSWORD_BYTES)];
     bcrypt::verify(truncated, hash).unwrap_or(false)
 }
 
@@ -128,10 +127,14 @@ pub async fn update_password_hash<'e, E>(ex: E, id: i32, new_hash: &str) -> Resu
 where
     E: MySqlExecutor<'e>,
 {
-    let result = sqlx::query!("UPDATE `users` SET `password` = ? WHERE `id` = ?", new_hash, id)
-        .execute(ex)
-        .await
-        .map_err(AppError::Db)?;
+    let result = sqlx::query!(
+        "UPDATE `users` SET `password` = ? WHERE `id` = ?",
+        new_hash,
+        id
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
     if result.rows_affected() == 0 {
         return Err(AppError::Unauthorized);
     }

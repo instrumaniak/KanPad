@@ -1,10 +1,16 @@
 //! `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`
 //! + `AuthSession` guard + session cookie hardening (T11).
 //!
-//! Single `#[sqlx::test]` setup on purpose (same server-global
-//! `tower_sessions` constraint as `auth_register.rs`): all scenarios run
-//! sequentially in one test with distinct emails. Teardown drops the session
-//! schema to restore the server-fresh precondition.
+//! Single `#[sqlx::test]` setup on purpose (the `tower_sessions.session`
+//! store table is server-global, shared by every suite in this process): all
+//! scenarios run sequentially in one test with distinct emails. The suite
+//! owns this process's ONE coordinated session wipe at startup (via T07
+//! `clear_sessions`, in the no-live-jar prefix — concurrent suites hold no
+//! live jars yet, and register/login mint fresh ones, so the wipe is a
+//! no-op for them); no suite may wipe mid-flight after that, and NOBODY
+//! drops the shared schema (baseline DDL is `IF NOT EXISTS` since early-T52,
+//! so the old fail-fast `DROP SCHEMA` hygiene is retired — a concurrent drop
+//! 500s in-flight suites with 1049 `Unknown database 'tower_sessions'`).
 //!
 //! Covered (red first: login/logout/me routes do not exist yet):
 //! login 200 (+ fixation rotation, pre-cookie != post-cookie), bad
@@ -13,7 +19,7 @@
 //! 401 on mismatch — never 400 strength), overlong password -> 400 byte cap,
 //! bcrypt cost-10 `$2b$` login verifies + rehashes to Argon2id in the same
 //! request (DB re-read), logout 204 (row destroyed, cookie cleared,
-//! count N -> N-1), me 200 `{data:{id,email,role}}` else 401, me re-lookup
+//! id-set shrinks by exactly the logged-out row), me 200 `{data:{id,email,role}}` else 401, me re-lookup
 //! (deleted -> 401, demoted -> 403 + rotation), expired session row (past
 //! TIMESTAMP) -> 401, wrong `SESSION_SECRET` cookie -> 401 (force re-login),
 //! cookie matrix dev (`connect.sid`, no Secure) vs prod (`__Host-`,
@@ -32,6 +38,8 @@ use sqlx::MySqlPool;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::MySqlStore;
 
+use crate::helpers::clear_sessions;
+
 const PROBLEM_JSON: &str = "application/problem+json";
 
 /// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
@@ -41,8 +49,7 @@ fn app_on_pool(pool: &MySqlPool, session_secret: Option<&str>, node_env: Option<
         ..Default::default()
     };
     if let Some(secret) = session_secret {
-        settings.session_secret =
-            SecretString::new(secret.to_string().into_boxed_str());
+        settings.session_secret = SecretString::new(secret.to_string().into_boxed_str());
     }
     if let Some(env) = node_env {
         settings.node_env = env.to_string();
@@ -136,16 +143,29 @@ fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &
     assert_eq!(body["status"], status.as_u16());
 }
 
-async fn session_row_count(pool: &MySqlPool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM `tower_sessions`.`session`")
-        .fetch_one(pool)
+/// Live ids of the server-global session store (`tower_sessions.session`
+/// is shared by every suite in this process — compare SETS, never absolute
+/// counts, so a concurrent suite's inserts can't flake the assertion; only
+/// logout deletes rows, so exactly one id may vanish across a logout).
+async fn session_ids(pool: &MySqlPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT `id` FROM `tower_sessions`.`session`")
+        .fetch_all(pool)
         .await
-        .expect("session count reads")
+        .expect("session ids read")
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn auth_session_full_flow(pool: MySqlPool) {
     let app = || app_on_pool(&pool, None, None);
+
+    // 0. This process's ONE coordinated session wipe (see module docs): the
+    //    store table is server-global, so concurrent suites' deletes/drops
+    //    mid-flight would 401/500 this suite's live jars — exactly one wipe,
+    //    here, before any jar exists. Concurrent suites hold no live jars
+    //    yet at this point (their prefixes only register/log in, which mint
+    //    fresh sessions), so the wipe is a no-op for them. Doubles as T07's
+    //    relocated `clear_sessions` smoke proof (statement succeeds).
+    clear_sessions(&pool).await.expect("coordinated wipe runs");
 
     // 1. Register (T10) establishes the pre-login session cookie; login
     //    rotates it (`cycle_id` fixation defense: pre != post).
@@ -216,12 +236,22 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     )
     .await;
     let bad_body = json_of(&bad_bytes);
-    assert_problem(StatusCode::UNAUTHORIZED, &bad_headers, &bad_body, "unauthorized");
+    assert_problem(
+        StatusCode::UNAUTHORIZED,
+        &bad_headers,
+        &bad_body,
+        "unauthorized",
+    );
     assert_eq!(bad_body["title"], "Unauthorized");
 
     let (_, unknown_headers, unknown_bytes) = send(
         app(),
-        post("/api/v1/auth/login", "nobody@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/login",
+            "nobody@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     let unknown_body = json_of(&unknown_bytes);
@@ -250,17 +280,31 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         .expect("weak password stored");
     let (status, _, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "login-user@example.com", "weakpass", None),
+        post(
+            "/api/v1/auth/login",
+            "login-user@example.com",
+            "weakpass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "weak match: {}", json_of(&bytes));
     let (status, headers, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "login-user@example.com", "alsoweak", None),
+        post(
+            "/api/v1/auth/login",
+            "login-user@example.com",
+            "alsoweak",
+            None,
+        ),
     )
     .await;
     let mismatch_body = json_of(&bytes);
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "weak mismatch: {mismatch_body}");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "weak mismatch: {mismatch_body}"
+    );
     assert_problem(status, &headers, &mismatch_body, "unauthorized");
     // Restore a strong password for the remaining scenarios.
     let strong_hash =
@@ -272,7 +316,12 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         .expect("strong password restored");
     let (status, headers, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "login-user@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/login",
+            "login-user@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "re-login: {}", json_of(&bytes));
@@ -285,17 +334,27 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         ("login-user@example.com", ""),
         ("login-user@example.com", &"a".repeat(73)),
     ] {
-        let (status, headers, bytes) = send(app(), post("/api/v1/auth/login", email, password, None)).await;
+        let (status, headers, bytes) =
+            send(app(), post("/api/v1/auth/login", email, password, None)).await;
         let failure = json_of(&bytes);
-        assert_eq!(status, StatusCode::BAD_REQUEST, "input {email:?}: {failure}");
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "input {email:?}: {failure}"
+        );
         assert_problem(status, &headers, &failure, "validation-error");
-        assert!(failure["errors"].as_array().is_some_and(|errors| !errors.is_empty()));
+        assert!(failure["errors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty()));
     }
 
     // 5. Legacy bcrypt (cost-10 `$2b$`) verifies, then upgrades to Argon2id
     //    in the same request (DB re-read proves the upgrade).
     let bcrypt_hash = bcrypt::hash("LegacyPass1", 10).expect("cost-10 bcrypt mints");
-    assert!(bcrypt_hash.starts_with("$2b$10$"), "cost-10 fixture shape: {bcrypt_hash}");
+    assert!(
+        bcrypt_hash.starts_with("$2b$10$"),
+        "cost-10 fixture shape: {bcrypt_hash}"
+    );
     sqlx::query("INSERT INTO `users` (`email`, `password`) VALUES ('legacy@example.com', ?)")
         .bind(&bcrypt_hash)
         .execute(&pool)
@@ -303,7 +362,12 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         .expect("legacy bcrypt user inserted");
     let (status, _, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "legacy@example.com", "LegacyPass1", None),
+        post(
+            "/api/v1/auth/login",
+            "legacy@example.com",
+            "LegacyPass1",
+            None,
+        ),
     )
     .await;
     let legacy_body = json_of(&bytes);
@@ -323,7 +387,12 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     // Wrong legacy password still 401s (and does not upgrade).
     let (status, _, _) = send(
         app(),
-        post("/api/v1/auth/login", "legacy@example.com", "LegacyPass2", None),
+        post(
+            "/api/v1/auth/login",
+            "legacy@example.com",
+            "LegacyPass2",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -343,14 +412,24 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     // 7. Deprecated `/api/*` alias serves the same handlers.
     let (status, _, bytes) = send(
         app(),
-        post("/api/auth/login", "login-user@example.com", "Str0ng!pass", None),
+        post(
+            "/api/auth/login",
+            "login-user@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "alias login: {}", json_of(&bytes));
     let alias_jar = {
         let (_, headers, _) = send(
             app(),
-            post("/api/auth/login", "login-user@example.com", "Str0ng!pass", None),
+            post(
+                "/api/auth/login",
+                "login-user@example.com",
+                "Str0ng!pass",
+                None,
+            ),
         )
         .await;
         cookie_jar(&headers)
@@ -363,41 +442,74 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     let raw_dev = {
         let (_, headers, _) = send(
             app(),
-            post("/api/v1/auth/login", "login-user@example.com", "Str0ng!pass", None),
+            post(
+                "/api/v1/auth/login",
+                "login-user@example.com",
+                "Str0ng!pass",
+                None,
+            ),
         )
         .await;
         raw_set_cookies(&headers)
     };
-    assert!(raw_dev.contains("connect.sid="), "dev cookie name: {raw_dev}");
-    assert!(!raw_dev.contains("__Host-"), "dev must not use __Host-: {raw_dev}");
+    assert!(
+        raw_dev.contains("connect.sid="),
+        "dev cookie name: {raw_dev}"
+    );
+    assert!(
+        !raw_dev.contains("__Host-"),
+        "dev must not use __Host-: {raw_dev}"
+    );
     for attr in ["HttpOnly", "SameSite=Lax", "Path=/"] {
         assert!(raw_dev.contains(attr), "dev must carry {attr}: {raw_dev}");
     }
-    assert!(!raw_dev.contains("Secure"), "dev must not be Secure: {raw_dev}");
-    assert!(!raw_dev.contains("Domain="), "dev must not set Domain: {raw_dev}");
+    assert!(
+        !raw_dev.contains("Secure"),
+        "dev must not be Secure: {raw_dev}"
+    );
+    assert!(
+        !raw_dev.contains("Domain="),
+        "dev must not set Domain: {raw_dev}"
+    );
 
     // 9. Prod cookie matrix: `__Host-connect.sid` + Secure, still
     //    HttpOnly + SameSite=Lax + Path=/, no Domain.
     let prod = app_on_pool(&pool, None, Some("production"));
     let (status, headers, bytes) = send(
         prod,
-        post("/api/v1/auth/login", "login-user@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/login",
+            "login-user@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "prod login: {}", json_of(&bytes));
     let raw_prod = raw_set_cookies(&headers);
-    assert!(raw_prod.contains("__Host-connect.sid="), "prod cookie name: {raw_prod}");
+    assert!(
+        raw_prod.contains("__Host-connect.sid="),
+        "prod cookie name: {raw_prod}"
+    );
     for attr in ["Secure", "HttpOnly", "SameSite=Lax", "Path=/"] {
-        assert!(raw_prod.contains(attr), "prod must carry {attr}: {raw_prod}");
+        assert!(
+            raw_prod.contains(attr),
+            "prod must carry {attr}: {raw_prod}"
+        );
     }
-    assert!(!raw_prod.contains("Domain="), "prod must not set Domain: {raw_prod}");
+    assert!(
+        !raw_prod.contains("Domain="),
+        "prod must not set Domain: {raw_prod}"
+    );
 
     // 10. Expired session row (past TIMESTAMP — the store uses
     //     `timestamp(6)`, not epoch-ms) is ignored -> 401.
-    sqlx::query("UPDATE `tower_sessions`.`session` SET `expiry_date` = '2000-01-01 00:00:00.000000'")
-        .execute(&pool)
-        .await
-        .expect("sessions expired");
+    sqlx::query(
+        "UPDATE `tower_sessions`.`session` SET `expiry_date` = '2000-01-01 00:00:00.000000'",
+    )
+    .execute(&pool)
+    .await
+    .expect("sessions expired");
     let (status, headers, bytes) = send(app(), get("/api/v1/auth/me", Some(&login_jar))).await;
     let expired_body = json_of(&bytes);
     assert_eq!(status, StatusCode::UNAUTHORIZED, "expired: {expired_body}");
@@ -405,31 +517,56 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     // Re-login for the remaining scenarios.
     let (status, headers, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "login-user@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/login",
+            "login-user@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "post-expiry login: {}", json_of(&bytes));
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "post-expiry login: {}",
+        json_of(&bytes)
+    );
     let login_jar = cookie_jar(&headers);
 
     // 11. Cookie signed with the wrong `SESSION_SECRET` fails verification
     //     (force re-login proof — no Nest-row seeding, codecs incompatible
     //     by design) -> 401.
     let other_secret = app_on_pool(&pool, Some("a-completely-different-secret-32bytes!!"), None);
-    let (status, headers, bytes) = send(other_secret, get("/api/v1/auth/me", Some(&login_jar))).await;
+    let (status, headers, bytes) =
+        send(other_secret, get("/api/v1/auth/me", Some(&login_jar))).await;
     let rotated_body = json_of(&bytes);
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "wrong secret: {rotated_body}");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "wrong secret: {rotated_body}"
+    );
     assert_problem(status, &headers, &rotated_body, "unauthorized");
 
     // 12. `me` re-lookup: deleted user -> 401.
-    let (status, _, bytes) = send(
+    let (status, _, _bytes) = send(
         app(),
-        post("/api/v1/auth/register", "doomed@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/register",
+            "doomed@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
     let (status, headers, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "doomed@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/login",
+            "doomed@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "doomed login: {}", json_of(&bytes));
@@ -440,14 +577,23 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         .expect("doomed user deleted");
     let (status, headers, bytes) = send(app(), get("/api/v1/auth/me", Some(&doomed_jar))).await;
     let deleted_body = json_of(&bytes);
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "deleted user me: {deleted_body}");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "deleted user me: {deleted_body}"
+    );
     assert_problem(status, &headers, &deleted_body, "unauthorized");
 
     // 13. `me` re-lookup: demoted admin (stale session role) -> 403, with
     //     session rotation on the privilege change.
-    let (status, _, bytes) = send(
+    let (status, _, _bytes) = send(
         app(),
-        post("/api/v1/auth/register", "boss@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/register",
+            "boss@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -457,7 +603,12 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         .expect("boss promoted");
     let (status, headers, bytes) = send(
         app(),
-        post("/api/v1/auth/login", "boss@example.com", "Str0ng!pass", None),
+        post(
+            "/api/v1/auth/login",
+            "boss@example.com",
+            "Str0ng!pass",
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "boss login: {}", json_of(&bytes));
@@ -479,33 +630,55 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         "privilege change must rotate the session id"
     );
 
-    // 14. Logout -> 204: destroys the row (count N -> N-1) + clears the
-    //     cookie; the old jar then 401s.
-    let before = session_row_count(&pool).await;
-    assert!(before >= 1, "sessions exist before logout");
-    let (status, headers, bytes) = send(app(), post_empty("/api/v1/auth/logout", Some(&login_jar))).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "logout: {}", String::from_utf8_lossy(&bytes));
+    // 14. Logout -> 204: destroys the row (id-set shrinks by exactly the
+    //     logged-out row — set difference, not an absolute count, so a
+    //     concurrent suite's inserts can't flake it; nothing else deletes
+    //     rows) + clears the cookie; the old jar then 401s.
+    let ids_before = session_ids(&pool).await;
+    assert!(!ids_before.is_empty(), "sessions exist before logout");
+    let (status, headers, bytes) =
+        send(app(), post_empty("/api/v1/auth/logout", Some(&login_jar))).await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "logout: {}",
+        String::from_utf8_lossy(&bytes)
+    );
     assert!(bytes.is_empty(), "204 carries no body");
     let raw_logout = raw_set_cookies(&headers);
-    assert!(!raw_logout.is_empty(), "logout must clear the cookie: {raw_logout}");
+    assert!(
+        !raw_logout.is_empty(),
+        "logout must clear the cookie: {raw_logout}"
+    );
     assert!(
         raw_logout.contains("Max-Age=0"),
         "logout must expire the cookie: {raw_logout}"
     );
-    let after = session_row_count(&pool).await;
-    assert_eq!(after, before - 1, "logout must destroy exactly its row");
+    let ids_after = session_ids(&pool).await;
+    let removed: Vec<&String> = ids_before
+        .iter()
+        .filter(|id| !ids_after.contains(id))
+        .collect();
+    assert_eq!(
+        removed.len(),
+        1,
+        "logout must destroy exactly its row (concurrent adds are ignored by set difference)"
+    );
     // DB re-read via a second call: the old jar is anonymous now.
     let (status, headers, bytes) = send(app(), get("/api/v1/auth/me", Some(&login_jar))).await;
     let logged_out_body = json_of(&bytes);
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "post-logout me: {logged_out_body}");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "post-logout me: {logged_out_body}"
+    );
     assert_problem(status, &headers, &logged_out_body, "unauthorized");
     // Anonymous logout still 204s (never 4xx on the destroy path).
     let (status, _, _) = send(app(), post_empty("/api/v1/auth/logout", None)).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Teardown: restore the T02 server-fresh precondition (mirrors T07/T10).
-    sqlx::query("DROP SCHEMA IF EXISTS `tower_sessions`")
-        .execute(&pool)
-        .await
-        .expect("teardown drops session schema");
+    // NO TEARDOWN WIPE/DROP: the shared store must survive until every
+    // suite in this process is done (a concurrent drop 500s in-flight
+    // suites with 1049). Leftover rows are harmless: per-test DBs are
+    // fresh every process and no suite asserts store emptiness.
 }

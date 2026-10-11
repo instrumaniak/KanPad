@@ -26,6 +26,7 @@ use axum::{
 use docs::HealthResponse;
 use error::{capture_request_context, handle_timeout, AppError};
 use secrecy::ExposeSecret;
+use sha2::{Digest, Sha512};
 use state::AppState;
 use tower::ServiceBuilder;
 use tower_http::{
@@ -45,6 +46,18 @@ use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
 /// Request-id header name (tower-http keeps its own copy private).
 const X_REQUEST_ID: header::HeaderName = header::HeaderName::from_static("x-request-id");
+
+/// Derive the 64-byte cookie [`Key`] tower-sessions requires from
+/// `SESSION_SECRET` (spec: `≥ 32` bytes, so it is NOT always 64 bytes long).
+/// SHA-512 expansion is deterministic (same secret → same key on every
+/// instance/restart) and collision-free in practice, so a wrong/pre-cutover
+/// secret still fails HMAC verification → anonymous → 401 (the T11
+/// force-re-login proof). (`Key::from` panics below 64 bytes and cookie's
+/// `key-expansion` HKDF is not forwarded by tower-sessions 0.14, hence the
+/// explicit hash step.)
+fn session_key(settings: &config::Settings) -> Key {
+    Key::from(Sha512::digest(settings.session_secret.expose_secret().as_bytes()).as_slice())
+}
 
 /// Origin timeout bound for every request (handle layer above renders 503).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -124,7 +137,7 @@ pub fn create_app(state: AppState) -> Router {
     // task + pool connection per in-process test. `grep -rn
     // "tokio::spawn\|continuously_delete_expired" src/lib.rs` must stay
     // empty (CI grep gate candidate).
-    let session_key = Key::from(state.settings.session_secret.expose_secret().as_bytes());
+    let session_key = session_key(&state.settings);
     let session_layer = SessionManagerLayer::new(state.sessions.clone())
         .with_name(state.settings.session_cookie_name())
         .with_http_only(true)

@@ -93,26 +93,9 @@ pub async fn register(
 
     // Session persistence failures carry no payload (`Internal` is a unit
     // struct); only a static message is logged server-side — never session
-    // JSON, the password, or its hash.
-    session
-        .insert("user_id", user.id.get())
-        .await
-        .map_err(|_| {
-            tracing::error!("register: failed to persist session");
-            AppError::Internal(Internal)
-        })?;
-    session.insert("email", &user.email).await.map_err(|_| {
-        tracing::error!("register: failed to persist session");
-        AppError::Internal(Internal)
-    })?;
-    session.insert("role", &user.role).await.map_err(|_| {
-        tracing::error!("register: failed to persist session");
-        AppError::Internal(Internal)
-    })?;
-    session.cycle_id().await.map_err(|_| {
-        tracing::error!("register: failed to rotate session id");
-        AppError::Internal(Internal)
-    })?;
+    // JSON, the password, or its hash. Shared with login-success so the two
+    // entry points cannot drift (fixation defense: register logs in).
+    establish_session(&session, &user.email, user.id.get(), &user.role).await?;
 
     Ok((
         StatusCode::CREATED,

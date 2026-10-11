@@ -32,9 +32,12 @@
 //! when auth routes land; manual propagation stays valid either way.
 //!
 //! # Sessions between suites
-//! [`clear_sessions`] truncates the store-owned `tower_sessions.session`
-//! table. Suites that touch auth call it in setup so expired/leftover rows
-//! never leak across suites.
+//! [`clear_sessions`] deletes the store-owned `tower_sessions.session`
+//! rows. The store table is server-global (shared by every suite in this
+//! process), so it MUST be called at most once per process — currently by
+//! T11's auth-session suite at its startup, which owns the coordinated
+//! wipe. Never call it from any other suite's setup/teardown: a concurrent
+//! wipe 401s/500s in-flight suites' live jars.
 
 use axum::{
     body::Body,
@@ -86,7 +89,10 @@ pub async fn ensure_default_labels(pool: &MySqlPool, user_id: i32) -> Result<u64
     backend_rs::common::label_seed::ensure_default_labels(pool, user_id).await
 }
 
-/// Truncate store-owned session rows between suites (auth isolation).
+/// Delete store-owned session rows (auth isolation). Call at most ONCE per
+/// `cargo test` process (currently T11's auth-session suite at startup —
+/// see module docs): the store table is server-global and a concurrent wipe
+/// kills other suites' live jars.
 pub async fn clear_sessions(pool: &MySqlPool) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM `tower_sessions`.`session`")
         .execute(pool)
@@ -180,16 +186,17 @@ async fn helpers_test_app_serves_health() {
 /// (second call = no dup, still 6 rows).
 /// AC: fixtures insert fixed ids in FK order and load cleanly together.
 ///
-/// NOTE (load-bearing, see T52 proposal in the T07 report): these two ACs
-/// share ONE `#[sqlx::test]` setup deliberately. The baseline's first
-/// statement is fail-fast `CREATE SCHEMA tower_sessions` (no `IF NOT EXISTS`,
-/// T02 design) on a server-global schema, so two concurrent migrator setups
-/// race (loser gets 1007) and EVERY later setup fails once the schema exists.
-/// Exactly one migrator setup per `cargo test` process therefore succeeds;
-/// the teardown below restores the server-fresh precondition for the next
-/// run. Resource suites (T20+) sidestep this entirely via the shared-DB +
-/// tx-rollback strategy (migrations run once). If this test aborts before
-/// teardown, recover with: `DROP SCHEMA tower_sessions;`
+/// NOTE (load-bearing): the `tower_sessions.session` store table is
+/// server-global, shared by every suite in this process — so exactly ONE
+/// coordinated wipe per process is allowed, owned by T11's auth-session
+/// suite at its startup (see `auth_session.rs` module docs). NEVER wipe or
+/// drop the shared store from any other suite: a concurrent
+/// `DELETE`/`DROP SCHEMA` 401s/500s (1049 `Unknown database
+/// 'tower_sessions'`) in-flight suites' live jars. The baseline DDL is
+/// `CREATE SCHEMA/TABLE IF NOT EXISTS` (early-T52), so repeat setups are
+/// safe with the schema present and no "server-fresh" teardown is needed.
+/// Resource suites (T20+) sidestep this entirely via the shared-DB +
+/// tx-rollback strategy (migrations run once).
 #[sqlx::test(
     migrations = "./migrations",
     fixtures(
@@ -208,8 +215,9 @@ async fn helpers_test_app_serves_health() {
     )
 )]
 async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
-    // Session-table access proof: truncate works on the store-owned schema.
-    clear_sessions(&pool).await.unwrap();
+    // NO session wipe here: the store table is server-global (see NOTE
+    // above) — T11 owns the single coordinated wipe. This suite holds no
+    // session jars, so concurrent wipes elsewhere are no-ops for it.
 
     let expected_counts = FIXTURE_ORDER.map(|table| {
         let expected = match table {
@@ -288,11 +296,5 @@ async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
         .unwrap();
     assert_eq!(count, 6, "still exactly 6 rows after re-seed");
 
-    // Teardown: restore the T02 server-fresh precondition (baseline
-    // `CREATE SCHEMA tower_sessions` fails when it exists). Required for
-    // repeat `cargo test` runs on a shared server.
-    sqlx::query("DROP SCHEMA IF EXISTS `tower_sessions`")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // NO TEARDOWN WIPE/DROP (see NOTE above).
 }

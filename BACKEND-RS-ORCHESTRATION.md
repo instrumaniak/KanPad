@@ -5,17 +5,21 @@
 > This file is the pause/resume pointer. Update it on every task complete/merge.
 
 ## Base
-- Base branch: `dev-rs-local` (commit `f2a0cc0` specs)
-- Worktree root: `/tmp/opencode/kanpad/` (preferred over /tmp)
-- Merge target: `dev-rs-local` (squash or merge --no-ff per task, then push only on demand)
-- Resume: `git worktree list` + this table + `git log --oneline -20` on `dev-rs-local`
+- Base branch: `dev-rs-local` (T01 merged `be37720`)
+- Worktree root: `/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/KanPad-wt/` (PERSISTENT volume — /tmp/opencode was wiped by 2026-10-11 server restart, losing uncommitted T03 skeleton + T02 progress; never use /tmp for worktrees)
+- Shared cargo target cache (deps prebuilt): `/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-target-kanpad` — every Rust command MUST export `CARGO_TARGET_DIR=<that>` (+ `CARGO_HOME=/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-home` for installs; root disk / is 98% full)
+- Merge target: `dev-rs-local`. Resume: `git worktree list` + this table + `git log --oneline -20`.
 
-## Wave 1 (in-progress)
+## Restart 2026-10-11 (server restart, /tmp wiped)
+- Lost: uncommitted T03 skeleton (clippy was green, tests pending) + any T02 progress. Branches reset from `dev-rs-local`; worktrees recreated on persistent volume.
+- T01 SAFE (merged `be37720`: compose.yaml + CONTRACT-CHANGES.md + vite.config.ts).
+
+## Wave 1 retry (re-dispatched)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T01 contract+compose | `rs-t01-compose` | `/tmp/opencode/kanpad/wt-t01` | none | MERGED be37720 | ses_ed6b464b8ffe0k6NoBgUExmLOh |
-| T03 crate skeleton | `rs-t03-skeleton` | `/tmp/opencode/kanpad/wt-t03` | none (parallel w/ T02) | running (ses_ed6b4648cffeTTMKAFtdD0GrNB) — on pre-T01 base, merge later, no file conflict expected | ses_ed6b4648cffeTTMKAFtdD0GrNB |
-| T02 baseline DB | `rs-t02-baseline` | `/tmp/opencode/kanpad/wt-t02` | T01 DONE (rebased onto ae7f787) | dispatched | ses_ed6b1914fffe25Qs2hjPhFWyhq |
+| T01 contract+compose | (merged, branch deleted) | — | none | DONE be37720 | ses_ed6b464b8ffe0k6NoBgUExmLOh |
+| T03 crate skeleton | `rs-t03-skeleton` | `KanPad-wt/wt-t03` | none | re-dispatched | pending |
+| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | re-dispatched | pending |
 
 ## Queue (do not start until gate green)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)

@@ -6,6 +6,7 @@ use std::net::Ipv4Addr;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use sqlx::{MySqlPool, Row};
+use tower_sessions::session_store::ExpiredDeletion;
 
 use backend_rs::{build_state, config::Settings, create_app};
 
@@ -89,6 +90,18 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     }
     let port = state.settings.port;
     let instance_id = state.instance_id.clone();
+    // Session-expiry sweeper: the ONLY spawn site in the codebase
+    // (`lib::create_app` never spawns — tests would leak a task + pool
+    // connection each). `continuously_delete_expired(60s)` purges rows past
+    // `expiry_date` (the store's `load` already ignores them per-request);
+    // the `AbortHandle` below stops it after HTTP drain.
+    let sweeper = tokio::spawn(
+        state
+            .sessions
+            .clone()
+            .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
+    );
+    let sweeper_handle = sweeper.abort_handle();
     let app = create_app(state.clone());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .await
@@ -105,6 +118,8 @@ async fn serve(auto_migrate: bool) -> Result<()> {
         "shutdown signal received: draining, then closing pool"
     );
     state.pool.close().await;
+    sweeper_handle.abort();
+    let _ = sweeper.await;
     tracing::info!(instance_id = %instance_id, "backend-rs shutdown complete");
     Ok(())
 }

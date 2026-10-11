@@ -1,11 +1,15 @@
 //! `POST /api/v1/auth/register` (T10).
 //!
-//! Single `#[sqlx::test]` setup on purpose: the baseline's fail-fast
-//! `CREATE SCHEMA tower_sessions` allows exactly one migrator setup per
-//! `cargo test` process on a shared server (see `helpers.rs` NOTE), so all
-//! register scenarios run sequentially inside one test against one pool,
-//! with distinct emails per scenario. The teardown restores the server-fresh
-//! precondition (`DROP SCHEMA`), mirroring T07.
+//! Single `#[sqlx::test]` setup on purpose: all register scenarios run
+//! sequentially inside one test against one pool, with distinct emails per
+//! scenario. The `tower_sessions.session` store table is server-global
+//! (shared by every suite in this process): this suite never wipes it —
+//! NOBODY drops the shared schema (baseline DDL is `IF NOT EXISTS` since
+//! early-T52, so the old fail-fast `DROP SCHEMA` hygiene is retired; a
+//! concurrent drop 500s in-flight suites with 1049
+//! `Unknown database 'tower_sessions'`). T11 owns this process's one
+//! coordinated wipe; this suite's cookie assertions need no live jars
+//! beyond the request that mints them, so concurrent wipes are no-ops here.
 //!
 //! Covered: 201 + `{data:{id,email,role}}` + `Location: /api/v1/auth/me` +
 //! `Set-Cookie` (+ `cycle_id` rotation proof); DB re-read finds the user +
@@ -241,10 +245,6 @@ async fn register_full_flow(pool: MySqlPool) {
             .expect("closed count reads");
     assert_eq!(closed_count, 0, "closed register must not insert");
 
-    // Teardown: restore the T02 server-fresh precondition (fail-fast
-    // `CREATE SCHEMA tower_sessions` breaks repeat setups while it exists).
-    sqlx::query("DROP SCHEMA IF EXISTS `tower_sessions`")
-        .execute(&pool)
-        .await
-        .expect("teardown drops session schema");
+    // NO TEARDOWN WIPE/DROP: the shared session store must survive until
+    // every suite in this process is done (see module docs).
 }

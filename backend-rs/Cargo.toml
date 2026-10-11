@@ -9,7 +9,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "tim
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
 tower = { version = "0.5", features = ["timeout"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit", "fs", "sensitive-headers"] }
-tower-sessions = "0.14"
+tower-sessions = { version = "0.14", features = ["signed"] }
 tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }
 tower_governor = "=0.8.0"
 argon2 = "0.5"
@@ -23,6 +23,7 @@ utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 chrono = "0.4"
 time = "0.3"
 dotenvy = "0.15"

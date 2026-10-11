@@ -1,0 +1,3 @@
+# SPA build output: populated from frontend/dist/ before `docker build`
+# (see Dockerfile `COPY public/`); never committed.
+public/

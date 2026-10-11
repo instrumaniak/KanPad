@@ -40,6 +40,9 @@ fn test_settings() -> Settings {
         node_env: "test".to_string(),
         hash_cost: 1,
         port: 3001,
+        // T05 added Settings fields with `Default`; keep the T04 kernel probe
+        // on test defaults (compile-compat only, no behavior change).
+        ..Default::default()
     }
 }
 

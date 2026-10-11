@@ -5,6 +5,7 @@ use std::net::Ipv4Addr;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use sqlx::{MySqlPool, Row};
 
 use backend_rs::{build_state, config::Settings, create_app};
 
@@ -60,38 +61,118 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Init process-wide tracing once: `RUST_LOG` respected (`RUST_LOG=debug`
+/// raises verbosity), sane `info` default without it. Re-init (tests) is
+/// ignored rather than panicking.
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("backend_rs=info,tower_http=info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
 async fn serve(auto_migrate: bool) -> Result<()> {
+    init_tracing();
     let settings = Settings::load().context("failed to load settings")?;
-    if auto_migrate {
-        println!("warning: --auto-migrate is a no-op until T02 lands backend-rs/migrations/");
-    }
-    let port = settings.port;
     let state = build_state(settings);
-    let app = create_app(state);
+    if auto_migrate {
+        if state.settings.is_production() {
+            bail!("--auto-migrate is dev/compose only; refusing in production");
+        }
+        tracing::info!(
+            instance_id = %state.instance_id,
+            "applying pending migrations (--auto-migrate)"
+        );
+        sqlx::migrate!("./migrations")
+            .run(&state.pool)
+            .await
+            .context("failed to apply migrations")?;
+    }
+    let port = state.settings.port;
+    let instance_id = state.instance_id.clone();
+    let app = create_app(state.clone());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .await
         .with_context(|| format!("failed to bind port {port}"))?;
-    println!("backend-rs listening on :{port}");
+    tracing::info!(instance_id = %instance_id, port, "backend-rs listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server error")?;
-    println!("backend-rs shutdown complete");
+    // HTTP drained (SIGINT/SIGTERM): close idle MySQL connections cleanly,
+    // then log shutdown with the instance id for correlation.
+    tracing::info!(
+        instance_id = %instance_id,
+        "shutdown signal received: draining, then closing pool"
+    );
+    state.pool.close().await;
+    tracing::info!(instance_id = %instance_id, "backend-rs shutdown complete");
     Ok(())
 }
 
+/// Applied migration versions (ascending) from the sqlx journal.
+async fn applied_versions(pool: &MySqlPool) -> Result<Vec<i64>> {
+    let rows = sqlx::query("SELECT version FROM _sqlx_migrations ORDER BY version ASC")
+        .fetch_all(pool)
+        .await
+        .context("failed to read migration journal")?;
+    Ok(rows
+        .iter()
+        .map(|row| row.get::<i64, _>("version"))
+        .collect())
+}
+
 async fn migrate(op: MigrateOp) -> Result<()> {
+    init_tracing();
+    let settings = Settings::load().context("failed to load settings")?;
+    let state = build_state(settings);
+    let migrator = sqlx::migrate!("./migrations");
     match op {
-        MigrateOp::Info => {
-            // Skeleton: T02 owns backend-rs/migrations/. Info must work with no DB.
-            println!("applied: 0 pending: 0 (skeleton: no migrations dir yet, T02 owns it)");
+        MigrateOp::Run => {
+            migrator
+                .run(&state.pool)
+                .await
+                .context("failed to apply migrations")?;
+            let applied = applied_versions(&state.pool).await?;
+            println!("migrations applied: {}", applied.len());
             Ok(())
         }
-        MigrateOp::Run => {
-            bail!("skeleton: cannot run migrations until T02 lands backend-rs/migrations/");
+        MigrateOp::Info => {
+            let applied = match applied_versions(&state.pool).await {
+                Ok(versions) => versions,
+                Err(_) => {
+                    println!("journal: no _sqlx_migrations table yet (fresh database)");
+                    Vec::new()
+                }
+            };
+            let mut pending = 0;
+            for migration in migrator.migrations.iter() {
+                let status = if applied.contains(&migration.version) {
+                    "applied"
+                } else {
+                    pending += 1;
+                    "pending"
+                };
+                println!("{status}: {} {}", migration.version, migration.description);
+            }
+            println!("applied: {} pending: {pending}", applied.len());
+            Ok(())
         }
         MigrateOp::Revert => {
-            bail!("skeleton: cannot revert migrations until T02 lands backend-rs/migrations/");
+            if state.settings.is_production() {
+                bail!("migrate revert is dev-only; production rollback = restore backup");
+            }
+            let applied = applied_versions(&state.pool).await?;
+            let Some(last) = applied.last().copied() else {
+                println!("nothing to revert");
+                return Ok(());
+            };
+            let target = applied.iter().rev().nth(1).copied().unwrap_or(0);
+            migrator
+                .undo(&state.pool, target)
+                .await
+                .context("failed to revert migration")?;
+            println!("reverted migration {last}");
+            Ok(())
         }
     }
 }

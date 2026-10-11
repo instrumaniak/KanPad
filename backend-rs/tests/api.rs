@@ -15,6 +15,8 @@ mod boards_create;
 mod boards_list;
 #[path = "api/boards_state.rs"]
 mod boards_state;
+#[path = "api/columns_crud.rs"]
+mod columns_crud;
 #[path = "api/create_admin.rs"]
 mod create_admin;
 #[path = "api/errors.rs"]

@@ -1,0 +1,44 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT cl.`card_id` AS \"card_id: i32\", COUNT(ci.`id`) AS \"total: i64\", COUNT(CASE WHEN ci.`is_completed` <> 0 THEN 1 END) AS \"completed: i64\" FROM `checklists` cl LEFT JOIN `checklist_items` ci ON ci.`checklist_id` = cl.`id` WHERE cl.`card_id` IN (SELECT k.`id` FROM `cards` k WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?)) GROUP BY cl.`card_id`",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "card_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "total: i64",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 21
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "completed: i64",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 21
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4b91f9930f83cc8c604ba0b18bffc24d30d300396f4a44921815859089930040"
+}

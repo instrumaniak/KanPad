@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE `columns` SET `name` = ? WHERE `id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cb8faf2d86c2bb01a7d64343490c62636ec1303126e8d4f0c84d3c9092957fe8"
+}

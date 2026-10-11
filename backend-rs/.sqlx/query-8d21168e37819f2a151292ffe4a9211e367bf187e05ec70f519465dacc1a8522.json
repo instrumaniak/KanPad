@@ -1,0 +1,24 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id` FROM `boards` WHERE `id` = ? AND `user_id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 11
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8d21168e37819f2a151292ffe4a9211e367bf187e05ec70f519465dacc1a8522"
+}

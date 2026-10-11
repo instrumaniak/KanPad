@@ -20,7 +20,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:3000',
+      // T01: VITE_API_URL selects the backend target.
+      // Default :3000 (Nest); set VITE_API_URL=http://localhost:3001 for Rust.
+      // The in-app fetch BASE switch itself lands in T40b (client.ts).
+      '/api': process.env.VITE_API_URL ?? 'http://localhost:3000',
     },
   },
   build: {

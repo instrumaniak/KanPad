@@ -102,7 +102,12 @@
 |------|--------|----------|---------|--------|------------------|
 | T12 create-admin CLI | `rs-t12-admin` | `KanPad-wt/wt-t12` | T02+T10 | DONE merged c5dd11b (exit 0/1/2/3, --force reset, single-admin guard) | ses_ed52073f0ffeqscI5AvOgfMTz6 |
 | T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | DONE merged 516300c (no-route absence proof, re-export owner) | ses_ed52073caffeQqbz9QQhyjiCSC |
-| T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | dispatched | ses_ed52073c8ffel22pkjLyG539re |
+| T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | DONE merged 962b84d (201+Location, 2-query board_count proof, explicit in-tx cascade; 53/53) | ses_ed52073c8ffel22pkjLyG539re |
+| T21a boards create+detail | `rs-t21a-boards` | `KanPad-wt/wt-t21a` | T02+T04+T07+T08+T11+T20 | dispatched | pending |
+
+## Findings from T20 (for T52/AGENTS.md)
+- Spec conflict: 20-contract+T20 AC mandate project-delete cascades boards, but baseline FK `FK_boards_project_id` is `ON DELETE SET NULL` (matches Nest entity). Implemented as explicit app-level in-tx cascade (contract wins). T52: schema-text note.
+- Portability: lockfile `time` 0.3.55 renamed `PrimitiveDateTime`→`PlainDateTime`; sqlx unifies `time` support via session store so `query!` maps DATETIME→`time` not `chrono`. Future DATETIME selects need `AS "col: chrono::NaiveDateTime"` overrides. T52/AGENTS.md note.
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)
 - T10 register → T11 auth sessions (blocks all Phase 2) → T12/T13
 - Phase 2 chain: T20 → T21a → T21b → T22 → T23a → {T23b,T23c,T24a} → T24b/T25/T26a → T24c/T26b/T27a → T27b

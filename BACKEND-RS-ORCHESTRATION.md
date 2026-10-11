@@ -49,7 +49,7 @@
 | T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | DONE merged e1119c3 (commit 1e1a6e8; order-asserted yaml, grep gates live-tested, docker build substituted w/ review — disk infeasible) | ses_ed649d77bffedDan6nSONLwTKq |
 | T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | DONE merged acac0d5 (commit 90c35d8; harness+12 fixtures+label_seed; suite green twice) | ses_ed649d777ffeSB3nv6SKKWepOj |
 | T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | DONE merged 28db999 + compat f7f9ae7 (cherry-picked aabb125; full suite 36 lib + 47 api green w/ live DB) | ses_ed638a92fffe9SlwO4j05L5Bb4 (session died in restart, work finished by orchestrator) |
-| T08 validation core | `rs-t08-validation` | `KanPad-wt/wt-t08` | T04 | dispatched | ses_ed638a92bffeLexI6j2gRF26X9 |
+| T08 validation core | `rs-t08-validation` | `KanPad-wt/wt-t08` | T04 | DONE merged e694f6a (commit 61aa3de; garde catalogue + Valid* extractors) | ses_ed638a92bffeLexI6j2gRF26X9 |
 
 ## Stale sessions (closed, no action)
 - `ses_ed6b1914...` (pre-restart T02) reported post-merge: verified merge, changed
@@ -97,7 +97,12 @@
   after). Suspect overloaded-MySQL transient on :3337. Reopen if it recurs
   with a captured message.
 
-## Queue (later phases)
+## Phase 2 kickoff (T12+T13+T20 parallel; all disjoint except tests/api.rs mod line)
+| Task | Branch | Worktree | Depends | Status | Subagent session |
+|------|--------|----------|---------|--------|------------------|
+| T12 create-admin CLI | `rs-t12-admin` | `KanPad-wt/wt-t12` | T02+T10 | dispatched | pending |
+| T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | dispatched | pending |
+| T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | dispatched | pending |
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)
 - T10 register → T11 auth sessions (blocks all Phase 2) → T12/T13
 - Phase 2 chain: T20 → T21a → T21b → T22 → T23a → {T23b,T23c,T24a} → T24b/T25/T26a → T24c/T26b/T27a → T27b

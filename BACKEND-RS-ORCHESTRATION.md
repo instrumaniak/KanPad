@@ -101,7 +101,7 @@
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
 | T12 create-admin CLI | `rs-t12-admin` | `KanPad-wt/wt-t12` | T02+T10 | dispatched | ses_ed52073f0ffeqscI5AvOgfMTz6 |
-| T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | dispatched | ses_ed52073caffeQqbz9QQhyjiCSC |
+| T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | DONE merged 516300c (no-route absence proof, re-export owner) | ses_ed52073caffeQqbz9QQhyjiCSC |
 | T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | dispatched | ses_ed52073c8ffel22pkjLyG539re |
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)
 - T10 register → T11 auth sessions (blocks all Phase 2) → T12/T13

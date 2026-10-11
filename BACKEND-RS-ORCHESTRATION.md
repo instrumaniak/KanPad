@@ -105,7 +105,12 @@
 | T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | DONE merged 962b84d (201+Location, 2-query board_count proof, explicit in-tx cascade; 53/53) | ses_ed52073c8ffel22pkjLyG539re |
 | T21a boards create+detail | `rs-t21a-boards` | `KanPad-wt/wt-t21a` | T02+T04+T07+T08+T11+T20 | DONE merged 97209fc (one-tx 3 cols, nested ASC detail; 54/54) | ses_ed502dd37ffePnTP9juvZfsLwy |
 | T21b boards list+filters | `rs-t21b-list` | `KanPad-wt/wt-t21b` | T21a | DONE merged d4116d8 (Page, shared WHERE builder, /archived 400; 55/55; no .sqlx change) | ses_ed4e60f3affeTfFDok3KNC2fiP |
-| T22 boards update+state+delete | `rs-t22-state` | `KanPad-wt/wt-t22` | T21a+T21b | dispatched | ses_ed4d48460ffe1ZrAH18PJDFUzF |
+| T22 boards update+state+delete | `rs-t22-state` | `KanPad-wt/wt-t22` | T21a+T21b | DONE merged 5fd6dc7 (PATCH null-detach, 409 active-delete, verb 404s; 56/56) | ses_ed4d48460ffe1ZrAH18PJDFUzF |
+| FIX session-wipe race | `rs-fix-session-isolation` | `KanPad-wt/wt-fixsess` | T22 | dispatched (blocking: flake hit 3 runs) | pending |
+
+## Findings from T22 (for T52/AGENTS.md)
+- sqlx `QueryBuilder::separated()` inserts separator between EVERY push: a `` `col` = `` prefix push must use `push_bind_unseparated`. In code comment.
+- Wipe race is now the top flake: 3rd occurrence (this time `boards_state` itself 401 at create). Fix dispatched before T23a.
 
 ## Findings from T21a (for T52/AGENTS.md)
 - `query!` overrides compose with inferred nullability: `AS "project_id: Option<i32>"` on nullable col yields `Option<Option<i32>>`; correct is inner type (`AS "project_id: i32"` → `Option<i32>`). `tinyint` decodes as `i8`, never `bool` (`!= 0` in Rust). In `boards/store.rs` docs.

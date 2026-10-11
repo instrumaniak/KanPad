@@ -38,11 +38,11 @@
 ## Wave 2 (T04+T06+T07 parallel; T05+T08 after T04 merges)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | dispatched | ses_ed649d952ffecL08IPMMU1UcCL |
+| T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | DONE merged c0e3ef1 (commit adeea93; 14/14 errors + full suite green) | ses_ed649d952ffecL08IPMMU1UcCL |
 | T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | DONE merged e1119c3 (commit 1e1a6e8; order-asserted yaml, grep gates live-tested, docker build substituted w/ review — disk infeasible) | ses_ed649d77bffedDan6nSONLwTKq |
 | T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | dispatched | ses_ed649d777ffeSB3nv6SKKWepOj |
-| T05 config/obs/versioning | — | — | T03 (+T04 if lib.rs collides) | HOLD until T04 merges — NOTES for dispatch: (a) add `public/` gitignore entry (T06 left it, build needs backend-rs/public/ populated from frontend dist/), (b) CI lives at backend-rs/.github (won't auto-run; move-vs-root-caller call deferred, file is root-relative so move is trivial) | — |
-| T08 validation core | — | — | T04 | HOLD until T04 merges | — |
+| T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | dispatched (+public/ gitignore) | ses_ed638a92fffe9SlwO4j05L5Bb4 |
+| T08 validation core | `rs-t08-validation` | `KanPad-wt/wt-t08` | T04 | dispatched | ses_ed638a92bffeLexI6j2gRF26X9 |
 
 ## Stale sessions (closed, no action)
 - `ses_ed6b1914...` (pre-restart T02) reported post-merge: verified merge, changed

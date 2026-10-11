@@ -19,7 +19,30 @@
 |------|--------|----------|---------|--------|------------------|
 | T01 contract+compose | (merged, branch deleted) | — | none | DONE be37720 | ses_ed6b464b8ffe0k6NoBgUExmLOh |
 | T03 crate skeleton | `rs-t03-skeleton` | `KanPad-wt/wt-t03` | none | DONE merged e0bfc23 (commit 7fc7462, 57 files; fmt/clippy/test/prepare-check/export-openapi/migrate-info all green) | ses_ed6710404ffe96EwnFmEsCVC19 |
-| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | running (0001_baseline.sql drafted) | ses_ed6710402ffeyqCiQZYBKUjLAT |
+| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | DONE merged 01d3c81 (commit 5b4774e; migrate run+info pending=0, dump diff = documented deviations only, smoke green) | ses_ed6710402ffeyqCiQZYBKUjLAT |
+
+## T52 amendment debt (from T02 — spec conflicts found, NOT fixed per scope)
+- D1: `30-db-schema` + T02 text describe store table as `id VARCHAR(255), data
+  BLOB NULL, expiry_date BIGINT + INDEX(expiry_date)`; actual
+  `tower-sessions-sqlx-store 0.15.0` `migrate()` creates `char(22) / blob NOT
+  NULL / timestamp(6)` with NO index. Baseline follows "store DDL is source of
+  truth" (verbatim table) + separate `IDX_session_expiry_date` statement.
+  Fix via T52: correct §30 line 10 + T02 text + T11 expiry test (past
+  **timestamp**, not epoch-ms).
+- D2: baseline requires server-fresh `tower_sessions` absence (fail-fast, no IF
+  NOT EXISTS on schema). Noted for T50/T51 runbooks.
+- Scratch containers stopped (`kanpad-t02-scratch`, `kanpad-t02-mysql`); T02
+  datadir bind-mount was at `/mnt/mint/.../.mysql-t02` (outside repo, verify
+  removal on next disk cleanup).
+
+## Wave 2 (T04+T06+T07 parallel; T05+T08 after T04 merges)
+| Task | Branch | Worktree | Depends | Status | Subagent session |
+|------|--------|----------|---------|--------|------------------|
+| T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | queued | pending |
+| T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | queued | pending |
+| T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | queued | pending |
+| T05 config/obs/versioning | — | — | T03 (+T04 if lib.rs collides) | HOLD until T04 merges | — |
+| T08 validation core | — | — | T04 | HOLD until T04 merges | — |
 
 ## Lessons (orchestrator fixes applied during T03 finish)
 - Reused target dir moved across paths breaks utoipa-swagger-ui build (stale

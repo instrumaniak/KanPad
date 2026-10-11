@@ -4,6 +4,7 @@
 //! [`build_state`] builds state. This module NEVER spawns the session-expiry
 //! sweeper — only `main.rs` does (see 10-architecture.md Sessions).
 
+pub mod admin;
 pub mod common;
 pub mod config;
 pub mod db;

@@ -9,6 +9,8 @@
 mod auth_register;
 #[path = "api/auth_session.rs"]
 mod auth_session;
+#[path = "api/create_admin.rs"]
+mod create_admin;
 #[path = "api/errors.rs"]
 mod errors;
 #[path = "api/health.rs"]

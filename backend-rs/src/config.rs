@@ -245,6 +245,18 @@ impl Settings {
         self.node_env == "production"
     }
 
+    /// Session cookie name by env (`10-architecture.md` Sessions/Cookie):
+    /// `connect.sid` in dev/test, `__Host-connect.sid` in production (where
+    /// it MUST pair with `Secure + Path=/` and no `Domain` — enforced by the
+    /// `SessionManagerLayer` wiring in `lib.rs`, asserted per env in T11).
+    pub fn session_cookie_name(&self) -> String {
+        if self.is_production() {
+            "__Host-connect.sid".to_string()
+        } else {
+            "connect.sid".to_string()
+        }
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         match self.node_env.as_str() {
             "development" | "test" | "production" => {}
@@ -624,5 +636,31 @@ mod tests {
             .validate()
             .expect("Default test settings must validate");
         assert_eq!(settings.node_env, "test");
+    }
+
+    #[test]
+    fn session_cookie_name_follows_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for (env, name) in [
+            ("development", "connect.sid"),
+            ("test", "connect.sid"),
+            ("production", "__Host-connect.sid"),
+        ] {
+            // Production refuses HASH_COST<2 at boot, so pin t=2 there.
+            let vars = if env == &"production" {
+                with_overrides(&[("NODE_ENV", env), ("HASH_COST", "2")])
+            } else {
+                with_overrides(&[("NODE_ENV", env)])
+            };
+            let _env = SavedEnv::set(&vars);
+            let settings = Settings::load().expect("env must load");
+            assert_eq!(settings.session_cookie_name(), name, "env: {env}");
+            assert_eq!(settings.is_production(), env == &"production");
+        }
+        // Struct-level (no env): same rule.
+        let mut settings = Settings::default();
+        assert_eq!(settings.session_cookie_name(), "connect.sid");
+        settings.node_env = "production".to_string();
+        assert_eq!(settings.session_cookie_name(), "__Host-connect.sid");
     }
 }

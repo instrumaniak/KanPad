@@ -9,7 +9,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "tim
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
 tower = { version = "0.5", features = ["timeout"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit", "fs", "sensitive-headers"] }
-tower-sessions = "0.14"
+tower-sessions = { version = "0.14", features = ["signed"] }
 tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }
 tower_governor = "=0.8.0"
 argon2 = "0.5"

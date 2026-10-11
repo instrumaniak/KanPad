@@ -1,4 +1,4 @@
-//! auth feature slice (stub; handlers land in the auth task).
+//! auth feature slice: login/logout/me + guard + sessions (T11).
 
 pub mod routes;
 pub mod store;

@@ -7,7 +7,7 @@
 //! while the tx is open).
 
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Params, Version,
 };
 use sqlx::MySqlExecutor;
@@ -33,6 +33,109 @@ pub struct StoredUser {
     pub email: String,
     /// `user` on register (admin only via the T12 CLI).
     pub role: String,
+}
+
+/// Login credential row: the [`StoredUser`] projection plus its password
+/// hash (Argon2id for new rows, legacy cost-10 `$2a$`/`$2b$` bcrypt
+/// pre-cutover — a successful bcrypt login rehashes to Argon2id in the same
+/// request, see [`update_password_hash`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthRow {
+    /// Projected user (id/email/role).
+    pub user: StoredUser,
+    /// Raw `users.password` (PHC string, never logged).
+    pub password_hash: String,
+}
+
+/// Find the login credential row by normalized email (`None` = unknown; the
+/// login route runs [`dummy_verify`] on this branch so unknown emails cost
+/// the same Argon2 work as known ones — no enumeration oracle).
+#[tracing::instrument(skip(ex))]
+pub async fn find_auth_row_by_email<'e, E>(
+    ex: E,
+    email: &str,
+) -> Result<Option<AuthRow>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let row = sqlx::query!(
+        "SELECT `id`, `email`, `role`, `password` FROM `users` WHERE `email` = ?",
+        email
+    )
+    .fetch_optional(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(row.map(|row| AuthRow {
+        user: StoredUser {
+            id: UserId::from(row.id),
+            email: row.email,
+            role: row.role,
+        },
+        password_hash: row.password,
+    }))
+}
+
+/// Verify a password against an Argon2id PHC hash. Unparseable input (legacy
+/// bcrypt, garbage) is `false` — never an error (the login route falls
+/// through to [`verify_bcrypt_truncated` next).
+#[tracing::instrument(skip(password, hash))]
+pub fn verify_argon2(password: &str, hash: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(hash) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
+}
+
+/// Verify a password against a legacy pre-cutover bcrypt hash (cost-10
+/// `$2a$`/`$2b$`, see `auth.service.ts:41-42`). The password is truncated to
+/// 72 **bytes** before verify (Nest/bcryptjs semantics — bcrypt truncates;
+/// overlong inputs 400 upstream, this is the verify-side mirror). Non-bcrypt
+/// hashes short-circuit to `false`.
+#[tracing::instrument(skip(password, hash))]
+pub fn verify_bcrypt_truncated(password: &str, hash: &str) -> bool {
+    if !(hash.starts_with("$2a$") || hash.starts_with("$2b$")) {
+        return false;
+    }
+    let bytes = password.as_bytes();
+    let truncated = &bytes[..bytes.len().min(crate::common::validation::MAX_PASSWORD_BYTES)];
+    bcrypt::verify(truncated, hash).unwrap_or(false)
+}
+
+/// Unknown-email timing filler: runs a real Argon2 hash + verify at the
+/// current `hash_cost` so the 401 path costs the same Argon2 work as the
+/// known-user path (no user-enumeration timing delta). The bcrypt-path delta
+/// on known-bcrypt users is accepted for one release (spec-recorded).
+/// Failures are swallowed — this is best-effort timing noise, never auth
+/// logic.
+#[tracing::instrument]
+pub fn dummy_verify(hash_cost: u32) {
+    // Runtime-derived (not a checked-in static string) because the params
+    // vary by env (`t=1` in tests, `t>=2` in prod) — derived at current
+    // params is exactly what "static PHC at current params" means here.
+    if let Ok(phc) = hash_password("kanpad-unknown-email-dummy", hash_cost) {
+        let _ = verify_argon2("kanpad-unknown-email-dummy", &phc);
+    }
+}
+
+/// Replace the stored hash after a successful legacy-bcrypt login (same
+/// request upgrade to Argon2id — never mint bcrypt). Zero affected rows
+/// (concurrent delete between verify and write) maps to `401`: the user is
+/// gone, so there is nothing to authenticate.
+#[tracing::instrument(skip(ex, new_hash))]
+pub async fn update_password_hash<'e, E>(ex: E, id: i32, new_hash: &str) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let result = sqlx::query!("UPDATE `users` SET `password` = ? WHERE `id` = ?", new_hash, id)
+        .execute(ex)
+        .await
+        .map_err(AppError::Db)?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(())
 }
 
 /// Hash a new password with Argon2id (`m=19MiB, t=hash_cost, p=1`).

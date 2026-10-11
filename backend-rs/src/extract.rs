@@ -24,8 +24,13 @@ use axum::{
 };
 use garde::Validate;
 use serde::{de::DeserializeOwned, Deserialize};
+use tower_sessions::Session;
 
-use crate::error::AppError;
+use crate::{
+    common::ids::UserId,
+    error::AppError,
+    state::AppState,
+};
 
 /// Strict pagination query (`?page=&limit=`).
 ///
@@ -251,6 +256,56 @@ where
             .await
             .map_err(AppError::Path)?;
         Ok(Self(value))
+    }
+}
+
+/// Authenticated session (`AuthSession`, T11).
+///
+/// Requires the tower-sessions cookie to carry `user_id (> 0)` + `email` +
+/// `role` (unifies Nest's `SessionGuard` userId-only check and `me`'s triple
+/// check). Anything else — anonymous, expired row (the sqlx store's `load`
+/// filters `expiry_date > now`, so expired sessions hydrate empty), or a
+/// cookie that fails HMAC verification under the current `SESSION_SECRET`
+/// (wrong/pre-cutover secret → anonymous) — rejects with `401`
+/// `AppError::Unauthorized` through the shared problem+json renderer.
+///
+/// The payload is trusted without a per-request DB lookup (same as Nest's
+/// `@CurrentUser()`), EXCEPT `GET /api/v1/auth/me` + admin routes, which
+/// MUST re-lookup the user row (deleted → 401, demoted → 403).
+/// Session-load failures also map to `401` (never a 500 oracle for session
+/// state); the DB re-lookup in `me` is where outages surface as `503`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthSession {
+    /// `users.id` (`INT` ↔ `i32` newtype, always `> 0`).
+    pub user_id: UserId,
+    /// Normalized session email.
+    pub email: String,
+    /// Session role (`user` / `admin`).
+    pub role: String,
+}
+
+impl FromRequestParts<AppState> for AuthSession {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        let session = Session::from_request_parts(parts, state)
+            .await
+            .map_err(|_| AppError::Unauthorized)?;
+        let user_id: Option<i32> = session.get("user_id").await.map_err(|_| AppError::Unauthorized)?;
+        let email: Option<String> = session.get("email").await.map_err(|_| AppError::Unauthorized)?;
+        let role: Option<String> = session.get("role").await.map_err(|_| AppError::Unauthorized)?;
+        match (user_id, email, role) {
+            (Some(id), Some(email), Some(role))
+                if id > 0 && !email.is_empty() && !role.is_empty() =>
+            {
+                Ok(Self {
+                    user_id: UserId::from(id),
+                    email,
+                    role,
+                })
+            }
+            _ => Err(AppError::Unauthorized),
+        }
     }
 }
 

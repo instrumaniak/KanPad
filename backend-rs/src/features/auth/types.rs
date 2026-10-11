@@ -57,3 +57,19 @@ pub struct RegisterResponse {
     /// Created user.
     pub data: UserData,
 }
+
+/// `POST /api/v1/auth/login → 200` body (same shape as register, no
+/// `message` envelope key — dropped per `20-api-contract.md`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LoginResponse {
+    /// Authenticated user.
+    pub data: UserData,
+}
+
+/// `GET /api/v1/auth/me → 200` body (fresh row values — the handler
+/// re-looks-up the user; never the stale session payload).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct MeResponse {
+    /// Current user.
+    pub data: UserData,
+}

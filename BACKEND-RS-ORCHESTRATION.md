@@ -69,7 +69,7 @@
 ## Phase 1 — Auth (T10 unblocked: T02+T04+T07+T08 all merged)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
-| T10 register | `rs-t10-register` | `KanPad-wt/wt-t10` | T02+T04+T07+T08 | queued | pending |
+| T10 register | `rs-t10-register` | `KanPad-wt/wt-t10` | T02+T04+T07+T08 | dispatched | ses_ed625f90bffesbq8x70oyxEP6p |
 
 ## Queue (later phases)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)

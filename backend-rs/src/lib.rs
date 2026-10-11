@@ -36,6 +36,7 @@ use tower_http::{
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
+use tower_sessions::SessionManagerLayer;
 use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
 /// Request-id header name (tower-http keeps its own copy private).
@@ -73,7 +74,8 @@ pub fn build_state(settings: config::Settings) -> AppState {
 ///
 /// Gaps are owned elsewhere:
 ///
-/// 8. SessionManagerLayer (T11), Governor `route_layer` on `/api/*` (T30).
+/// 8. Governor `route_layer` on `/api/*` (T30). (SessionManagerLayer is wired
+///    above since T10; T11 hardens its cookie/expiry.)
 ///
 /// Route order: `/api` versioned routers (each with a JSON-404 fallback, so
 /// `/api/*` misses never reach the SPA files) → `/health` + `/ready` (outside
@@ -105,7 +107,13 @@ pub fn create_app(state: AppState) -> Router {
         .fallback_service(spa);
     // Versioned routers + deprecated alias (same handlers, NOT redirects).
     let router = mount_versioned(router, v1);
+    // [8] session management, innermost of the shared stack (closest to
+    // handlers). T10 registers with the store default cookie/expiry; T11
+    // hardens the cookie (`connect.sid` / `__Host-`, signing) + 24 h sliding
+    // expiry + the `AuthSession` extractor.
+    let session_layer = SessionManagerLayer::new(state.sessions.clone());
     let router = router
+        .layer(session_layer)
         // [7] origin timeout: handle layer ABOVE the timeout layer, so
         // `Elapsed` becomes 503 problem+json + `Retry-After` (single renderer
         // `handle_timeout`; 504 is proxy semantics).
@@ -186,7 +194,9 @@ pub fn create_app(state: AppState) -> Router {
 /// deprecated `/api` alias, so both prefixes always serve the same handlers.
 /// Unknown `/api/*` paths fall back to JSON 404 (never `index.html`).
 fn versioned_routes() -> Router<AppState> {
-    Router::new().fallback(api_version_fallback)
+    Router::new()
+        .merge(crate::features::auth::routes::router())
+        .fallback(api_version_fallback)
 }
 
 /// Dual-mount helper: `v1` under `/api/v1`, plus the deprecated `/api` alias

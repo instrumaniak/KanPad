@@ -5,6 +5,8 @@
 //! `#[path = "api/<name>.rs"]` — a bare `mod health;` would resolve to
 //! `tests/health.rs`, which does not exist.
 
+#[path = "api/auth_register.rs"]
+mod auth_register;
 #[path = "api/errors.rs"]
 mod errors;
 #[path = "api/health.rs"]

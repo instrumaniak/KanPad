@@ -5,9 +5,10 @@
 //! plus byte cap only, so legacy weak passwords still reach 401 (T11)
 //! instead of 400.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::common::ids::UserId;
 use crate::common::validation::{
     validate_email, validate_login_password, validate_password_bytes, validate_register_password,
 };
@@ -36,4 +37,23 @@ pub struct LoginInput {
     /// Existing password: no strength rule (weak-but-wellformed → 401).
     #[garde(custom(validate_login_password))]
     pub password: String,
+}
+
+/// Authenticated user shape shared by register/login/me responses:
+/// `{data:{id,email,role}}` (no `message` envelope key — dropped per `20`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UserData {
+    /// New `users.id` (`INT` ↔ `i32` newtype).
+    pub id: UserId,
+    /// Normalized email (`trim` + lowercase).
+    pub email: String,
+    /// `user` on register (admin only via the T12 CLI).
+    pub role: String,
+}
+
+/// `POST /api/v1/auth/register → 201` body.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RegisterResponse {
+    /// Created user.
+    pub data: UserData,
 }

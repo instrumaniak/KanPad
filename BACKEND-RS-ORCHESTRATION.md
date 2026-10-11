@@ -77,7 +77,7 @@
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
 | T10 register | `rs-t10-register` | `KanPad-wt/wt-t10` | T02+T04+T07+T08 | DONE merged 5fe3cd3 (register 201+cookie+6 labels+Argon2id; 48/48 api green x2) | ses_ed625f90bffesbq8x70oyxEP6p |
-| T11 login/logout/me+sessions | `rs-t11-auth` | `KanPad-wt/wt-t11` | T02+T04+T07+T08+T10 | dispatched | ses_ed607ecb7ffewGD0Htwc2Q3YtD |
+| T11 login/logout/me+sessions | `rs-t11-auth` | `KanPad-wt/wt-t11` | T02+T04+T07+T08+T10 | re-dispatched FINISH (WIP 02e0a1a recovered+rebased) | ses_ed543735affe4Vzolre9V1OxC6 |
 
 ## Early-T52 applied (during T10 merge, 2026-10-11)
 - T02-D3 RESOLVED in code: `CREATE SCHEMA IF NOT EXISTS` + sweeper index

@@ -108,9 +108,9 @@
 | T22 boards update+state+delete | `rs-t22-state` | `KanPad-wt/wt-t22` | T21a+T21b | DONE merged 5fd6dc7 (PATCH null-detach, 409 active-delete, verb 404s; 56/56) | ses_ed4d48460ffe1ZrAH18PJDFUzF |
 | FIX session-wipe race | `rs-fix-session-isolation` | `KanPad-wt/wt-fixsess` | T22 | DONE merged ccd0f11 (wipe retired, expiry row-scoped; 56/56 x5 total) | ses_ed4b8a97bffeZR0z4rOlJAUuqP |
 | T23a columns CRUD+gap-close | `rs-t23a-columns` | `KanPad-wt/wt-t23a` | T02+T04+T07+T08+T11+T21a | DONE merged a855e7b (nested routes, shared card_summary; 57/57) | ses_ed4b14f39ffeW4yLfdElPtcZZn |
-| T23b columns sort | `rs-t23b-sort` | `KanPad-wt/wt-t23b` | T23a | dispatched | pending |
-| T23c columns move-cards | `rs-t23c-move` | `KanPad-wt/wt-t23c` | T23a | dispatched | pending |
-| T24a cards CRUD+list | `rs-t24a-cards` | `KanPad-wt/wt-t24a` | T02+T04+T07+T08+T11+T23a | dispatched | pending |
+| T23b columns sort | `rs-t23b-sort` | `KanPad-wt/wt-t23b` | T23a | dispatched | ses_ed49da16dffeOB97WpPRCPOnle |
+| T23c columns move-cards | `rs-t23c-move` | `KanPad-wt/wt-t23c` | T23a | dispatched | ses_ed49da169ffewmXhihpb6RGj93 |
+| T24a cards CRUD+list | `rs-t24a-cards` | `KanPad-wt/wt-t24a` | T02+T04+T07+T08+T11+T23a | dispatched | ses_ed49da151ffePjTVdFQJjRcDsj |
 
 ## Lessons from T23a (for AGENTS.md/T52)
 - Generic `E: MySqlExecutor` values move: split multi-statement fns one-query-per-fn (T20 style), caller orchestrates. No `+ Copy` (blocks `&mut Tx`).

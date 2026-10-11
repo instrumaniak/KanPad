@@ -16,3 +16,6 @@ frontend/test-results/
 # graphify outputs & cache
 graphify-out/
 
+# backend-rs build output (always use CARGO_TARGET_DIR outside the repo;
+# this is a backstop, not the workflow)
+**/target/

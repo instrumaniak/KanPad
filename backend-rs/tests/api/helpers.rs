@@ -2,7 +2,7 @@
 //!
 //! # Ownership (normative for T10/T25/T50)
 //! Import from here — never redefine: `login_as`, `ensure_default_labels`,
-//! `clear_sessions`, `test_app`, fixture loading order. T10/T25 call prod
+//! `test_app`, fixture loading order. T10/T25 call prod
 //! `backend_rs::common::label_seed::ensure_default_labels` only through the
 //! [`ensure_default_labels`] wrapper below; the wrapper exists so the
 //! call-site contract (executor-generic, `(pool_or_tx, user_id)` shape) is
@@ -32,12 +32,17 @@
 //! when auth routes land; manual propagation stays valid either way.
 //!
 //! # Sessions between suites
-//! [`clear_sessions`] deletes the store-owned `tower_sessions.session`
-//! rows. The store table is server-global (shared by every suite in this
-//! process), so it MUST be called at most once per process — currently by
-//! T11's auth-session suite at its startup, which owns the coordinated
-//! wipe. Never call it from any other suite's setup/teardown: a concurrent
-//! wipe 401s/500s in-flight suites' live jars.
+//! The store-owned `tower_sessions.session` table is server-global (shared
+//! by every suite in this process). There is deliberately NO helper to
+//! wipe it: even a single startup `DELETE` races parallel suites' live jars
+//! and 401s them mid-flight (3 flakes; rs-fix-session-isolation retired
+//! T11's coordinated wipe). Every suite mints its own user+jar, nothing
+//! asserts absolute store counts, and store assertions must use id-set
+//! difference. Tests needing a dirty/clean row scope their SQL to rows
+//! they minted (`WHERE id = ?` — see `auth_session.rs`).
+//!
+//! NEVER reintroduce a global `DELETE FROM tower_sessions.session`,
+//! `UPDATE`-all, or schema drop in any suite's setup/teardown.
 
 use axum::{
     body::Body,
@@ -87,17 +92,6 @@ pub fn test_app() -> Router {
 /// Returns rows inserted (6 on first call, 0 when already seeded).
 pub async fn ensure_default_labels(pool: &MySqlPool, user_id: i32) -> Result<u64, sqlx::Error> {
     backend_rs::common::label_seed::ensure_default_labels(pool, user_id).await
-}
-
-/// Delete store-owned session rows (auth isolation). Call at most ONCE per
-/// `cargo test` process (currently T11's auth-session suite at startup —
-/// see module docs): the store table is server-global and a concurrent wipe
-/// kills other suites' live jars.
-pub async fn clear_sessions(pool: &MySqlPool) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM `tower_sessions`.`session`")
-        .execute(pool)
-        .await
-        .map(|_| ())
 }
 
 /// Authenticated cookie jar with MANUAL `Set-Cookie` propagation
@@ -187,11 +181,12 @@ async fn helpers_test_app_serves_health() {
 /// AC: fixtures insert fixed ids in FK order and load cleanly together.
 ///
 /// NOTE (load-bearing): the `tower_sessions.session` store table is
-/// server-global, shared by every suite in this process — so exactly ONE
-/// coordinated wipe per process is allowed, owned by T11's auth-session
-/// suite at its startup (see `auth_session.rs` module docs). NEVER wipe or
-/// drop the shared store from any other suite: a concurrent
-/// `DELETE`/`DROP SCHEMA` 401s/500s (1049 `Unknown database
+/// server-global, shared by every suite in this process — so there is NO
+/// global wipe helper at all (rs-fix-session-isolation retired T11's single
+/// coordinated wipe: under parallel scheduling even a startup `DELETE`
+/// lands mid-flight of other suites' live jars and 401s them). NEVER wipe
+/// or drop the shared store from any suite: a concurrent
+/// `DELETE`/`UPDATE`-all/`DROP SCHEMA` 401s/500s (1049 `Unknown database
 /// 'tower_sessions'`) in-flight suites' live jars. The baseline DDL is
 /// `CREATE SCHEMA/TABLE IF NOT EXISTS` (early-T52), so repeat setups are
 /// safe with the schema present and no "server-fresh" teardown is needed.
@@ -216,8 +211,8 @@ async fn helpers_test_app_serves_health() {
 )]
 async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
     // NO session wipe here: the store table is server-global (see NOTE
-    // above) — T11 owns the single coordinated wipe. This suite holds no
-    // session jars, so concurrent wipes elsewhere are no-ops for it.
+    // above) — global wipes are retired entirely. This suite holds no
+    // session jars, so other suites' rows are harmless to it.
 
     let expected_counts = FIXTURE_ORDER.map(|table| {
         let expected = match table {

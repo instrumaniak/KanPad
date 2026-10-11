@@ -11,3 +11,5 @@ mod errors;
 mod health;
 #[path = "api/helpers.rs"]
 mod helpers;
+#[path = "api/validation.rs"]
+mod validation;

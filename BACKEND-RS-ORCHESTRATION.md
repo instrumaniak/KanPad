@@ -103,7 +103,7 @@
 | T12 create-admin CLI | `rs-t12-admin` | `KanPad-wt/wt-t12` | T02+T10 | DONE merged c5dd11b (exit 0/1/2/3, --force reset, single-admin guard) | ses_ed52073f0ffeqscI5AvOgfMTz6 |
 | T13 users record | `rs-t13-users` | `KanPad-wt/wt-t13` | T02+T10 | DONE merged 516300c (no-route absence proof, re-export owner) | ses_ed52073caffeQqbz9QQhyjiCSC |
 | T20 projects CRUD | `rs-t20-projects` | `KanPad-wt/wt-t20` | T02+T04+T07+T08+T11 | DONE merged 962b84d (201+Location, 2-query board_count proof, explicit in-tx cascade; 53/53) | ses_ed52073c8ffel22pkjLyG539re |
-| T21a boards create+detail | `rs-t21a-boards` | `KanPad-wt/wt-t21a` | T02+T04+T07+T08+T11+T20 | dispatched | pending |
+| T21a boards create+detail | `rs-t21a-boards` | `KanPad-wt/wt-t21a` | T02+T04+T07+T08+T11+T20 | dispatched | ses_ed502dd37ffePnTP9juvZfsLwy |
 
 ## Findings from T20 (for T52/AGENTS.md)
 - Spec conflict: 20-contract+T20 AC mandate project-delete cascades boards, but baseline FK `FK_boards_project_id` is `ON DELETE SET NULL` (matches Nest entity). Implemented as explicit app-level in-tx cascade (contract wins). T52: schema-text note.

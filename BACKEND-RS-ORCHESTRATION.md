@@ -31,6 +31,13 @@
   **timestamp**, not epoch-ms).
 - D2: baseline requires server-fresh `tower_sessions` absence (fail-fast, no IF
   NOT EXISTS on schema). Noted for T50/T51 runbooks.
+- D3 (from T07): `CREATE SCHEMA tower_sessions` without `IF NOT EXISTS` races
+  under parallel `#[sqlx::test]` setups and fails repeat setups (1007).
+  Workaround in-tree: one setup per process + teardown `DROP SCHEMA`. Proposal:
+  T52 amends to `CREATE SCHEMA IF NOT EXISTS` (app tables keep fail-fast);
+  until then suites migrate once (shared-DB + tx rollback already mandated).
+- Fixture-path lesson (T07): `#[sqlx::test(fixtures(..))]` paths resolve
+  relative to the TEST FILE dir → suite fixtures must be `../fixtures/<n>.sql`.
 - Scratch containers stopped (`kanpad-t02-scratch`, `kanpad-t02-mysql`); T02
   datadir bind-mount was at `/mnt/mint/.../.mysql-t02` (outside repo, verify
   removal on next disk cleanup).
@@ -40,7 +47,7 @@
 |------|--------|----------|---------|--------|------------------|
 | T04 shared kernel | `rs-t04-kernel` | `KanPad-wt/wt-t04` | T03 DONE | DONE merged c0e3ef1 (commit adeea93; 14/14 errors + full suite green) | ses_ed649d952ffecL08IPMMU1UcCL |
 | T06 CI + .sqlx + docker | `rs-t06-ci` | `KanPad-wt/wt-t06` | T03 DONE | DONE merged e1119c3 (commit 1e1a6e8; order-asserted yaml, grep gates live-tested, docker build substituted w/ review — disk infeasible) | ses_ed649d77bffedDan6nSONLwTKq |
-| T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | dispatched | ses_ed649d777ffeSB3nv6SKKWepOj |
+| T07 fixtures + seed | `rs-t07-fixtures` | `KanPad-wt/wt-t07` | T02+T03 DONE | DONE merged acac0d5 (commit 90c35d8; harness+12 fixtures+label_seed; suite green twice) | ses_ed649d777ffeSB3nv6SKKWepOj |
 | T05 config/obs/versioning | `rs-t05-config` | `KanPad-wt/wt-t05` | T03+T04 | dispatched (+public/ gitignore) | ses_ed638a92fffe9SlwO4j05L5Bb4 |
 | T08 validation core | `rs-t08-validation` | `KanPad-wt/wt-t08` | T04 | dispatched | ses_ed638a92bffeLexI6j2gRF26X9 |
 

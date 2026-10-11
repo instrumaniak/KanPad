@@ -7,7 +7,7 @@ edition = "2021"
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
-tower = "0.5"
+tower = { version = "0.5", features = ["timeout"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit"] }
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }

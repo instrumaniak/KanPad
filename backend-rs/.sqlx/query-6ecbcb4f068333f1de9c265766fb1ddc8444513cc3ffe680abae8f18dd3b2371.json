@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE `projects` SET `name` = ? WHERE `id` = ? AND `user_id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "6ecbcb4f068333f1de9c265766fb1ddc8444513cc3ffe680abae8f18dd3b2371"
+}

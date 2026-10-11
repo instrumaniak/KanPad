@@ -18,8 +18,8 @@
 | Task | Branch | Worktree | Depends | Status | Subagent session |
 |------|--------|----------|---------|--------|------------------|
 | T01 contract+compose | (merged, branch deleted) | — | none | DONE be37720 | ses_ed6b464b8ffe0k6NoBgUExmLOh |
-| T03 crate skeleton | `rs-t03-skeleton` | `KanPad-wt/wt-t03` | none | re-dispatched | pending |
-| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | re-dispatched | pending |
+| T03 crate skeleton | `rs-t03-skeleton` | `KanPad-wt/wt-t03` | none | re-dispatched | ses_ed6710402ffeyqCiQZYBKUjLAT |
+| T02 baseline DB | `rs-t02-baseline` | `KanPad-wt/wt-t02` | T01 DONE | re-dispatched | ses_ed6710404ffe96EwnFmEsCVC19 |
 
 ## Queue (do not start until gate green)
 - T04 kernel (after T03) → T05 config/obs (after T03) + T06 CI (after T03) + T07 fixtures (after T02+T03) + T08 validation (after T04)

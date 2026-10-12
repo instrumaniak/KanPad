@@ -43,6 +43,8 @@ mod helpers;
 mod labels;
 #[path = "api/notes.rs"]
 mod notes;
+#[path = "api/openapi_snapshot.rs"]
+mod openapi_snapshot;
 #[path = "api/projects.rs"]
 mod projects;
 #[path = "api/tags.rs"]

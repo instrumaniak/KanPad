@@ -309,8 +309,17 @@ async fn create_admin(email: Option<String>, password: Option<String>, force: bo
 }
 
 async fn export_openapi() -> Result<()> {
-    // Deliberately boots no pool and no sessions: prints the committed stub.
-    print!("{}", include_str!("../openapi.json"));
+    // Deliberately boots no pool and no sessions: renders the spec from the
+    // compiled `ApiDoc` (the same value the snapshot test diffs against the
+    // committed `openapi.json` and `GET /api-docs/openapi.json` serves).
+    // No `Settings::load` here, so this works with `DATABASE_URL` unset.
+    use utoipa::OpenApi;
+    print!(
+        "{}",
+        backend_rs::docs::ApiDoc::openapi()
+            .to_pretty_json()
+            .context("failed to serialize OpenAPI document")?
+    );
     Ok(())
 }
 

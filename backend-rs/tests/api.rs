@@ -21,6 +21,8 @@ mod cards_crud;
 mod cards_labels;
 #[path = "api/cards_move.rs"]
 mod cards_move;
+#[path = "api/checklist_items.rs"]
+mod checklist_items;
 #[path = "api/checklists.rs"]
 mod checklists;
 #[path = "api/columns_crud.rs"]

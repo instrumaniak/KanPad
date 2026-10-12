@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `checklist_items` WHERE `id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "78957659c270c1ddcb2ec33d504e7dc803e12c4278d622e2ea1c339e2c3b6aef"
+}

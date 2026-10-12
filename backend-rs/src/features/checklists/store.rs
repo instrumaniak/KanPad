@@ -18,7 +18,7 @@
 //! live in the caller, which orchestrates pool/tx borrows).
 
 use chrono::NaiveDateTime;
-use sqlx::MySqlExecutor;
+use sqlx::{MySqlExecutor, QueryBuilder};
 
 use crate::{
     common::ids::{CardId, ChecklistId, ChecklistItemId},
@@ -275,6 +275,173 @@ where
         .await
         .map_err(AppError::Db)?;
     Ok(())
+}
+
+/// Fetch one owned checklist item (deep join proves ownership: `item →
+/// checklist → card → column → board.user`, mirroring
+/// [`fetch_checklist_owned`] one level deeper). Foreign/missing id →
+/// `RowNotFound` → 404, never 403.
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_item_owned<'e, E>(
+    ex: E,
+    user_id: i32,
+    id: i32,
+) -> Result<ChecklistItemRow, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let row = sqlx::query!(
+        "SELECT i.`id`, i.`text`, i.`is_completed`, \
+           i.`checklist_id` AS \"checklist_id: i32\", i.`position`, \
+           i.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
+           i.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+           FROM `checklist_items` i \
+           JOIN `checklists` cl ON cl.`id` = i.`checklist_id` \
+           JOIN `cards` k ON k.`id` = cl.`card_id` \
+           JOIN `columns` c ON c.`id` = k.`column_id` \
+           JOIN `boards` b ON b.`id` = c.`board_id` \
+           WHERE i.`id` = ? AND b.`user_id` = ?",
+        id,
+        user_id
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(ChecklistItemRow {
+        id: ChecklistItemId::from(row.id),
+        text: row.text,
+        is_completed: row.is_completed,
+        checklist_id: ChecklistId::from(row.checklist_id),
+        position: row.position,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
+/// Current `MAX(position)` in a checklist (`-1` when empty) locking the range
+/// for the insert that follows. MUST run inside the create tx (`FOR UPDATE`
+/// outside a tx locks nothing); `MAX(INT)` decodes as `i64` (`LONGLONG`),
+/// narrowed via `try_from` (never a silent `as` cast).
+#[tracing::instrument(skip(ex))]
+pub async fn max_item_position_for_update<'e, E>(ex: E, checklist_id: i32) -> Result<i32, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let row = sqlx::query!(
+        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos: i64\" \
+          FROM `checklist_items` WHERE `checklist_id` = ? FOR UPDATE",
+        checklist_id
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(AppError::Db)?;
+    i32::try_from(row.max_pos).map_err(|_| AppError::Internal(Internal))
+}
+
+/// Insert a checklist-item row; returns the new id (`last_insert_id` as `u64` →
+/// `i32::try_from`, never a silent `as` cast). The caller proves checklist
+/// ownership first via [`fetch_checklist_owned`] in the same tx.
+#[tracing::instrument(skip(ex))]
+pub async fn insert_item<'e, E>(
+    ex: E,
+    checklist_id: i32,
+    text: &str,
+    position: i32,
+) -> Result<i32, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let result = sqlx::query!(
+        "INSERT INTO `checklist_items` (`text`, `checklist_id`, `position`) \
+          VALUES (?, ?, ?)",
+        text,
+        checklist_id,
+        position
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    i32::try_from(result.last_insert_id()).map_err(|_| AppError::Internal(Internal))
+}
+
+/// Partial item update (`PATCH`, scalars only): every field optional. An
+/// all-`None` patch is a no-op (returns without emitting `UPDATE`, so empty
+/// `{}` bodies stay 200 without touching the row).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ItemPatch<'a> {
+    /// New item text (`None` = untouched).
+    pub text: Option<&'a str>,
+    /// Completion flag (`None` = untouched; `bool` → `tinyint` `i8` at bind).
+    pub is_completed: Option<bool>,
+}
+
+impl ItemPatch<'_> {
+    /// Whether every field is untouched (no `UPDATE` to emit).
+    pub fn is_empty(&self) -> bool {
+        self.text.is_none() && self.is_completed.is_none()
+    }
+}
+
+/// Apply an [`ItemPatch`] to an item row. The caller pre-reads via
+/// [`fetch_item_owned`] for the 404 instead of trusting affected-rows (which
+/// would misreport an idempotent no-change write as missing). `updated_at`
+/// bumps via the column's `ON UPDATE CURRENT_TIMESTAMP(6)`.
+#[tracing::instrument(skip(ex))]
+pub async fn apply_item_patch<'e, E>(ex: E, id: i32, patch: ItemPatch<'_>) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    if patch.is_empty() {
+        return Ok(());
+    }
+    let mut builder = QueryBuilder::new("UPDATE `checklist_items` SET ");
+    {
+        // `Separated` inserts `", "` between EVERY push — including between a
+        // `` `col` = `` prefix and its placeholder — so each value rides
+        // `push_bind_unseparated` (the `push` prefix already consumed the
+        // separator slot). Plain `push_bind` here emits `` `col` = , ? ``
+        // (1064 at runtime; see T22 probe).
+        let mut set = builder.separated(", ");
+        if let Some(text) = patch.text {
+            set.push("`text` = ");
+            set.push_bind_unseparated(text);
+        }
+        if let Some(is_completed) = patch.is_completed {
+            set.push("`is_completed` = ");
+            set.push_bind_unseparated(i8::from(is_completed));
+        }
+    }
+    builder.push(" WHERE `id` = ");
+    builder.push_bind(id);
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Delete an item row. The caller pre-read the row ([`fetch_item_owned`]) for
+/// ownership.
+#[tracing::instrument(skip(ex))]
+pub async fn delete_item_row<'e, E>(ex: E, id: i32) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!("DELETE FROM `checklist_items` WHERE `id` = ?", id)
+        .execute(ex)
+        .await
+        .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Render one [`ChecklistItemRow`] for the wire. Pure: no SQL.
+pub fn to_item_response(item: ChecklistItemRow) -> ChecklistItemResponse {
+    ChecklistItemResponse {
+        id: item.id,
+        text: item.text,
+        is_completed: item.is_completed != 0,
+        checklist_id: item.checklist_id,
+        position: item.position,
+        created_at: format_timestamp(&item.created_at),
+        updated_at: format_timestamp(&item.updated_at),
+    }
 }
 
 /// Render one [`ChecklistRow`] + its items for the wire. Pure: no SQL.

@@ -16,17 +16,20 @@ use crate::{
 
 use super::{
     store::{
-        check_card_owned, delete_checklist_row, fetch_card_checklist_items, fetch_checklist_items,
-        fetch_checklist_owned, fetch_checklists_for_card, insert_checklist, rename_checklist,
-        to_list, to_response,
+        apply_item_patch, check_card_owned, delete_checklist_row, delete_item_row,
+        fetch_card_checklist_items, fetch_checklist_items, fetch_checklist_owned,
+        fetch_checklists_for_card, fetch_item_owned, insert_checklist, insert_item,
+        max_item_position_for_update, rename_checklist, to_item_response, to_list, to_response,
+        ItemPatch,
     },
-    types::{ChecklistBody, ChecklistListBody, CreateChecklistInput, UpdateChecklistInput},
+    types::{
+        ChecklistBody, ChecklistItemBody, ChecklistListBody, CreateChecklistInput,
+        CreateChecklistItemInput, UpdateChecklistInput, UpdateChecklistItemInput,
+    },
 };
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
-/// Checklist items (T26b) land in their own task, so those paths 404 from the
-/// router until then.
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
         .route(
@@ -38,6 +41,11 @@ pub fn router() -> axum::Router<crate::state::AppState> {
             get(get_checklist)
                 .patch(update_checklist)
                 .delete(delete_checklist),
+        )
+        .route("/checklists/{id}/items", post(create_item))
+        .route(
+            "/checklist-items/{id}",
+            axum::routing::patch(update_item).delete(delete_item),
         )
 }
 
@@ -202,6 +210,125 @@ pub async fn delete_checklist(
     let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
     fetch_checklist_owned(&mut *tx, user_id, id).await?;
     delete_checklist_row(&mut *tx, id).await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/v1/checklists/{id}/items{text,position?} → 201 {data} +
+/// Location`. An absent `position` appends at `MAX(position) + 1` taken under
+/// `SELECT … FOR UPDATE` in the create tx; an explicit `position` writes
+/// verbatim. A foreign/missing checklist id rolls back to 404 (no oracle,
+/// never 403); garbage id → 400 `invalid-path` via `ValidPath`; blank/overlong
+/// text or negative `position` → 400 `errors[]` via the DTO (floats never reach
+/// garde — serde rejects them first as `invalid-json`).
+#[utoipa::path(
+    post,
+    path = "/api/v1/checklists/{id}/items",
+    request_body = CreateChecklistItemInput,
+    responses(
+        (status = 201, description = "Checklist item created", body = ChecklistItemBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Checklist not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn create_item(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::ChecklistId>,
+    ValidJson(input): ValidJson<CreateChecklistItemInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let user_id = auth.user_id.get();
+    let checklist_id = id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    fetch_checklist_owned(&mut *tx, user_id, checklist_id).await?;
+    let position = match input.position {
+        Some(position) => position,
+        None => max_item_position_for_update(&mut *tx, checklist_id).await? + 1,
+    };
+    let id = insert_item(&mut *tx, checklist_id, &input.text, position).await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    // DB re-read: the response reflects the stored row, never echoes.
+    let row = fetch_item_owned(&state.pool, user_id, id).await?;
+    let location = format!("/api/v1/checklist-items/{id}");
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(ChecklistItemBody {
+            data: to_item_response(row),
+        }),
+    ))
+}
+
+/// `PATCH /api/v1/checklist-items/{id}{text?,is_completed?} → 200 {data}`. An
+/// empty `{}` body is a no-op 200. The response re-reads the stored row (never
+/// echoes). Foreign/missing id → 404, never 403.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/checklist-items/{id}",
+    request_body = UpdateChecklistItemInput,
+    responses(
+        (status = 200, description = "Checklist item updated", body = ChecklistItemBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Checklist item not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn update_item(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::ChecklistItemId>,
+    ValidJson(input): ValidJson<UpdateChecklistItemInput>,
+) -> Result<Json<ChecklistItemBody>, AppError> {
+    let user_id = auth.user_id.get();
+    let id = id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    // Existence + ownership first: an idempotent no-change `PATCH` must stay
+    // 200 (an affected-rows check alone would false-404 when nothing changed).
+    fetch_item_owned(&mut *tx, user_id, id).await?;
+    apply_item_patch(
+        &mut *tx,
+        id,
+        ItemPatch {
+            text: input.text.as_deref(),
+            is_completed: input.is_completed,
+        },
+    )
+    .await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    // DB re-read: the response reflects the stored row, never echoes.
+    let row = fetch_item_owned(&state.pool, user_id, id).await?;
+    Ok(Json(ChecklistItemBody {
+        data: to_item_response(row),
+    }))
+}
+
+/// `DELETE /api/v1/checklist-items/{id} → 204` (hard delete, empty body).
+/// Foreign/missing id → 404 (no oracle, never 403); garbage id → 400
+/// `invalid-path`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/checklist-items/{id}",
+    responses(
+        (status = 204, description = "Checklist item deleted"),
+        (status = 400, description = "Invalid item id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Checklist item not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn delete_item(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::ChecklistItemId>,
+) -> Result<StatusCode, AppError> {
+    let user_id = auth.user_id.get();
+    let id = id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    fetch_item_owned(&mut *tx, user_id, id).await?;
+    delete_item_row(&mut *tx, id).await?;
     tx.commit().await.map_err(AppError::Db)?;
     Ok(StatusCode::NO_CONTENT)
 }

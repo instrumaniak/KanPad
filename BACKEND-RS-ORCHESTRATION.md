@@ -8,7 +8,16 @@
 - Base branch: `dev-rs-local` (T01 merged `be37720`)
 - Worktree root: `/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/KanPad-wt/` (PERSISTENT volume — /tmp/opencode was wiped by 2026-10-11 server restart, losing uncommitted T03 skeleton + T02 progress; never use /tmp for worktrees)
 - Shared cargo target cache (deps prebuilt): `/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-target-kanpad` — every Rust command MUST export `CARGO_TARGET_DIR=<that>` (+ `CARGO_HOME=/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-home` for installs; root disk / is 98% full)
+- Shared test DB: `kanpad-rs-testdb` on host :3337 (db `kanpad`); every Rust command MUST also export `DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4'` (compile-time `query!` + `#[sqlx::test]` runtime; ensure migrated before trusting red/green).
 - Merge target: `dev-rs-local`. Resume: `git worktree list` + this table + `git log --oneline -20`.
+
+## Cleanup 2026-10-12 (done-worktree purge)
+- Removed 17 merged worktrees + branches: wt-t02/t03/t04/t05/t06/t07/t08/t10/t11/t12/t13/t20/t21a/t21b/t22/t23a/wt-fixsess (`rs-*` branches deleted; `rs-t05-config` had no unique work — content already in via `28db999` + cherry-pick `f7f9ae7`).
+- Kept only active WIP: `wt-t23b` (`rs-t23b-sort`), `wt-t23c` (`rs-t23c-move`), `wt-t24a` (`rs-t24a-cards`). `KanPad-wt/` 437M → 18M.
+- Removed T02 scratch datadir `../.mysql-t02` (198M, mysql-uid files cleared via `docker run mysql:8.4 rm`, then `rmdir`) + exited scratch containers `kanpad-t07/t10/t11-mysql`.
+- Kept shared `../.cargo-target-kanpad` (6.4G debug cache) — still needed for active builds; trim only when Rust work is done (`cargo sweep`).
+- Note: root `/` 95% vs `/mnt/mint` 71% (72G avail) are different filesystems; worktrees live on `/mnt/mint`.
+- Standing rule: delete each task worktree+branch right after its merge; never let done worktrees accumulate again.
 
 ## Restart 2026-10-11 (server restart, /tmp wiped)
 - Lost: uncommitted T03 skeleton (clippy was green, tests pending) + any T02 progress. Branches reset from `dev-rs-local`; worktrees recreated on persistent volume.
@@ -38,9 +47,8 @@
   until then suites migrate once (shared-DB + tx rollback already mandated).
 - Fixture-path lesson (T07): `#[sqlx::test(fixtures(..))]` paths resolve
   relative to the TEST FILE dir → suite fixtures must be `../fixtures/<n>.sql`.
-- Scratch containers stopped (`kanpad-t02-scratch`, `kanpad-t02-mysql`); T02
-  datadir bind-mount was at `/mnt/mint/.../.mysql-t02` (outside repo, verify
-  removal on next disk cleanup).
+- Scratch containers removed 2026-10-12 (`kanpad-t02-scratch`, `kanpad-t02-mysql` already gone; `kanpad-t07/t10/t11-mysql` removed); T02
+  datadir `../.mysql-t02` REMOVED 2026-10-12 (see Cleanup section).
 
 ## Wave 2 (T04+T06+T07 parallel; T05+T08 after T04 merges)
 | Task | Branch | Worktree | Depends | Status | Subagent session |
@@ -108,9 +116,9 @@
 | T22 boards update+state+delete | `rs-t22-state` | `KanPad-wt/wt-t22` | T21a+T21b | DONE merged 5fd6dc7 (PATCH null-detach, 409 active-delete, verb 404s; 56/56) | ses_ed4d48460ffe1ZrAH18PJDFUzF |
 | FIX session-wipe race | `rs-fix-session-isolation` | `KanPad-wt/wt-fixsess` | T22 | DONE merged ccd0f11 (wipe retired, expiry row-scoped; 56/56 x5 total) | ses_ed4b8a97bffeZR0z4rOlJAUuqP |
 | T23a columns CRUD+gap-close | `rs-t23a-columns` | `KanPad-wt/wt-t23a` | T02+T04+T07+T08+T11+T21a | DONE merged a855e7b (nested routes, shared card_summary; 57/57) | ses_ed4b14f39ffeW4yLfdElPtcZZn |
-| T23b columns sort | `rs-t23b-sort` | `KanPad-wt/wt-t23b` | T23a | dispatched | ses_ed49da16dffeOB97WpPRCPOnle |
-| T23c columns move-cards | `rs-t23c-move` | `KanPad-wt/wt-t23c` | T23a | dispatched | ses_ed49da169ffewmXhihpb6RGj93 |
-| T24a cards CRUD+list | `rs-t24a-cards` | `KanPad-wt/wt-t24a` | T02+T04+T07+T08+T11+T23a | dispatched | ses_ed49da151ffePjTVdFQJjRcDsj |
+| T23b columns sort | `rs-t23b-sort` | `KanPad-wt/wt-t23b` | T23a | DONE merged 3adfa97 (sort suite + 2 .sqlx; single CASE rewrite) | ses_ed154e7f1ffeV8iVSQLQD726D4 |
+| T23c columns move-cards | `rs-t23c-move` | `KanPad-wt/wt-t23c` | T23a | DONE merged 1917445 (move suite + 2 .sqlx; manual resolve w/ T23b) | ses_ed154e7ebffec7azSTzlRhF6jB |
+| T24a cards CRUD+list | `rs-t24a-cards` | `KanPad-wt/wt-t24a` | T02+T04+T07+T08+T11+T23a | DONE merged 25fb548 (929-line suite + 11 .sqlx; auto-merge clean; full 60/60) | ses_ed154e7e8ffeppWsIDydg0wrxn |
 
 ## Lessons from T23a (for AGENTS.md/T52)
 - Generic `E: MySqlExecutor` values move: split multi-statement fns one-query-per-fn (T20 style), caller orchestrates. No `+ Copy` (blocks `&mut Tx`).
@@ -136,6 +144,12 @@
 - T10 register → T11 auth sessions (blocks all Phase 2) → T12/T13
 - Phase 2 chain: T20 → T21a → T21b → T22 → T23a → {T23b,T23c,T24a} → T24b/T25/T26a → T24c/T26b/T27a → T27b
 - T30/T31, T40a→T40b→T41a-e, T50a-c→T51, T02b→T51, T52 on demand
+
+## Resume 2026-10-12 (cleanup + T23b/T23c/T24a merges)
+- Shared test DB restarted: `kanpad-rs-testdb` (mysql:8.4, host :3337, db `kanpad`, pw `dev_root_pw`), baseline migrated (pending=0). No documented startup existed — fresh container + `sqlx migrate run`. Re-create the same way after any docker/host restart.
+- T23b/T23c/T24a finished by fresh subagents (prior `ses_ed49da…` sessions dead) and merged T23b→T23c→T24a: `3adfa97` (clean) → `1917445` (routes/store/api.rs conflicts resolved: union imports, both route regs kept, sort fns + move fns concatenated, mod lines alphabetical) → `25fb548` (auto-merge clean). Each merge re-verified `--all-targets`: final fmt/clippy/prepare-check green + full suite **60/60**.
+- Merge-verify gotcha (new): `cargo fmt --check | tail` masks the exit code — capture `$?` without a pipe (`> file; echo $?`).
+- Merged worktrees+branches removed immediately per standing rule (wt-t23b/t23c/t24a).
 
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.

@@ -13,8 +13,19 @@
 //! ... FOR UPDATE` in the create tx (an unlocked `MAX` races duplicate
 //! positions). Delete runs the row delete + a set-based gap-close
 //! (`position - 1` range `UPDATE`) in ONE tx — never a reload+save loop.
-//! Move/reorder (`column_id`/`position` on `PATCH`) lands in T24b — the T24a
-//! patch path updates scalars only.
+//!
+//! Move/reorder (`column_id`/`position` on `PATCH`, T24b): same-column = one
+//! range shift + one point update; cross-column = close-gap + open-gap +
+//! point update. All range writes are set-based (`position ± 1` with a
+//! `WHERE` band — never find-all-then-save-loop). The tx locks columns in
+//! stable ascending `column_id` order (`min` first) via
+//! [`lock_cards_for_update`], then re-reads the moving card's spot under
+//! `FOR UPDATE` ([`fetch_card_spot_for_update`]) so concurrent moves of
+//! *other* cards cannot stale the shift bands; a card that changed columns
+//! under us (same-card race) restarts the tx instead of writing against an
+//! unlocked column. Requested positions clamp via [`clamp_position`] and the
+//! CLAMPED value is written (same-column upper = `N - 1`, cross-column upper
+//! = `M`, missing cross-column position appends `M = max + 1`).
 //!
 //! List queries never `SELECT` the `description` TEXT: `has_description`
 //! comes from a SQL `CASE` (boolean only), `checklist_progress` from a batch
@@ -305,6 +316,147 @@ where
           WHERE `column_id` = ? AND `position` > ?",
         column_id,
         position
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Clamp a requested card position into `[0, upper]` (pure: the unit subject
+/// for move clamping). Callers pass the max WRITABLE index — `N - 1` for a
+/// same-column reorder of `N` cards, `M` for a cross-column insert into `M`
+/// cards (so `M` appends at `max + 1`) — and write the returned value (never
+/// the raw request).
+pub fn clamp_position(requested: i32, upper: i32) -> i32 {
+    requested.clamp(0, upper.max(0))
+}
+
+/// Lock every card row of one column in `(column_id, position)` order
+/// (`ORDER BY position ASC ... FOR UPDATE`) — MUST run inside the move tx.
+/// Returns the locked card ids (the caller derives the count); the locks are
+/// held until the tx commits, so the count and every shift band computed from
+/// it are stable. Cross-column moves call this once per column in ascending
+/// `column_id` order (`min` first) so opposite-direction moves serialize
+/// instead of deadlocking.
+#[tracing::instrument(skip(ex))]
+pub async fn lock_cards_for_update<'e, E>(ex: E, column_id: i32) -> Result<Vec<i32>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let rows = sqlx::query!(
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC FOR UPDATE",
+        column_id
+    )
+    .fetch_all(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(rows.into_iter().map(|row| row.id).collect())
+}
+
+/// Re-read the moving card's `(column_id, position)` under `FOR UPDATE`
+/// (ownership join included: foreign/missing id → `RowNotFound` → 404, never
+/// 403). MUST run inside the move tx AFTER [`lock_cards_for_update`]: the
+/// spot is fresh (a concurrent move that committed before our locks is
+/// visible) and the row lock serializes concurrent moves of the SAME card.
+/// The caller restarts the tx when the column differs from the pre-lock read
+/// (same-card race — writing against an unlocked column is never allowed).
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_card_spot_for_update<'e, E>(
+    ex: E,
+    user_id: i32,
+    id: i32,
+) -> Result<(i32, i32), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let row = sqlx::query!(
+        "SELECT k.`column_id` AS \"column_id: i32\", k.`position` \
+          FROM `cards` k \
+          JOIN `columns` c ON c.`id` = k.`column_id` \
+          JOIN `boards` b ON b.`id` = c.`board_id` \
+          WHERE k.`id` = ? AND b.`user_id` = ? FOR UPDATE",
+        id,
+        user_id
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok((row.column_id, row.position))
+}
+
+/// Same-column shift down (moving to a HIGHER index): one set-based range
+/// `UPDATE` moves every card in `(old, new]` down by one (never a
+/// reload+save loop). No-op when the band is empty — callers skip it when
+/// `new == old`, the `UPDATE` itself is safe either way.
+#[tracing::instrument(skip(ex))]
+pub async fn shift_cards_down<'e, E>(
+    ex: E,
+    column_id: i32,
+    old_position: i32,
+    new_position: i32,
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "UPDATE `cards` SET `position` = `position` - 1 \
+          WHERE `column_id` = ? AND `position` > ? AND `position` <= ?",
+        column_id,
+        old_position,
+        new_position
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Same-column shift up (moving to a LOWER index): one set-based range
+/// `UPDATE` moves every card in `[new, old)` up by one (never a reload+save
+/// loop).
+#[tracing::instrument(skip(ex))]
+pub async fn shift_cards_up<'e, E>(
+    ex: E,
+    column_id: i32,
+    new_position: i32,
+    old_position: i32,
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "UPDATE `cards` SET `position` = `position` + 1 \
+          WHERE `column_id` = ? AND `position` >= ? AND `position` < ?",
+        column_id,
+        new_position,
+        old_position
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Point-write the moving card after its gap work (same-column shift or
+/// cross-column close+open): sets both `column_id` and `position` in one
+/// row write. The caller passes the CLAMPED position (never the raw
+/// request).
+#[tracing::instrument(skip(ex))]
+pub async fn point_move_card<'e, E>(
+    ex: E,
+    id: i32,
+    column_id: i32,
+    position: i32,
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "UPDATE `cards` SET `column_id` = ?, `position` = ? WHERE `id` = ?",
+        column_id,
+        position,
+        id
     )
     .execute(ex)
     .await
@@ -745,4 +897,30 @@ pub fn to_summaries(
         });
     }
     Ok(summaries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_position;
+
+    /// `clamp_position` unit: in-range passes through, negatives pin to 0,
+    /// over-large pins to `upper` (the caller passes `N - 1` same-column /
+    /// `M` cross-column and WRITES the result — see `cards_move.rs` for the
+    /// written-value integration proof).
+    #[test]
+    fn clamp_position_pins_to_closed_range() {
+        assert_eq!(clamp_position(2, 5), 2);
+        assert_eq!(clamp_position(0, 5), 0);
+        assert_eq!(clamp_position(5, 5), 5);
+        assert_eq!(clamp_position(-1, 5), 0);
+        assert_eq!(clamp_position(-50, 3), 0);
+        assert_eq!(clamp_position(6, 5), 5);
+        assert_eq!(clamp_position(999, 3), 3);
+        // Degenerate upper (empty/singleton column): still `[0, 0]`.
+        assert_eq!(clamp_position(0, 0), 0);
+        assert_eq!(clamp_position(7, 0), 0);
+        assert_eq!(clamp_position(-7, 0), 0);
+        // Negative upper is defensive-only (callers never pass one): pins 0.
+        assert_eq!(clamp_position(3, -4), 0);
+    }
 }

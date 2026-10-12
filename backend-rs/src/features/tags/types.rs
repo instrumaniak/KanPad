@@ -4,10 +4,13 @@
 //! not-empty parity create already had). `color` is free-form `<= 20` chars
 //! (NOT the label enum); the server defaults it to teal (T28 store logic).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::common::validation::{validate_not_blank, validate_optional_not_blank};
+use crate::common::{
+    ids::TagId,
+    validation::{validate_not_blank, validate_optional_not_blank},
+};
 
 /// `POST /api/v1/tags` body (T28 handler).
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
@@ -29,4 +32,36 @@ pub struct UpdateTagInput {
     /// Tag color, free-form `<= 20` chars.
     #[garde(length(max = 20))]
     pub color: Option<String>,
+}
+
+/// Wire tag item: timestamps render as UTC ISO-8601 strings (`NaiveDateTime`
+/// has no utoipa `ToSchema` impl with the `chrono` feature off, so the store
+/// formats once here instead of leaking the representation into handlers).
+/// Tags carry `created_at` ONLY — no `updated_at` by design (see
+/// `30-db-schema.md`; tags are rename-light).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct TagResponse {
+    /// `tags.id` (`INT` ↔ `i32` newtype).
+    pub id: TagId,
+    /// Tag name (stored trimmed).
+    pub name: String,
+    /// Tag color (free-form, defaults to teal server-side).
+    pub color: String,
+    /// `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC).
+    pub created_at: String,
+}
+
+/// Success envelope for create/update (`201 {data} + Location`, `200 {data}`;
+/// no `message` key — dropped everywhere per `20-api-contract.md`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TagBody {
+    /// Created/updated tag.
+    pub data: TagResponse,
+}
+
+/// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
+/// fixed-shape UTC ISO-8601 string (micros always present, lexicographically
+/// sortable). Single owner: the store calls this, handlers never format.
+pub fn format_timestamp(value: &chrono::NaiveDateTime) -> String {
+    value.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
 }

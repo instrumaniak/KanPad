@@ -14,14 +14,18 @@ pub mod extract;
 pub mod features;
 pub mod state;
 
-use std::time::Duration;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use axum::{
     error_handling::HandleErrorLayer,
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri},
-    response::IntoResponse,
-    routing::get,
+    response::{IntoResponse, Response},
+    routing::{get, post},
     Json, Router,
 };
 use docs::HealthResponse;
@@ -30,6 +34,9 @@ use secrecy::ExposeSecret;
 use sha2::{Digest, Sha512};
 use state::AppState;
 use tower::ServiceBuilder;
+use tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::KeyExtractor, GovernorError, GovernorLayer,
+};
 use tower_http::{
     compression::CompressionLayer,
     cors::CorsLayer,
@@ -100,7 +107,7 @@ pub fn build_state(settings: config::Settings) -> AppState {
 /// `/api`, never throttled, no auth) → swagger/openapi → static files →
 /// SPA fallback (`public/index.html`, never for `/api*`/swagger/api-docs).
 pub fn create_app(state: AppState) -> Router {
-    let v1 = versioned_routes();
+    let v1 = api_router(&state.settings);
     let cors = cors_layer(&state.settings);
     let is_production = state.settings.is_production();
     // Swagger UI shell only: the spec itself is served byte-identically from
@@ -224,13 +231,19 @@ pub fn create_app(state: AppState) -> Router {
     }
 }
 
-/// Versioned API routes (`/api/v1/*`). Resource tasks register their routers
-/// HERE only; [`create_app`] dual-mounts the result under `/api/v1` and the
-/// deprecated `/api` alias, so both prefixes always serve the same handlers.
+/// Versioned API routes (`/api/v1/*`) EXCEPT auth login/register (those live
+/// in [`api_router`] on their own auth-scoped governor layer). Resource tasks
+/// register their routers HERE only; [`create_app`] dual-mounts the result
+/// under `/api/v1` and the deprecated `/api` alias, so both prefixes always
+/// serve the same handlers.
 /// Unknown `/api/*` paths fall back to JSON 404 (never `index.html`).
+///
+/// Keep the auth split in sync with `features::auth::routes::router` (the
+/// canonical full list): logout + me here, login + register in [`api_router`].
 fn versioned_routes() -> Router<AppState> {
     Router::new()
-        .merge(crate::features::auth::routes::router())
+        .route("/auth/logout", post(crate::features::auth::routes::logout))
+        .route("/auth/me", get(crate::features::auth::routes::me))
         .merge(crate::features::boards::routes::router())
         .merge(crate::features::columns::routes::router())
         .merge(crate::features::cards::routes::router())
@@ -248,6 +261,153 @@ fn versioned_routes() -> Router<AppState> {
 fn mount_versioned(router: Router<AppState>, v1: Router<AppState>) -> Router<AppState> {
     let deprecated = v1.clone().route("/docs", get(api_docs_redirect));
     router.nest("/api/v1", v1).nest("/api", deprecated)
+}
+
+/// T30 `/api/*` router: [`versioned_routes`] + auth login/register, wrapped
+/// in the two governor `route_layer`s (global per-IP ceiling, then the
+/// tighter auth per-IP bucket on login/register only). `route_layer` — never
+/// a global `.layer` — so `/health`, `/ready`, swagger/openapi, and
+/// static/SPA (mounted on the outer router in [`create_app`]) are never
+/// throttled. Both deprecated `/api` and versioned `/api/v1` nests share the
+/// same limiter state (one bucket per client IP across prefixes).
+fn api_router(settings: &config::Settings) -> Router<AppState> {
+    let extractor = ClientIpExtractor {
+        trusted: Arc::new(settings.trusted_proxy_list()),
+    };
+    // One per-minute governor layer: burst `per_min` tokens, one replenished
+    // every 60/`per_min` seconds. Types stay inferred (naming the middleware
+    // type would need the `governor` crate as a direct dependency).
+    // `None` only when a limit is 0 — the router then stays unthrottled for
+    // that scope (total constructor, no panics).
+    let build_layer = |per_min: u32| {
+        let mut builder = GovernorConfigBuilder::default().key_extractor(extractor.clone());
+        builder.period(per_minute_period(per_min));
+        builder.burst_size(per_min.max(1));
+        builder
+            .finish()
+            .map(|config| GovernorLayer::new(config).error_handler(governor_rejection))
+    };
+    // Auth-scoped limiter: login/register ONLY (logout/me must never 429 —
+    // logging out must never lock users out). `route_layer` wraps only the
+    // routes registered above it, so this layer scopes to these two paths.
+    let auth_routes = Router::new()
+        .route("/auth/login", post(crate::features::auth::routes::login))
+        .route(
+            "/auth/register",
+            post(crate::features::auth::routes::register),
+        );
+    let auth_routes = match build_layer(settings.throttle_auth_per_min) {
+        Some(layer) => auth_routes.route_layer(layer),
+        None => auth_routes,
+    };
+    let api = versioned_routes().merge(auth_routes);
+    // Global per-IP abuse ceiling over everything under `/api/*`.
+    match build_layer(settings.throttle_global_per_min) {
+        Some(layer) => api.route_layer(layer),
+        None => api,
+    }
+}
+
+/// Period for an "N per minute" quota: burst N, one token per 60/N seconds.
+fn per_minute_period(per_min: u32) -> Duration {
+    Duration::from_nanos(60_000_000_000 / u64::from(per_min.max(1)))
+}
+
+/// T30 client-IP key extractor: peer [`ConnectInfo`] by default;
+/// `X-Forwarded-For` honored ONLY when the peer is listed in
+/// `TRUSTED_PROXIES` (default empty = never trust — direct-to-`:3001` spoof
+/// defense). Trusted entries match exact IPs or IPv4 CIDRs; the leftmost
+/// `X-Forwarded-For` entry is the client.
+///
+/// Requests without `ConnectInfo` (in-process `oneshot` probes that never
+/// passed through hyper) share one fallback bucket instead of failing:
+/// production always sets `ConnectInfo`
+/// (`into_make_service_with_connect_info` in `main.rs`), so the fallback
+/// only triggers off-stack.
+///
+/// Per-process memory is correct for the single `:3001` replica; a
+/// Redis-backed governor is the scale-out prerequisite (N× limit with 2+
+/// replicas otherwise).
+#[derive(Debug, Clone)]
+struct ClientIpExtractor {
+    trusted: Arc<Vec<String>>,
+}
+
+/// Fallback key for requests without `ConnectInfo` (see [`ClientIpExtractor`]).
+const FALLBACK_IP: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+
+impl KeyExtractor for ClientIpExtractor {
+    type Key = IpAddr;
+
+    fn extract<T>(&self, req: &axum::http::request::Request<T>) -> Result<IpAddr, GovernorError> {
+        let Some(peer) = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip())
+        else {
+            return Ok(FALLBACK_IP);
+        };
+        if self
+            .trusted
+            .iter()
+            .any(|entry| proxy_entry_matches(entry, peer))
+        {
+            if let Some(forwarded) = first_forwarded_ip(req.headers()) {
+                return Ok(forwarded);
+            }
+        }
+        Ok(peer)
+    }
+}
+
+/// Leftmost `X-Forwarded-For` entry when it parses as an IP.
+fn first_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|list| list.split(',').next())
+        .and_then(|first| first.trim().parse().ok())
+}
+
+/// A `TRUSTED_PROXIES` entry (exact IP or IPv4 CIDR) against the peer IP.
+fn proxy_entry_matches(entry: &str, peer: IpAddr) -> bool {
+    let entry = entry.trim();
+    if let Some((net, prefix)) = entry.split_once('/') {
+        return ipv4_cidr_contains(net, prefix, peer);
+    }
+    entry.parse::<IpAddr>().is_ok_and(|addr| addr == peer)
+}
+
+/// IPv4 CIDR containment without a new dependency (unparseable → false).
+fn ipv4_cidr_contains(net: &str, prefix: &str, peer: IpAddr) -> bool {
+    let (Ok(net), Ok(bits), IpAddr::V4(peer_v4)) = (
+        net.trim().parse::<Ipv4Addr>(),
+        prefix.trim().parse::<u32>(),
+        peer,
+    ) else {
+        return false;
+    };
+    if bits > 32 {
+        return false;
+    }
+    let mask = if bits == 0 {
+        0
+    } else {
+        u32::MAX << (32 - bits)
+    };
+    (u32::from(net) & mask) == (u32::from(peer_v4) & mask)
+}
+
+/// Governor rejection renderer: 429s via the shared [`error::problem_response`]
+/// shape ([`error::rate_limited_response`]); extractor failures are never 429s
+/// (fail safe, never driver text — the `Internal` arm renders generic 500).
+fn governor_rejection(error: GovernorError) -> Response {
+    match error {
+        GovernorError::TooManyRequests { wait_time, .. } => error::rate_limited_response(wait_time),
+        GovernorError::UnableToExtractKey | GovernorError::Other { .. } => {
+            AppError::Internal(error::Internal).into_response()
+        }
+    }
 }
 
 /// Restrictive CORS from settings: explicit allowlist (no `Any`), cookie

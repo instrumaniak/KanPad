@@ -1,7 +1,7 @@
 //! Binary boundary: clap CLI + boot + graceful shutdown.
 //! `anyhow` lives only here, never in the library.
 
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -122,10 +122,15 @@ async fn serve(auto_migrate: bool) -> Result<()> {
         .await
         .with_context(|| format!("failed to bind port {port}"))?;
     tracing::info!(instance_id = %instance_id, port, "backend-rs listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("server error")?;
+    // `ConnectInfo` feeds the T30 governor's peer-IP key extractor (without
+    // it every connection would share the fallback bucket).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("server error")?;
     // HTTP drained (SIGINT/SIGTERM): close idle MySQL connections cleanly,
     // then log shutdown with the instance id for correlation.
     tracing::info!(

@@ -47,6 +47,8 @@ mod notes;
 mod projects;
 #[path = "api/tags.rs"]
 mod tags;
+#[path = "api/throttle.rs"]
+mod throttle;
 #[path = "api/users.rs"]
 mod users;
 #[path = "api/validation.rs"]

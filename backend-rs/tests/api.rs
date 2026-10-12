@@ -31,6 +31,8 @@ mod errors;
 mod health;
 #[path = "api/helpers.rs"]
 mod helpers;
+#[path = "api/notes.rs"]
+mod notes;
 #[path = "api/projects.rs"]
 mod projects;
 #[path = "api/users.rs"]

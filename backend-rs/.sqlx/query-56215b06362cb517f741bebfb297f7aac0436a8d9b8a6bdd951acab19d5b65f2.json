@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `notes` (`title`, `content`, `board_id`, `project_id`, `card_id`, `user_id`) VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "56215b06362cb517f741bebfb297f7aac0436a8d9b8a6bdd951acab19d5b65f2"
+}

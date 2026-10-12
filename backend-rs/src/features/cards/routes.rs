@@ -1,6 +1,268 @@
 //! cards handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
+use axum::{
+    extract::State,
+    http::{header, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+    Json,
+};
+
+use crate::{
+    common::{card_summary::CardSummary, pagination::Page},
+    error::{AppError, Internal},
+    extract::{AuthSession, PaginationParams, ValidJson, ValidPath},
+    state::AppState,
+};
+
+use super::{
+    store::{
+        apply_card_patch, check_column_owned, close_card_gap, count_cards_in_column,
+        delete_card_row, fetch_card_owned, fetch_card_page, fetch_detail_checklists,
+        fetch_detail_items, fetch_detail_labels, fetch_page_labels, fetch_page_progress,
+        insert_card, max_position_for_update, open_card_gap, to_detail, to_summaries, CardPatch,
+    },
+    types::{parse_due_date, CardBody, CreateCardInput, UpdateCardInput},
+};
+
 /// Feature router (no `with_state` inside; the caller applies state once).
+/// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
+/// CRUD + list only: label M2M (T24c) and move/reorder (T24b) land in their
+/// own tasks, so those paths 404 from the router until then.
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
+        .route("/cards", post(create_card))
+        .route(
+            "/cards/{id}",
+            get(get_card).patch(update_card).delete(delete_card),
+        )
+        .route("/columns/{colId}/cards", get(list_cards))
+}
+
+/// Load a card's detail nests (labels + checklists + items) and render the
+/// wire body. Single owner for the fetch-assemble sequence so handlers stay
+/// one call; each select is one query (the executor value moves).
+async fn load_detail(
+    pool: &sqlx::MySqlPool,
+    row: super::store::CardRow,
+) -> Result<CardBody, AppError> {
+    let card_id = row.id.get();
+    let labels = fetch_detail_labels(pool, card_id).await?;
+    let checklists = fetch_detail_checklists(pool, card_id).await?;
+    let items = fetch_detail_items(pool, card_id).await?;
+    Ok(CardBody {
+        data: to_detail(row, labels, checklists, items),
+    })
+}
+
+/// `POST /api/v1/cards{title,column_id,position?,description?,due_date?} →
+/// 201 {data} + Location`. An explicit `position` clamps to `[0, max + 1]`
+/// then opens a gap with a single range shift (never a verbatim duplicate
+/// write); the default appends `MAX(position) + 1` taken under `SELECT ...
+/// FOR UPDATE` in the create tx. A foreign/missing `column_id` rolls back to
+/// 404 (no oracle, never 403).
+#[utoipa::path(
+    post,
+    path = "/api/v1/cards",
+    request_body = CreateCardInput,
+    responses(
+        (status = 201, description = "Card created", body = CardBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Column not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn create_card(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidJson(input): ValidJson<CreateCardInput>,
+) -> Result<impl IntoResponse, AppError> {
+    let user_id = auth.user_id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    check_column_owned(&mut *tx, user_id, input.column_id).await?;
+    let max = max_position_for_update(&mut *tx, input.column_id).await?;
+    let position = match input.position {
+        Some(requested) => requested.clamp(0, max + 1),
+        None => max + 1,
+    };
+    if input.position.is_some() {
+        open_card_gap(&mut *tx, input.column_id, position).await?;
+    }
+    let due_date = input
+        .due_date
+        .as_deref()
+        .map(|raw| parse_due_date(raw).ok_or(AppError::Internal(Internal)))
+        .transpose()?;
+    let id = insert_card(
+        &mut *tx,
+        input.column_id,
+        &input.title,
+        position,
+        input.description.as_deref(),
+        due_date,
+    )
+    .await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    // DB re-read: the response reflects the stored row, never echoes.
+    let row = fetch_card_owned(&state.pool, user_id, id).await?;
+    let body = load_detail(&state.pool, row).await?;
+    let location = format!("/api/v1/cards/{id}");
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(body),
+    ))
+}
+
+/// `GET /api/v1/cards/{id} → 200 {data:CardDetail}` (checklists{items},
+/// labels, `checklist_progress` only when the card owns checklists).
+/// Foreign/missing id → 404 (no oracle, never 403); garbage id → 400
+/// `invalid-path` via `ValidPath`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/cards/{id}",
+    responses(
+        (status = 200, description = "Card detail"),
+        (status = 400, description = "Invalid card id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Card not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn get_card(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::CardId>,
+) -> Result<Json<CardBody>, AppError> {
+    let user_id = auth.user_id.get();
+    let row = fetch_card_owned(&state.pool, user_id, id.get()).await?;
+    Ok(Json(load_detail(&state.pool, row).await?))
+}
+
+/// `PATCH /api/v1/cards/{id} → 200 {data:CardDetail}` (T24a scalars only:
+/// `title`/`description`/`due_date`; `column_id`/`position` move fields are
+/// accepted on the DTO but IGNORED here — moves land in T24b). Explicit
+/// `null` clears `description`/`due_date`; an empty `{}` body is a no-op
+/// 200. The response re-reads the stored row (never echoes).
+#[utoipa::path(
+    patch,
+    path = "/api/v1/cards/{id}",
+    request_body = UpdateCardInput,
+    responses(
+        (status = 200, description = "Card updated", body = CardBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Card not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn update_card(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::CardId>,
+    ValidJson(input): ValidJson<UpdateCardInput>,
+) -> Result<Json<CardBody>, AppError> {
+    let user_id = auth.user_id.get();
+    let id = id.get();
+    let due_date: Option<Option<chrono::NaiveDateTime>> = input
+        .due_date
+        .as_ref()
+        .map(|nullable| {
+            nullable
+                .as_deref()
+                .map(|raw| parse_due_date(raw).ok_or(AppError::Internal(Internal)))
+                .transpose()
+        })
+        .transpose()?;
+    // NOTE (T24b): `column_id`/`position` intentionally ignored here — this
+    // handler updates scalars only; move/reorder lands in its own task.
+    let patch = CardPatch {
+        title: input.title.as_deref(),
+        description: input
+            .description
+            .as_ref()
+            .map(|nullable| nullable.as_deref()),
+        due_date,
+    };
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    fetch_card_owned(&mut *tx, user_id, id).await?;
+    apply_card_patch(&mut *tx, id, patch).await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    // DB re-read: the response reflects the stored row, never echoes.
+    let row = fetch_card_owned(&state.pool, user_id, id).await?;
+    Ok(Json(load_detail(&state.pool, row).await?))
+}
+
+/// `DELETE /api/v1/cards/{id} → 204` (hard delete, empty body). The position
+/// gap closes with a set-based range `UPDATE` in the SAME tx. Foreign/missing
+/// id → 404 (no oracle, never 403); garbage id → 400 `invalid-path`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/cards/{id}",
+    responses(
+        (status = 204, description = "Card deleted"),
+        (status = 400, description = "Invalid card id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Card not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn delete_card(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::CardId>,
+) -> Result<StatusCode, AppError> {
+    let user_id = auth.user_id.get();
+    let id = id.get();
+    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
+    let owned = fetch_card_owned(&mut *tx, user_id, id).await?;
+    delete_card_row(&mut *tx, id).await?;
+    close_card_gap(&mut *tx, owned.column_id.get(), owned.position).await?;
+    tx.commit().await.map_err(AppError::Db)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/v1/columns/{colId}/cards?page&limit → 200 Page<CardSummary>`
+/// (`position ASC`; never selects TEXT — no `description` key, only the
+/// `has_description` flag; `checklist_progress` only when the card owns
+/// checklists). Foreign/missing column → 404 (no oracle, never 403).
+#[utoipa::path(
+    get,
+    path = "/api/v1/columns/{colId}/cards",
+    responses(
+        (status = 200, description = "Column cards page"),
+        (status = 400, description = "Invalid column id or pagination"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Column not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn list_cards(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(column_id): ValidPath<crate::common::ids::ColumnId>,
+    pagination: PaginationParams,
+) -> Result<Json<Page<CardSummary>>, AppError> {
+    let user_id = auth.user_id.get();
+    let column_id = column_id.get();
+    check_column_owned(&state.pool, user_id, column_id).await?;
+    let total = count_cards_in_column(&state.pool, column_id).await?;
+    if total == 0 {
+        return Ok(Json(Page::empty(pagination.page, pagination.limit)));
+    }
+    let offset = pagination
+        .page
+        .saturating_sub(1)
+        .saturating_mul(pagination.limit);
+    let rows = fetch_card_page(&state.pool, column_id, pagination.limit, offset).await?;
+    let card_ids: Vec<i32> = rows.iter().map(|row| row.0).collect();
+    let labels = fetch_page_labels(&state.pool, &card_ids).await?;
+    let progress = fetch_page_progress(&state.pool, &card_ids).await?;
+    Ok(Json(Page::new(
+        to_summaries(rows, labels, progress)?,
+        pagination.page,
+        pagination.limit,
+        total,
+    )))
 }

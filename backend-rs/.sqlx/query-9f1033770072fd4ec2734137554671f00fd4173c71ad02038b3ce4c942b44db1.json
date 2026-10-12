@@ -1,0 +1,44 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT l.`id` AS \"label_id: i32\", l.`name`, l.`color` FROM `card_labels` cl JOIN `labels` l ON l.`id` = cl.`label_id` WHERE cl.`card_id` = ? ORDER BY l.`id` ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "label_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 200
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "color",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 80
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9f1033770072fd4ec2734137554671f00fd4173c71ad02038b3ce4c942b44db1"
+}

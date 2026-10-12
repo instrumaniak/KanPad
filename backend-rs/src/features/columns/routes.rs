@@ -13,15 +13,16 @@ use crate::{
         assemble_summaries, fetch_board_card_labels, fetch_board_card_progress, fetch_board_cards,
         CardSummary,
     },
-    error::AppError,
+    error::{AppError, Internal},
     extract::{AuthSession, ValidJson, ValidPath},
     state::AppState,
 };
 
 use super::{
     store::{
-        check_board_owned, close_column_gap, delete_column_row, fetch_column_owned, fetch_columns,
-        insert_column, max_position_for_update, rename_column, to_response,
+        check_board_owned, close_column_gap, delete_column_row, fetch_card_ids_for_sort,
+        fetch_column_owned, fetch_columns, insert_column, max_position_for_update, rename_column,
+        rewrite_card_positions, to_response,
     },
     types::{
         ColumnBody, ColumnListBody, CreateColumnInput, UpdateColumnInput, DEFAULT_COLUMN_NAME,
@@ -43,8 +44,10 @@ async fn load_summaries(
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
-/// CRUD only: sort (`{sort_order}`, T23b) and move-cards (T23c) land in their
-/// own tasks, so those paths 404 from the router until then.
+/// Sort rides `PATCH /columns/{id}{sort_order}` inline (T23b); move-cards
+/// (T23c) lands in its own task, so that path 404s from the router until
+/// then. The deleted verb path `/columns/{id}/sort` stays unregistered
+/// (→ 404 from the API fallback).
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
         .route(
@@ -133,9 +136,11 @@ pub async fn create_column(
     ))
 }
 
-/// `PATCH /api/v1/columns/{id}{name?} → 200 {data}` (present names validate
-/// like create). The column is pre-read for ownership (foreign/missing id →
-/// 404, never 403); an absent name is a no-op 200. The response re-reads the
+/// `PATCH /api/v1/columns/{id}{name?,sort_order?} → 200 {data}` (present
+/// names validate like create; present `sort_order` rewrites card positions
+/// by `created_at` via one set-based `UPDATE ... CASE` in the same tx —
+/// never N saves). The column is pre-read for ownership (foreign/missing id
+/// → 404, never 403); absent keys are a no-op 200. The response re-reads the
 /// stored row (never echoes).
 #[utoipa::path(
     patch,
@@ -161,6 +166,17 @@ pub async fn rename_column_handler(
     let owned = fetch_column_owned(&mut *tx, user_id, id).await?;
     if let Some(name) = input.name.as_deref() {
         rename_column(&mut *tx, id, name).await?;
+    }
+    if let Some(order) = input.sort_order.as_deref() {
+        // Whitelisted direction (garde already rejected anything else, so
+        // the fallthrough is unreachable-but-total, never `format!`).
+        let desc = match order {
+            "asc" => false,
+            "desc" => true,
+            _ => return Err(AppError::Internal(Internal)),
+        };
+        let ordered = fetch_card_ids_for_sort(&mut *tx, id, desc).await?;
+        rewrite_card_positions(&mut *tx, id, &ordered).await?;
     }
     tx.commit().await.map_err(AppError::Db)?;
     // DB re-read: the response reflects the stored row, never echoes.

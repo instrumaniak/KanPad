@@ -21,12 +21,29 @@ pub struct CreateColumnInput {
     pub name: Option<String>,
 }
 
-/// `PATCH /api/v1/columns/{id}` body (T23a handler).
+/// `PATCH /api/v1/columns/{id}` body (T23a rename + T23b sort): either key
+/// may appear (both are applied, rename first). Absent keys leave that
+/// aspect untouched, so `{}` stays a no-op 200.
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
 pub struct UpdateColumnInput {
     /// Column name (`<= 255` chars); present means non-blank.
     #[garde(length(max = 255), custom(validate_optional_not_blank))]
     pub name: Option<String>,
+    /// Card sort direction (`asc` | `desc`); rewrites card positions by
+    /// `created_at` via one set-based `UPDATE ... CASE`.
+    #[garde(custom(validate_optional_sort_order))]
+    pub sort_order: Option<String>,
+}
+
+/// Optional variant of [`validate_sort_order`] for the PATCH body (`None`
+/// means "leave card order alone", `Some` must be `asc` | `desc`). Local to
+/// this feature (mirrors the per-feature optional validators in
+/// `boards::types`) so the shared catalogue stays untouched.
+fn validate_optional_sort_order(value: &Option<String>, context: &()) -> garde::Result {
+    if let Some(inner) = value {
+        validate_sort_order(inner, context)?;
+    }
+    Ok(())
 }
 
 /// `PATCH /api/v1/columns/{id}` sort body (T23b handler): rewrites positions

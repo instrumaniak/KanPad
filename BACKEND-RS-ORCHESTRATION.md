@@ -180,6 +180,19 @@
 - Next: T31 (golden fixtures, needs all resources — NOW unblocked: T20–T27
   all merged) + T40a (openapi export) + T02b (charset) + kernel 1062 fix.
 
+## Resume 2026-10-12 Wave C (T31+T40a+fix1062+T02b merged, verified)
+- Base verified before dispatch: fmt 0, clippy 0, full suite **73/73** (Wave B baseline).
+- Dispatched 4 parallel verifications (fresh sessions, worktrees on persistent `KanPad-wt/`):
+  T31 `wt-t31` → `a912bdd` (25 golden fixtures + gate test, 27 files, 642 ins; 74/74 green);
+  T40a `wt-t40a` → `0be8918` (openapi.json regen + snapshot tests, 3.9k ins; 76/76 green);
+  fix1062 `wt-fix1062` → `cac74b6` (UniqueViolation→409 via ErrorKind match in kernel + labels/tags stores + test; 74/74 green);
+  T02b `wt-t02b` → `2d0c1c4` (0002_convert_to_utf8mb4.sql 12 tables DYNAMIC + unicode_emoji_gate_roundtrip; 74/74 green).
+- Merged T31 (`6f5c869`, clean) → T40a (`933670b`, clean) → fix1062 (`45acfe3`, clean) → T02b (`60838d2`, clean).
+- Merge-verify: fmt 0, clippy 0, full suite **79/79** (73 base + golden + 2 openapi + 1 error-kind + unicode), prepare-check exit 0. Verified 2026-10-12.
+- Merged worktrees+branches removed per standing rule (wt-t31/wt-t40a/wt-fix1062/wt-t02b).
+- LOAD-BEARING: fix1062 resolves the T25 1062→409 gap at kernel level (ErrorKind::UniqueViolation), eliminating per-store workarounds. T02b migration is live-safe (CONVERT TO, no FK changes, ROW_FORMAT=DYNAMIC for 1020-byte UNIQUE).
+- Next unblocked: T30 already merged → T40b (Swagger UI serve) + T41a-e (spec hardening) + T50a-c (runbooks) + T51 (cutover) + T52 (amendments).
+
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.
 2. Work ONLY in your worktree/branch. Never commit to `dev-rs-local` directly, never touch other tasks' files.

@@ -234,6 +234,7 @@ fn versioned_routes() -> Router<AppState> {
         .merge(crate::features::boards::routes::router())
         .merge(crate::features::columns::routes::router())
         .merge(crate::features::cards::routes::router())
+        .merge(crate::features::checklists::routes::router())
         .merge(crate::features::projects::routes::router())
         .fallback(api_version_fallback)
 }

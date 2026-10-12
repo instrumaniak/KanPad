@@ -49,6 +49,8 @@ mod projects;
 mod tags;
 #[path = "api/throttle.rs"]
 mod throttle;
+#[path = "api/unicode_roundtrip.rs"]
+mod unicode_roundtrip;
 #[path = "api/users.rs"]
 mod users;
 #[path = "api/validation.rs"]

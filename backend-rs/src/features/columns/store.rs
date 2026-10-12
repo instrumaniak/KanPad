@@ -302,6 +302,88 @@ where
     Ok(())
 }
 
+/// Source-column card ids in `position ASC` (the target mirrors source order
+/// on move). Locks the rows (`FOR UPDATE`) — MUST run inside the move tx.
+/// One query: the caller assigns positions and writes via
+/// [`move_cards_into`] next.
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_source_card_ids_for_update<'e, E>(
+    ex: E,
+    source_id: i32,
+) -> Result<Vec<i32>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let rows = sqlx::query!(
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC FOR UPDATE",
+        source_id
+    )
+    .fetch_all(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(rows.into_iter().map(|row| row.id).collect())
+}
+
+/// Current `MAX(position)` on the target column (`-1` when empty), locking
+/// the range (`FOR UPDATE`) — MUST run inside the move tx. `MAX(INT)`
+/// decodes as `i64` (`LONGLONG`), narrowed via `try_from` (never silent `as`).
+#[tracing::instrument(skip(ex))]
+pub async fn max_card_position_for_update<'e, E>(ex: E, target_id: i32) -> Result<i32, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let row = sqlx::query!(
+        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos: i64\" \
+          FROM `cards` WHERE `column_id` = ? FOR UPDATE",
+        target_id
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(AppError::Db)?;
+    i32::try_from(row.max_pos).map_err(|_| AppError::Internal(Internal))
+}
+
+/// Move `assignments` (`(card_id, position)`, already `position ASC`) into
+/// `target_id` with ONE set-based `UPDATE ... CASE` (never N saves). The
+/// `WHERE` re-checks `column_id = source_id` so only source rows move.
+/// Skipped by the caller when empty (an empty `IN ()` is invalid SQL).
+/// Dynamic `CASE` arity rules out `query!` — ids/positions are `i32`s bound
+/// server-side (never interpolated), so there is no injection surface.
+#[tracing::instrument(skip(ex))]
+pub async fn move_cards_into<'e, E>(
+    ex: E,
+    source_id: i32,
+    target_id: i32,
+    assignments: &[(i32, i32)],
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    debug_assert!(!assignments.is_empty(), "empty move must skip the write");
+    let mut builder: sqlx::QueryBuilder<sqlx::MySql> =
+        sqlx::QueryBuilder::new("UPDATE `cards` SET `column_id` = ");
+    builder.push_bind(target_id);
+    builder.push(", `position` = CASE `id`");
+    for (id, position) in assignments {
+        builder.push(" WHEN ");
+        builder.push_bind(*id);
+        builder.push(" THEN ");
+        builder.push_bind(*position);
+    }
+    builder.push(" END WHERE `column_id` = ");
+    builder.push_bind(source_id);
+    builder.push(" AND `id` IN (");
+    {
+        let mut ids = builder.separated(", ");
+        for (id, _) in assignments {
+            ids.push_bind(*id);
+        }
+    }
+    builder.push(")");
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
+    Ok(())
+}
+
 /// Render [`ColumnRow`]s + their card summaries for the wire (single owner —
 /// see [`super::types::format_timestamp`]). `summaries` maps
 /// `column_id → cards[]` (missing key = no cards, never an error).

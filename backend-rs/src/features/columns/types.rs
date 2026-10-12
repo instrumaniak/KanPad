@@ -64,6 +64,23 @@ pub struct MoveCardsInput {
     pub target_column_id: i32,
 }
 
+/// `POST /api/v1/columns/{id}/move-cards` success envelope (T23c handler):
+/// `200 {data: {moved_count}}` (no `message` key — dropped everywhere per
+/// `20-api-contract.md`; `movedCount→moved_count` per `21 §columns`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct MoveCardsData {
+    /// Number of cards moved into the target column (`0` when the source is
+    /// empty — an empty source is a success, never an error).
+    pub moved_count: i64,
+}
+
+/// Success envelope for move-cards (`200 {data: {moved_count}}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct MoveCardsBody {
+    /// `{moved_count}` payload.
+    pub data: MoveCardsData,
+}
+
 /// Default name when the create body omits `name` (mirrors Nest
 /// `dto.name || 'New Column'`).
 pub const DEFAULT_COLUMN_NAME: &str = "New Column";

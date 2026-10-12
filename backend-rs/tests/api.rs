@@ -19,6 +19,8 @@ mod boards_state;
 mod cards_crud;
 #[path = "api/cards_move.rs"]
 mod cards_move;
+#[path = "api/checklists.rs"]
+mod checklists;
 #[path = "api/columns_crud.rs"]
 mod columns_crud;
 #[path = "api/columns_move_cards.rs"]

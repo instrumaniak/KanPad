@@ -189,6 +189,28 @@ pub(crate) fn problem_response(
     response
 }
 
+/// T30 governor 429 renderer: the shared [`problem_response`] shape
+/// (`type: https://kanpad.dev/problems/rate-limited`, problem+json) plus a
+/// `Retry-After` in seconds. The governor `route_layer` sits inside
+/// [`capture_request_context`]'s task-local scope, so `instance` is exact on
+/// real traffic (the `unknown` fallback only triggers off-stack).
+pub(crate) fn rate_limited_response(retry_after_secs: u64) -> Response {
+    let mut response = problem_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        "rate-limited",
+        "Too Many Requests",
+        "Rate limit exceeded. Please wait before retrying.".to_string(),
+        current_instance(),
+        Vec::new(),
+    );
+    let seconds = retry_after_secs.max(1).to_string();
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        HeaderValue::from_str(&seconds).unwrap_or(HeaderValue::from_static("60")),
+    );
+    response
+}
+
 fn validation_errors(report: &garde::Report) -> Vec<FieldError> {
     report
         .iter()

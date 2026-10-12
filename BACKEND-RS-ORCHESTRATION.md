@@ -174,7 +174,8 @@
   only, 6/6 throttle green, lib 51/51).
 - Merged T24c (`5df06fe`, clean) → T26b (`595a3ab`, clean) → T27b (`f1e85bd`,
   clean) → T30 (`04d2d01`, api.rs union resolved; lib.rs auto-merged).
-- Merge-verify: fmt 0, clippy 0; full suite + prepare-check in background.
+- Merge-verify: fmt 0, clippy 0, full suite **73/73**, prepare-check exit 0.
+  Verified 2026-10-12.
 - Merged worktrees+branches removed per standing rule.
 - Next: T31 (golden fixtures, needs all resources — NOW unblocked: T20–T27
   all merged) + T40a (openapi export) + T02b (charset) + kernel 1062 fix.

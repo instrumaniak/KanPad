@@ -104,6 +104,19 @@ fn validate_nullable_due_date(value: &Option<Option<String>>, _context: &()) -> 
     }
 }
 
+/// `POST /api/v1/cards/{id}/labels` deprecated alias body (T24c): snake_case
+/// `{label_id}` with legacy camelCase `{labelId}` accepted for one release
+/// (serde alias — both names decode into the same field). Missing → the
+/// handler 400s `validation-error` with `errors[]` on `label_id`; `0` or
+/// negative → 400 via the range rule (same `>= 1` shape as move `column_id`).
+#[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
+pub struct AttachLabelInput {
+    /// Label id to attach (`>= 1`).
+    #[serde(default, alias = "labelId")]
+    #[garde(range(min = 1))]
+    pub label_id: Option<i32>,
+}
+
 /// One checklist item inside a card detail body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ChecklistItemResponse {

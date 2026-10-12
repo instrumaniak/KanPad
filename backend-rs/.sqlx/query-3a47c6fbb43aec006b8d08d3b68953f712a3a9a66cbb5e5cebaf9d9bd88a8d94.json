@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT IGNORE INTO `card_labels` (`card_id`, `label_id`) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3a47c6fbb43aec006b8d08d3b68953f712a3a9a66cbb5e5cebaf9d9bd88a8d94"
+}

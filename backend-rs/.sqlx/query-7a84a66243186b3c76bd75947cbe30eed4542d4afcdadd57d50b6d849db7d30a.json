@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `card_labels` WHERE `card_id` = ? AND `label_id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7a84a66243186b3c76bd75947cbe30eed4542d4afcdadd57d50b6d849db7d30a"
+}

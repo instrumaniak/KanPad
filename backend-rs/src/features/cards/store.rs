@@ -464,6 +464,75 @@ where
     Ok(())
 }
 
+/// Assert a label belongs to the caller (`WHERE id + user_id` — the same
+/// ownership semantics as the labels feature's `fetch_label`: a foreign or
+/// missing id matches zero rows → `RowNotFound` → 404, never a 403 oracle).
+/// Lives here (not imported from the labels store — features never import
+/// each other's stores per `10-architecture.md`).
+#[tracing::instrument(skip(ex))]
+pub async fn check_label_owned<'e, E>(ex: E, user_id: i32, label_id: i32) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "SELECT `id` FROM `labels` WHERE `id` = ? AND `user_id` = ?",
+        label_id,
+        user_id
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Idempotent label attach: single `INSERT IGNORE` into the composite-PK
+/// `card_labels` M2M table (a re-attach is a no-op, never a 409 — mirrors the
+/// `INSERT IGNORE` idempotency of `common::label_seed`). The caller proves
+/// card + label ownership first (foreign ids → 404, never 403).
+#[tracing::instrument(skip(ex))]
+pub async fn insert_card_label_link<'e, E>(
+    ex: E,
+    card_id: i32,
+    label_id: i32,
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "INSERT IGNORE INTO `card_labels` (`card_id`, `label_id`) VALUES (?, ?)",
+        card_id,
+        label_id
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
+}
+
+/// Detach a label link. Returns `true` when a row was removed; `false` (stale
+/// or never-attached link) → the route renders 404, never 409. The caller
+/// proves card + label ownership first, so a foreign label 404s on ownership
+/// (never 403) even when no link exists.
+#[tracing::instrument(skip(ex))]
+pub async fn delete_card_label_link<'e, E>(
+    ex: E,
+    card_id: i32,
+    label_id: i32,
+) -> Result<bool, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let result = sqlx::query!(
+        "DELETE FROM `card_labels` WHERE `card_id` = ? AND `label_id` = ?",
+        card_id,
+        label_id
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// One label link for a card detail body.
 #[derive(Debug, Clone)]
 pub struct DetailLabelRow {

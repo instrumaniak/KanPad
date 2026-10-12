@@ -17,6 +17,8 @@ mod boards_list;
 mod boards_state;
 #[path = "api/cards_crud.rs"]
 mod cards_crud;
+#[path = "api/cards_labels.rs"]
+mod cards_labels;
 #[path = "api/cards_move.rs"]
 mod cards_move;
 #[path = "api/checklists.rs"]

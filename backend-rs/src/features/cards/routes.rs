@@ -4,7 +4,7 @@ use axum::{
     extract::State,
     http::{header, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, put},
     Json,
 };
 
@@ -17,26 +17,33 @@ use crate::{
 
 use super::{
     store::{
-        apply_card_patch, check_column_owned, clamp_position, close_card_gap,
-        count_cards_in_column, delete_card_row, fetch_card_owned, fetch_card_page,
-        fetch_card_spot_for_update, fetch_detail_checklists, fetch_detail_items,
+        apply_card_patch, check_column_owned, check_label_owned, clamp_position, close_card_gap,
+        count_cards_in_column, delete_card_label_link, delete_card_row, fetch_card_owned,
+        fetch_card_page, fetch_card_spot_for_update, fetch_detail_checklists, fetch_detail_items,
         fetch_detail_labels, fetch_page_labels, fetch_page_progress, insert_card,
-        lock_cards_for_update, max_position_for_update, open_card_gap, point_move_card,
-        shift_cards_down, shift_cards_up, to_detail, to_summaries, CardPatch,
+        insert_card_label_link, lock_cards_for_update, max_position_for_update, open_card_gap,
+        point_move_card, shift_cards_down, shift_cards_up, to_detail, to_summaries, CardPatch,
     },
-    types::{parse_due_date, CardBody, CreateCardInput, UpdateCardInput},
+    types::{parse_due_date, AttachLabelInput, CardBody, CreateCardInput, UpdateCardInput},
 };
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
-/// CRUD + list only: label M2M (T24c) and move/reorder (T24b) land in their
-/// own tasks, so those paths 404 from the router until then.
+/// CRUD + list + move/reorder (T24a/T24b) + label M2M (T24c): `PUT
+/// /cards/{id}/labels/{label_id}` attaches idempotently, the deprecated `POST
+/// /cards/{id}/labels` alias accepts `{label_id}` (legacy `{labelId}` too)
+/// for one release, and `DELETE /cards/{id}/labels/{label_id}` detaches.
 pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
         .route("/cards", post(create_card))
         .route(
             "/cards/{id}",
             get(get_card).patch(update_card).delete(delete_card),
+        )
+        .route("/cards/{id}/labels", post(attach_card_label_alias))
+        .route(
+            "/cards/{id}/labels/{label_id}",
+            put(attach_card_label).delete(detach_card_label),
         )
         .route("/columns/{colId}/cards", get(list_cards))
 }
@@ -295,6 +302,135 @@ async fn move_card(
         return Ok(());
     }
     Err(AppError::Internal(Internal))
+}
+
+/// Two-id path for the label M2M routes (`/cards/{id}/labels/{label_id}`).
+/// Field names match the route placeholders; garbage ids fail int-parse →
+/// 400 `invalid-path` via `ValidPath`. `pub` (like the handlers) so the
+/// `pub` attach/detach signatures don't leak a private type.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct CardLabelPath {
+    /// Owning card id.
+    pub id: crate::common::ids::CardId,
+    /// Label id to attach/detach.
+    pub label_id: crate::common::ids::LabelId,
+}
+
+/// Attach worker shared by [`attach_card_label`] (PUT) and
+/// [`attach_card_label_alias`] (deprecated POST): proves card + label
+/// ownership (foreign/missing id → 404, never 403), inserts idempotently
+/// (`INSERT IGNORE` — a re-attach is a no-op, never 409), then re-reads the
+/// stored row (the response reflects the DB, never echoes).
+async fn attach_and_reload(
+    pool: &sqlx::MySqlPool,
+    user_id: i32,
+    card_id: i32,
+    label_id: i32,
+) -> Result<CardBody, AppError> {
+    fetch_card_owned(pool, user_id, card_id).await?;
+    check_label_owned(pool, user_id, label_id).await?;
+    insert_card_label_link(pool, card_id, label_id).await?;
+    let row = fetch_card_owned(pool, user_id, card_id).await?;
+    load_detail(pool, row).await
+}
+
+/// `PUT /api/v1/cards/{id}/labels/{label_id} → 200 {data:CardDetail}`
+/// (idempotent: double attach keeps one link row). Foreign/missing card or
+/// label → 404 (no oracle, never 403); garbage id → 400 `invalid-path`.
+#[utoipa::path(
+    put,
+    path = "/api/v1/cards/{id}/labels/{label_id}",
+    responses(
+        (status = 200, description = "Label attached", body = CardBody),
+        (status = 400, description = "Invalid card or label id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Card or label not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn attach_card_label(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(path): ValidPath<CardLabelPath>,
+) -> Result<Json<CardBody>, AppError> {
+    Ok(Json(
+        attach_and_reload(
+            &state.pool,
+            auth.user_id.get(),
+            path.id.get(),
+            path.label_id.get(),
+        )
+        .await?,
+    ))
+}
+
+/// `POST /api/v1/cards/{id}/labels{label_id} → 200 {data:CardDetail}`
+/// (deprecated alias, kept one release; legacy camelCase `{labelId}` also
+/// accepted via the DTO serde alias). Missing key → 400 `validation-error`
+/// with `errors[]`; `0`/negative → 400 via the DTO range rule; ownership and
+/// idempotency match [`attach_card_label`].
+#[utoipa::path(
+    post,
+    path = "/api/v1/cards/{id}/labels",
+    request_body = AttachLabelInput,
+    responses(
+        (status = 200, description = "Label attached", body = CardBody),
+        (status = 400, description = "Validation failed"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Card or label not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn attach_card_label_alias(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(id): ValidPath<crate::common::ids::CardId>,
+    ValidJson(input): ValidJson<AttachLabelInput>,
+) -> Result<Json<CardBody>, AppError> {
+    let label_id = match input.label_id {
+        Some(label_id) => label_id,
+        None => {
+            let mut report = garde::Report::new();
+            report.append(
+                garde::Path::new("label_id"),
+                garde::Error::new("must be present"),
+            );
+            return Err(AppError::Validation(report));
+        }
+    };
+    Ok(Json(
+        attach_and_reload(&state.pool, auth.user_id.get(), id.get(), label_id).await?,
+    ))
+}
+
+/// `DELETE /api/v1/cards/{id}/labels/{label_id} → 204` (hard detach, empty
+/// body). Unassigned (stale or never-attached) link → 404 (not 409);
+/// foreign/missing card or label → 404 (no oracle, never 403 — ownership is
+/// proven before the link check); garbage id → 400 `invalid-path`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/cards/{id}/labels/{label_id}",
+    responses(
+        (status = 204, description = "Label detached"),
+        (status = 400, description = "Invalid card or label id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Card, label, or assignment not found")
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub async fn detach_card_label(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(path): ValidPath<CardLabelPath>,
+) -> Result<StatusCode, AppError> {
+    let user_id = auth.user_id.get();
+    let (card_id, label_id) = (path.id.get(), path.label_id.get());
+    fetch_card_owned(&state.pool, user_id, card_id).await?;
+    check_label_owned(&state.pool, user_id, label_id).await?;
+    if !delete_card_label_link(&state.pool, card_id, label_id).await? {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /api/v1/cards/{id} → 204` (hard delete, empty body). The position

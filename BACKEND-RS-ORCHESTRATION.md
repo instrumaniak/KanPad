@@ -163,7 +163,21 @@
 - Merged worktrees+branches removed immediately per standing rule (wt-t24b/t25/t26a/t27a).
 - LOAD-BEARING (from T25, out-of-scope workaround): `error.rs` 1062→409 arm checks `code()=="1062"` but sqlx 0.8 reports dup as `code==Some("23000")` (SQLSTATE; 1062 only in unexposed `number`, `kind: UniqueViolation`). T04 unit stub never catches it; labels worked around locally via `map_write_error` (match `ErrorKind::UniqueViolation`). Needs kernel-owner fix (match UniqueViolation) — candidate for T30 wave or dedicated hardening, + T52 note. T24c reuses labels `fetch_label` 404-for-foreign.
 - Shared-target-dir cross-contamination confirmed again (T27a: phantom 404s on real routes under concurrent worktree builds): serialize heavy cargo ops at merge time (`cargo clean -p backend-rs` + rebuild), `touch` source before trusting instant passes.
-- Next: Wave B = T24c (needs T25 ✓) + T26b (needs T26a ✓) + T27b (needs T27a ✓) + T30 (throttle, unblocked).
+## Resume 2026-10-12 Wave B (T24c+T26b+T27b+T30 merged, verify pending)
+- Pre-restart Wave-B executors died uncommitted; their file changes survived in
+  persistent worktrees. Post-restart take-over agents continued (no rework):
+  T24c `ses_ed0da67f4ffe5xm7423r7NMYVv` → `e2ac210` (prior ~95% + pub-path fix,
+  3 `.sqlx/`); T26b `ses_ed0da67f1ffeEVfKFzA7NePO2F` → `9e756c7` (prior complete,
+  4 `.sqlx/` + stale-binary `touch`-before-test lesson); T27b
+  `ses_ed0da67efffexQ4SqRm3WJQbYf` → `8a7dbac` (prior ~95%, 5 `.sqlx/`);
+  T30 `ses_ed0da67dbffenc5w7PnKphZqh3` → `8350406` (governor route_layer /api/*
+  only, 6/6 throttle green, lib 51/51).
+- Merged T24c (`5df06fe`, clean) → T26b (`595a3ab`, clean) → T27b (`f1e85bd`,
+  clean) → T30 (`04d2d01`, api.rs union resolved; lib.rs auto-merged).
+- Merge-verify: fmt 0, clippy 0; full suite + prepare-check in background.
+- Merged worktrees+branches removed per standing rule.
+- Next: T31 (golden fixtures, needs all resources — NOW unblocked: T20–T27
+  all merged) + T40a (openapi export) + T02b (charset) + kernel 1062 fix.
 
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.

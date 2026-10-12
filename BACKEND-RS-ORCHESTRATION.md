@@ -8,7 +8,7 @@
 - Base branch: `dev-rs-local` (T01 merged `be37720`)
 - Worktree root: `/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/KanPad-wt/` (PERSISTENT volume — /tmp/opencode was wiped by 2026-10-11 server restart, losing uncommitted T03 skeleton + T02 progress; never use /tmp for worktrees)
 - Shared cargo target cache (deps prebuilt): `/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-target-kanpad` — every Rust command MUST export `CARGO_TARGET_DIR=<that>` (+ `CARGO_HOME=/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-home` for installs; root disk / is 98% full)
-- Shared test DB: `kanpad-rs-testdb` on host :3337 (db `kanpad`); every Rust command MUST also export `DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4'` (compile-time `query!` + `#[sqlx::test]` runtime; ensure migrated before trusting red/green).
+- Shared test DB (Must Use a tmpfs (RAM disk) for MySQL in Docker for testing see: `specs/api-rewrite-rs-specs/53-test-optimization.md`): `kanpad-rs-testdb` on host :3337 (db `kanpad`); every Rust command MUST also export `DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4'` (compile-time `query!` + `#[sqlx::test]` runtime; ensure migrated before trusting red/green).
 - Merge target: `dev-rs-local`. Resume: `git worktree list` + this table + `git log --oneline -20`.
 
 ## Cleanup 2026-10-12 (done-worktree purge)

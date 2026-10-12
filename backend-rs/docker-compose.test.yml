@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  test_db:
+    image: mysql:8.4
+    container_name: kanpad-rs-testdb
+    ports:
+      - "3337:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: dev_root_pw
+      MYSQL_DATABASE: kanpad_rs_test
+    # CRITICAL: Forces all MySQL reads/writes to live in system RAM
+    tmpfs:
+      - /var/lib/mysql:rw,noexec,nosuid,size=1G
+    # Bumps connection boundaries so rapid test bursts never hit limits
+    command: --default-authentication-plugin=mysql_native_password --max-connections=1000
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pdev_root_pw"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 2s
+
+
+# docker compose -f docker-compose.test.yml up -d --wait'
+# docker compose -f docker-compose.test.yml down

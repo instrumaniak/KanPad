@@ -103,6 +103,15 @@ pub struct ChecklistListBody {
     pub data: Vec<ChecklistResponse>,
 }
 
+/// Success envelope for item create/update (`201 {data} + Location`,
+/// `200 {data}`; no `message` key — dropped everywhere per
+/// `20-api-contract.md`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ChecklistItemBody {
+    /// Created/updated checklist item.
+    pub data: ChecklistItemResponse,
+}
+
 /// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
 /// fixed-shape UTC ISO-8601 string (same shape as the cards/columns helpers;
 /// kept per-feature so features never import each other's stores).

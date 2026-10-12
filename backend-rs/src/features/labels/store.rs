@@ -44,28 +44,6 @@ pub fn wire_timestamps(row: &LabelRow) -> (String, String) {
     )
 }
 
-/// Map a write error: unique-violation (dup per-user name, incl.
-/// case-variant under `utf8mb4_unicode_ci`) → 409 [`AppError::Conflict`].
-///
-/// Load-bearing quirk: the shared `Db` arm in `error.rs` keys on the driver
-/// `code() == "1062"`, but sqlx 0.8 reports MySQL dup errors with the
-/// `23000` SQLSTATE there (the `1062` lives in the unexposed `number`
-/// field — verified live against :3337), so the global arm 500s real dups
-/// (its unit test uses a stub `code() == "1062"` and never sees this). The
-/// driver-agnostic [`sqlx::error::ErrorKind::UniqueViolation`] matches the
-/// real error. Scoped here (not in the shared kernel — outside T25 touch
-/// scope); the kernel owner should widen the global arm to this kind.
-fn map_write_error(error: sqlx::Error) -> AppError {
-    match &error {
-        sqlx::Error::Database(database_error)
-            if database_error.kind() == sqlx::error::ErrorKind::UniqueViolation =>
-        {
-            AppError::Conflict
-        }
-        _ => AppError::Db(error),
-    }
-}
-
 /// Total labels for a user (the list `Page.total` — plain `COUNT(*)`, no
 /// join fanout). Callers lazy-seed first when this returns 0.
 #[tracing::instrument(skip(ex))]
@@ -169,7 +147,7 @@ where
     )
     .execute(ex)
     .await
-    .map_err(map_write_error)?;
+    .map_err(AppError::Db)?;
     i32::try_from(result.last_insert_id()).map_err(|_| AppError::Internal(Internal))
 }
 
@@ -234,7 +212,7 @@ where
     builder.push_bind(id);
     builder.push(" AND `user_id` = ");
     builder.push_bind(user_id);
-    builder.build().execute(ex).await.map_err(map_write_error)?;
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
     Ok(())
 }
 

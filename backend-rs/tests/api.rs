@@ -35,6 +35,8 @@ mod columns_sort;
 mod create_admin;
 #[path = "api/errors.rs"]
 mod errors;
+#[path = "api/golden.rs"]
+mod golden;
 #[path = "api/health.rs"]
 mod health;
 #[path = "api/helpers.rs"]

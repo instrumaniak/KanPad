@@ -151,6 +151,20 @@
 - Merge-verify gotcha (new): `cargo fmt --check | tail` masks the exit code — capture `$?` without a pipe (`> file; echo $?`).
 - Merged worktrees+branches removed immediately per standing rule (wt-t23b/t23c/t24a).
 
+## Resume 2026-10-12 Wave A (T24b+T25+T26a+T27a merged)
+- Base verified before dispatch: fmt 0, clippy 0, full suite **60/60** (`86s`).
+- Dispatched 4 parallel executors (fresh sessions, worktrees on persistent `KanPad-wt/`):
+  T24b `ses_ed11a2334ffed9mEhM1B6mHx8A` → `c4db15a` (cards move: clamp-then-write, 500 sequential exact-order + concurrent invariant fuzz; 4 `.sqlx/`);
+  T25 `ses_ed11a2317ffeSuVBbE2XSQYe5X` → `da43487` (labels Page+lazy-seed+trim+409 incl. case-variant; 5 `.sqlx/`);
+  T26a `ses_ed11a2312ffePMVZwmRIJAuOWg` → `9d6a868` (checklists 5 handlers, deep 4-table ownership; 7 `.sqlx/`);
+  T27a `ses_ed11a2300ffewnYIUhjxyxtYy2` → `c2a751b` (notes two-step IDs-then-enrich, COUNT(DISTINCT), LIKE-escape; 6 `.sqlx/`).
+- Merged T24b (ff) → T25 (`3351532`, auto-clean) → T26a (`cfe8570`, lib.rs+api.rs union resolved) → T27a (`dbfddc1`, lib.rs+api.rs union resolved).
+- Merge-verify (running at write time): fmt 0, clippy 0; full suite + prepare-check in background.
+- Merged worktrees+branches removed immediately per standing rule (wt-t24b/t25/t26a/t27a).
+- LOAD-BEARING (from T25, out-of-scope workaround): `error.rs` 1062→409 arm checks `code()=="1062"` but sqlx 0.8 reports dup as `code==Some("23000")` (SQLSTATE; 1062 only in unexposed `number`, `kind: UniqueViolation`). T04 unit stub never catches it; labels worked around locally via `map_write_error` (match `ErrorKind::UniqueViolation`). Needs kernel-owner fix (match UniqueViolation) — candidate for T30 wave or dedicated hardening, + T52 note. T24c reuses labels `fetch_label` 404-for-foreign.
+- Shared-target-dir cross-contamination confirmed again (T27a: phantom 404s on real routes under concurrent worktree builds): serialize heavy cargo ops at merge time (`cargo clean -p backend-rs` + rebuild), `touch` source before trusting instant passes.
+- Next: Wave B = T24c (needs T25 ✓) + T26b (needs T26a ✓) + T27b (needs T27a ✓) + T30 (throttle, unblocked).
+
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.
 2. Work ONLY in your worktree/branch. Never commit to `dev-rs-local` directly, never touch other tasks' files.

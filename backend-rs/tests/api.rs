@@ -41,6 +41,8 @@ mod labels;
 mod notes;
 #[path = "api/projects.rs"]
 mod projects;
+#[path = "api/tags.rs"]
+mod tags;
 #[path = "api/users.rs"]
 mod users;
 #[path = "api/validation.rs"]

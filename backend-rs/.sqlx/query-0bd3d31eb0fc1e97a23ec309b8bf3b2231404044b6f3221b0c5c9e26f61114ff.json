@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `tags` WHERE `id` = ? AND `user_id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0bd3d31eb0fc1e97a23ec309b8bf3b2231404044b6f3221b0c5c9e26f61114ff"
+}

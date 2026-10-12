@@ -159,7 +159,7 @@
   T26a `ses_ed11a2312ffePMVZwmRIJAuOWg` → `9d6a868` (checklists 5 handlers, deep 4-table ownership; 7 `.sqlx/`);
   T27a `ses_ed11a2300ffewnYIUhjxyxtYy2` → `c2a751b` (notes two-step IDs-then-enrich, COUNT(DISTINCT), LIKE-escape; 6 `.sqlx/`).
 - Merged T24b (ff) → T25 (`3351532`, auto-clean) → T26a (`cfe8570`, lib.rs+api.rs union resolved) → T27a (`dbfddc1`, lib.rs+api.rs union resolved).
-- Merge-verify (running at write time): fmt 0, clippy 0; full suite + prepare-check in background.
+- Merge-verify: fmt 0, clippy 0, full suite **64/64** (was 60, +cards_move/labels/checklists/notes), prepare-check exit 0. Verified 2026-10-12.
 - Merged worktrees+branches removed immediately per standing rule (wt-t24b/t25/t26a/t27a).
 - LOAD-BEARING (from T25, out-of-scope workaround): `error.rs` 1062→409 arm checks `code()=="1062"` but sqlx 0.8 reports dup as `code==Some("23000")` (SQLSTATE; 1062 only in unexposed `number`, `kind: UniqueViolation`). T04 unit stub never catches it; labels worked around locally via `map_write_error` (match `ErrorKind::UniqueViolation`). Needs kernel-owner fix (match UniqueViolation) — candidate for T30 wave or dedicated hardening, + T52 note. T24c reuses labels `fetch_label` 404-for-foreign.
 - Shared-target-dir cross-contamination confirmed again (T27a: phantom 404s on real routes under concurrent worktree builds): serialize heavy cargo ops at merge time (`cargo clean -p backend-rs` + rebuild), `touch` source before trusting instant passes.

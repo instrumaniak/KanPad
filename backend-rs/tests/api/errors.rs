@@ -134,6 +134,55 @@ async fn db_down() -> Result<Json<Value>, AppError> {
     Err(AppError::Db(sqlx::Error::WorkerCrashed))
 }
 
+/// Stub of the REAL MySQL dup-key shape under sqlx 0.8 (verified live
+/// against :3337): `code()` carries the `23000` SQLSTATE — the `1062`
+/// number lives in the unexposed `MySqlDatabaseError::number` field — so
+/// only `kind() == UniqueViolation` identifies it.
+#[derive(Debug)]
+struct UniqueViolationStub;
+
+impl std::fmt::Display for UniqueViolationStub {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "stub db error: Duplicate entry 'x' for key 'uq'")
+    }
+}
+
+impl std::error::Error for UniqueViolationStub {}
+
+impl sqlx::error::DatabaseError for UniqueViolationStub {
+    fn message(&self) -> &str {
+        "Duplicate entry 'x' for key 'uq'"
+    }
+
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some("23000".into())
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::UniqueViolation
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+}
+
+fn unique_violation_error() -> sqlx::Error {
+    sqlx::Error::Database(Box::new(UniqueViolationStub))
+}
+
+async fn db_dup() -> Result<Json<Value>, AppError> {
+    Err(AppError::Db(unique_violation_error()))
+}
+
 async fn fail(Query(params): Query<HashMap<String, String>>) -> Result<Json<Value>, AppError> {
     match params.get("kind").map(String::as_str) {
         Some("not-found") => Err(AppError::NotFound),
@@ -162,6 +211,7 @@ fn probe_router() -> Router {
         .route("/t/echo", post(echo))
         .route("/t/slow", get(slow))
         .route("/t/db-down", get(db_down))
+        .route("/t/db-dup", get(db_dup))
         .route("/t/fail", get(fail))
         .layer(
             ServiceBuilder::new()
@@ -499,6 +549,29 @@ async fn forced_db_error_renders_generic_500() {
         "no error debug may leak: {raw}"
     );
     assert!(!request_id(&headers).is_empty());
+}
+
+#[tokio::test]
+async fn mysql_dup_key_kind_maps_to_409_conflict_through_kernel() {
+    // Real MySQL dup-key shape: SQLSTATE `23000` in `code()`, identity only
+    // in `kind() == UniqueViolation`. Must render 409 `conflict`
+    // problem+json through the shared kernel arm (no local workaround).
+    let app = probe_router();
+    let response = app
+        .oneshot(
+            Request::get("/t/db-dup")
+                .header("x-request-id", "dup-1")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let (status, headers, body) = read_problem(response).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem_shape(&body, 409, &format!("{PROBLEMS}/conflict"));
+    assert_eq!(body["instance"], json!("GET /t/db-dup#dup-1"));
+    assert_eq!(request_id(&headers), "dup-1");
 }
 
 #[tokio::test]

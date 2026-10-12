@@ -4,8 +4,8 @@
 //! missing id matches zero rows → [`AppError::NotFound`] (via `RowNotFound`
 //! or an explicit affected-rows check), never a 403 oracle. Per-user
 //! uniqueness (`UQ_tags_user_name`, case-insensitive under
-//! `utf8mb4_unicode_ci`) surfaces as 409 through the local
-//! [`map_write_error`] — no pre-check that could race. Tags carry
+//! `utf8mb4_unicode_ci`) surfaces as 409 through the shared `Db` arm — no
+//! pre-check that could race. Tags carry
 //! `created_at` ONLY (no `updated_at` by design per `30-db-schema.md`), so
 //! patches never touch a timestamp column. An omitted create `color` defaults
 //! to teal server-side (`dto.color ?? 'teal'` Nest parity).
@@ -41,28 +41,6 @@ pub struct TagRow {
 /// [`super::types::format_timestamp`]).
 pub fn wire_created_at(row: &TagRow) -> String {
     format_timestamp(&row.created_at)
-}
-
-/// Map a write error: unique-violation (dup per-user name, incl.
-/// case-variant under `utf8mb4_unicode_ci`) → 409 [`AppError::Conflict`].
-///
-/// Load-bearing quirk: the shared `Db` arm in `error.rs` keys on the driver
-/// `code() == "1062"`, but sqlx 0.8 reports MySQL dup errors with the
-/// `23000` SQLSTATE there (the `1062` lives in the unexposed `number`
-/// field — verified live against :3337), so the global arm 500s real dups
-/// (its unit test uses a stub `code() == "1062"` and never sees this). The
-/// driver-agnostic [`sqlx::error::ErrorKind::UniqueViolation`] matches the
-/// real error. Scoped here (not in the shared kernel — outside T27b touch
-/// scope); the kernel owner should widen the global arm to this kind.
-fn map_write_error(error: sqlx::Error) -> AppError {
-    match &error {
-        sqlx::Error::Database(database_error)
-            if database_error.kind() == sqlx::error::ErrorKind::UniqueViolation =>
-        {
-            AppError::Conflict
-        }
-        _ => AppError::Db(error),
-    }
 }
 
 /// Total tags for a user (the list `Page.total` — plain `COUNT(*)`, no
@@ -144,8 +122,8 @@ where
 /// Insert a tag row (name arrives pre-trimmed from the route; `None` color
 /// stores [`DEFAULT_TAG_COLOR`]); returns the new id (`last_insert_id` as
 /// `u64` → `i32::try_from`, never a silent `as` cast). Dup per-user name
-/// (incl. case-variant under `utf8mb4_unicode_ci`) → 409 via
-/// [`map_write_error`].
+/// (incl. case-variant under `utf8mb4_unicode_ci`) → 409 via the shared
+/// `Db` arm.
 #[tracing::instrument(skip(ex))]
 pub async fn insert_tag<'e, E>(
     ex: E,
@@ -165,7 +143,7 @@ where
     )
     .execute(ex)
     .await
-    .map_err(map_write_error)?;
+    .map_err(AppError::Db)?;
     i32::try_from(result.last_insert_id()).map_err(|_| AppError::Internal(Internal))
 }
 
@@ -192,7 +170,7 @@ impl TagPatch<'_> {
 /// foreign id matches zero rows — the caller pre-reads via [`fetch_tag`]
 /// for the 404 instead of trusting affected-rows, which would misreport an
 /// idempotent no-change write as missing). Rename onto another owned name
-/// (incl. case-variant) → 409 via [`map_write_error`]; renaming a row
+/// (incl. case-variant) → 409 via the shared `Db` arm; renaming a row
 /// onto itself (even case-only) touches only its own row — no false 409.
 #[tracing::instrument(skip(ex))]
 pub async fn apply_tag_patch<'e, E>(
@@ -228,7 +206,7 @@ where
     builder.push_bind(id);
     builder.push(" AND `user_id` = ");
     builder.push_bind(user_id);
-    builder.build().execute(ex).await.map_err(map_write_error)?;
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
     Ok(())
 }
 

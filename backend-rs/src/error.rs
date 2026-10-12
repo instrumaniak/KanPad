@@ -342,7 +342,8 @@ impl IntoResponse for AppError {
                         Vec::new(),
                     ),
                     sqlx::Error::Database(database_error)
-                        if database_error.code().as_deref() == Some("1062") =>
+                        if database_error.code().as_deref() == Some("1062")
+                            || database_error.kind() == sqlx::error::ErrorKind::UniqueViolation =>
                     {
                         problem_response(
                             StatusCode::CONFLICT,
@@ -453,6 +454,7 @@ mod tests {
     struct StubDatabaseError {
         code: &'static str,
         message: &'static str,
+        unique_violation: bool,
     }
 
     impl std::fmt::Display for StubDatabaseError {
@@ -473,7 +475,13 @@ mod tests {
         }
 
         fn kind(&self) -> sqlx::error::ErrorKind {
-            sqlx::error::ErrorKind::Other
+            // `ErrorKind` is neither `Clone` nor `Copy` (non-exhaustive,
+            // `Debug + PartialEq + Eq` only), so rebuild it from the flag.
+            if self.unique_violation {
+                sqlx::error::ErrorKind::UniqueViolation
+            } else {
+                sqlx::error::ErrorKind::Other
+            }
         }
 
         fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
@@ -493,6 +501,17 @@ mod tests {
         sqlx::Error::Database(Box::new(StubDatabaseError {
             code,
             message: "Duplicate entry 'x' for key 'uq'",
+            unique_violation: false,
+        }))
+    }
+
+    /// Real MySQL dup-key shape under sqlx 0.8: `code()` is the `23000`
+    /// SQLSTATE (the `1062` number is unexposed), identity only in `kind()`.
+    fn stub_unique_violation_error() -> sqlx::Error {
+        sqlx::Error::Database(Box::new(StubDatabaseError {
+            code: "23000",
+            message: "Duplicate entry 'x' for key 'uq'",
+            unique_violation: true,
         }))
     }
 
@@ -614,6 +633,11 @@ mod tests {
         assert_eq!(body["type"], format!("{PROBLEM_BASE}/not-found"));
 
         let (status, _, body) = render(AppError::Db(stub_db_error("1062"))).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["type"], format!("{PROBLEM_BASE}/conflict"));
+
+        // Real MySQL dup-key shape (SQLSTATE `23000`, identity in `kind()`).
+        let (status, _, body) = render(AppError::Db(stub_unique_violation_error())).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["type"], format!("{PROBLEM_BASE}/conflict"));
 

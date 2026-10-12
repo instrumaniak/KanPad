@@ -37,6 +37,8 @@ mod health;
 mod helpers;
 #[path = "api/labels.rs"]
 mod labels;
+#[path = "api/notes.rs"]
+mod notes;
 #[path = "api/projects.rs"]
 mod projects;
 #[path = "api/users.rs"]

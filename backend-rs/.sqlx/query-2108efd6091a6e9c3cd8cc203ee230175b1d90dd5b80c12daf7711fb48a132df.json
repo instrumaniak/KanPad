@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `note_tags` WHERE `note_id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2108efd6091a6e9c3cd8cc203ee230175b1d90dd5b80c12daf7711fb48a132df"
+}

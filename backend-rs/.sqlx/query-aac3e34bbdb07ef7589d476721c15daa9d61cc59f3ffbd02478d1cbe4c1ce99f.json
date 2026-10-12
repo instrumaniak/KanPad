@@ -1,0 +1,44 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT t.`id` AS \"tag_id: i32\", t.`name`, t.`color` FROM `note_tags` nt JOIN `tags` t ON t.`id` = nt.`tag_id` WHERE nt.`note_id` = ? ORDER BY t.`id` ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tag_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 200
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "color",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 80
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "aac3e34bbdb07ef7589d476721c15daa9d61cc59f3ffbd02478d1cbe4c1ce99f"
+}

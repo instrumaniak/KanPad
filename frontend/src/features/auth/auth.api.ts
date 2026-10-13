@@ -1,104 +1,29 @@
-interface RegisterRequest {
-  email: string;
-  password: string;
-}
+import type { components } from '@/lib/api/schema';
+import { apiFetch, apiFetchVoid, type ApiResponse } from '@/lib/api/client';
 
-interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-interface UserResponse {
-  id: number;
-  email: string;
-  role: string;
-}
-
-interface ApiResponse<T> {
-  data: T;
-  message?: string;
-}
-
-interface ApiError {
-  statusCode: number;
-  message: string | string[];
-  error: string;
-}
+export type { ApiResponse };
+export type RegisterRequest = components['schemas']['RegisterInput'];
+export type LoginRequest = components['schemas']['LoginInput'];
+export type UserResponse = components['schemas']['UserData'];
 
 export async function registerApi(data: RegisterRequest): Promise<ApiResponse<UserResponse>> {
-  const response = await fetch('/api/auth/register', {
+  return apiFetch<ApiResponse<UserResponse>>('/api/auth/register', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(data),
   });
-
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error: ApiError = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
-  }
-
-  return response.json();
 }
 
 export async function loginApi(data: LoginRequest): Promise<ApiResponse<UserResponse>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error: ApiError = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
-  }
-
-  return response.json();
+  return apiFetch<ApiResponse<UserResponse>>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function meApi(): Promise<ApiResponse<UserResponse>> {
-  const response = await fetch('/api/auth/me', { credentials: 'include' });
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error: ApiError = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
-  }
-  return response.json();
+  return apiFetch<ApiResponse<UserResponse>>('/api/auth/me');
 }
 
 export async function logoutApi(): Promise<void> {
-  const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error: ApiError = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
-  }
+  return apiFetchVoid('/api/auth/logout', { method: 'POST' });
 }

@@ -293,3 +293,22 @@ async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
 
     // NO TEARDOWN WIPE/DROP (see NOTE above).
 }
+
+// ---------------------------------------------------------------------------
+// T50a black-box e2e env-switch (T50a owns ONLY these two fns in this file).
+// `E2E_BASE_URL` selects the black-box target (default the Rust `:3001`
+// server); `E2E_TARGET=rust|nest` selects the per-target expectation params
+// in `e2e_auth_projects_boards.rs` (Nest = behavior-class assertions only —
+// the contract diverges, so one assertion set cannot pass on both).
+// ---------------------------------------------------------------------------
+
+/// Base URL of the black-box target under test (default Rust `:3001`).
+pub fn e2e_base_url() -> String {
+    std::env::var("E2E_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3001".to_string())
+}
+
+/// Whether black-box suites should use Nest behavior-class expectations
+/// (`E2E_TARGET=nest`) instead of the default exact Rust-contract assertions.
+pub fn e2e_target_is_nest() -> bool {
+    std::env::var("E2E_TARGET").is_ok_and(|value| value.eq_ignore_ascii_case("nest"))
+}

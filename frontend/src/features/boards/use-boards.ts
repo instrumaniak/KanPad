@@ -9,18 +9,39 @@ import {
   restoreBoard,
   permanentDeleteBoard,
   fetchArchivedBoards,
+  type BoardsQuery,
   type CreateBoardData,
   type UpdateBoardData,
 } from './boards.api';
 
-export type { Board } from './boards.api';
+export type { Board, BoardDetail } from './boards.api';
+export type { BoardsQuery, CreateBoardData, UpdateBoardData };
 
 export type BoardViewMode = 'board' | 'list';
 
-export function useBoards(projectId?: number) {
+function sanitizeProjectId(projectId?: number): number | undefined {
+  return projectId !== undefined && Number.isInteger(projectId) && projectId >= 1
+    ? projectId
+    : undefined;
+}
+
+function sanitizePage(page?: number): number | undefined {
+  return page !== undefined && Number.isInteger(page) && page >= 1 ? page : undefined;
+}
+
+function sanitizeLimit(limit?: number): number | undefined {
+  return limit !== undefined && Number.isInteger(limit) && limit >= 1 && limit <= 100
+    ? limit
+    : undefined;
+}
+
+export function useBoards(projectId?: number, page?: number, limit?: number) {
+  const project_id = sanitizeProjectId(projectId);
+  const cleanPage = sanitizePage(page);
+  const cleanLimit = sanitizeLimit(limit);
   return useQuery({
-    queryKey: ['boards', projectId],
-    queryFn: () => fetchBoards(projectId),
+    queryKey: ['boards', project_id, cleanPage, cleanLimit],
+    queryFn: () => fetchBoards({ project_id, page: cleanPage, limit: cleanLimit }),
   });
 }
 
@@ -28,7 +49,7 @@ export function useBoard(id: number) {
   return useQuery({
     queryKey: ['board', id],
     queryFn: () => fetchBoard(id),
-    enabled: !!id,
+    enabled: Number.isInteger(id) && id >= 1,
   });
 }
 
@@ -96,9 +117,11 @@ export function usePermanentDeleteBoard() {
   });
 }
 
-export function useArchivedBoards() {
+export function useArchivedBoards(page?: number, limit?: number) {
+  const cleanPage = sanitizePage(page);
+  const cleanLimit = sanitizeLimit(limit);
   return useQuery({
-    queryKey: ['archivedBoards'],
-    queryFn: () => fetchArchivedBoards(),
+    queryKey: ['archivedBoards', cleanPage, cleanLimit],
+    queryFn: () => fetchArchivedBoards({ page: cleanPage, limit: cleanLimit }),
   });
 }

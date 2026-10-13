@@ -21,6 +21,11 @@ vi.mock('./cards.api', () => ({
   createCard: vi.fn(),
   updateCard: vi.fn(),
   deleteCard: vi.fn(),
+  sanitizeCardListParams: vi.fn((page?: number, limit?: number) => {
+    const p = typeof page === 'number' && Number.isInteger(page) && page >= 1 ? page : 1;
+    const l = typeof limit === 'number' && Number.isInteger(limit) && limit >= 1 && limit <= 100 ? limit : 50;
+    return { page: p, limit: l };
+  }),
 }));
 
 import { fetchCards, fetchCard, createCard, deleteCard } from './cards.api';
@@ -42,7 +47,7 @@ describe('useDeleteCard', () => {
     ];
 
     queryClient.setQueryData(['cards', 1], mockCards);
-    mockDeleteCard.mockResolvedValue({ message: 'Card deleted' });
+    mockDeleteCard.mockResolvedValue(undefined);
 
     const { result } = renderHook(() => useDeleteCard(), { wrapper });
 
@@ -76,7 +81,7 @@ describe('useDeleteCard', () => {
   });
 
   it('invalidates queries on settled', async () => {
-    mockDeleteCard.mockResolvedValue({ message: 'Card deleted' });
+    mockDeleteCard.mockResolvedValue(undefined);
 
     const { result } = renderHook(() => useDeleteCard(), { wrapper });
 
@@ -128,14 +133,24 @@ describe('useCards', () => {
       { id: 1, title: 'Card 1', column_id: 1, position: 0, created_at: '2024-01-01', updated_at: '2024-01-01' },
     ];
 
-    mockFetchCards.mockResolvedValue({ data: mockCards });
+    mockFetchCards.mockResolvedValue({ data: mockCards, page: 1, limit: 50, total: 1 });
 
     const { result } = renderHook(() => useCards(1), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(result.current.data).toEqual(mockCards);
-    expect(mockFetchCards).toHaveBeenCalledWith(1);
+    expect(mockFetchCards).toHaveBeenCalledWith(1, 1, 50);
+  });
+
+  it('pages via queryKey', async () => {
+    mockFetchCards.mockResolvedValue({ data: [], page: 2, limit: 10, total: 0 });
+
+    const { result } = renderHook(() => useCards(1, 2, 10), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mockFetchCards).toHaveBeenCalledWith(1, 2, 10);
   });
 });
 

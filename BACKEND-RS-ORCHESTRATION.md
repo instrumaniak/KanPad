@@ -203,6 +203,11 @@
 - Expected merge order: T40b (frontend, no Rust conflicts) + T50a → T50b → T50c (each adds one `tests/api.rs` mod line — union-resolve, keep all). T50b/T50c must NOT touch `helpers.rs` (T50a owns env-switch).
 - Next unblocked after Wave D: T41a-e (need T40b merged) → T51 (needs T41a-e + T50a-c) + T52 amendments on demand.
 
+## Resume 2026-10-13 Wave D merges (T40b merged; T50a/b/c in flight)
+- T40b MERGED `d32c336` (branch `b93e850` deleted, worktree pruned per standing rule). Verify: `npm run gen:api -- --check` exit 0 (up-to-date) + `tsc --noEmit` exit 0 in `wt-t40b` (main-worktree `node_modules` lacks the new dep — verify only where installed). Accepted: `package-lock.json` side-effect + `40-typegen.md` version line (`openapi-typescript 7.13.0` exact); `tsconfig.app.json` untouched (no change needed). `getErrorMessage` needs no edit (already reads `.status`).
+- T50b executor session died mid-verify ("waiting on clippy"); uncommitted work survived in `wt-t50b` (`M tests/api.rs` + `?? e2e_columns_cards.rs`). Take-over re-dispatched (no rework).
+- T41a-e NOW UNBLOCKED (T40b merged): dispatch after T50 wave merges to avoid `package.json`/`schema.d.ts` contention — or parallel-safe now (frontend-only T41* vs Rust-only T50* touch disjoint files; `schema.d.ts` regen only if `openapi.json` changes, which neither does).
+
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.
 2. Work ONLY in your worktree/branch. Never commit to `dev-rs-local` directly, never touch other tasks' files.

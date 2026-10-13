@@ -1,214 +1,200 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { BASE, ApiError } from '@/lib/api/client';
+import * as client from '@/lib/api/client';
+import type { components } from '@/lib/api/schema';
 import * as projectsApiModule from './projects.api';
 
-const originalFetch = global.fetch;
+vi.mock('@/lib/api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof client>();
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+    apiFetchVoid: vi.fn(),
+  };
+});
+
+const apiFetch = vi.mocked(client.apiFetch);
+const apiFetchVoid = vi.mocked(client.apiFetchVoid);
+
+type Project = components['schemas']['ProjectResponse'];
+
+function projectFixture(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 1,
+    name: 'Project 1',
+    board_count: 2,
+    created_at: '2024-01-01T00:00:00.000000Z',
+    updated_at: '2024-01-01T00:00:00.000000Z',
+    ...overrides,
+  };
+}
+
+function pageFixture(projects: Project[] = [projectFixture()]): projectsApiModule.ProjectsPage {
+  return {
+    data: projects,
+    page: 1,
+    limit: 50,
+    total: projects.length,
+  };
+}
 
 describe('projects.api', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
-    mockFetch = vi.fn();
-    global.fetch = mockFetch;
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
     vi.clearAllMocks();
   });
 
   describe('fetchProjects', () => {
-    it('fetches projects successfully', async () => {
-      const mockResponse = {
-        data: [
-          { id: 1, name: 'Project 1', boardCount: 2, created_at: '2024-01-01', updated_at: '2024-01-01' },
-        ],
-        total: 1,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+    it('fetches the default page with full URL incl BASE', async () => {
+      const page = pageFixture();
+      apiFetch.mockResolvedValueOnce(page);
 
       const result = await projectsApiModule.fetchProjects();
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/projects', { credentials: 'include' });
-      expect(result).toEqual(mockResponse);
+      expect(apiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/projects?page=1&limit=50`);
+      expect(result).toEqual(page);
     });
 
-    it('throws error on non-ok response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        json: () => Promise.resolve({ statusCode: 401, message: 'Unauthorized', error: 'Unauthorized' }),
+    it('forwards explicit pagination and filters', async () => {
+      const page = pageFixture();
+      apiFetch.mockResolvedValueOnce(page);
+
+      await projectsApiModule.fetchProjects({ page: 2, limit: 10, q: 'alpha', sort: 'name', order: 'asc' });
+
+      expect(apiFetch).toHaveBeenCalledWith(
+        `${BASE}/api/v1/projects?page=2&limit=10&q=alpha&sort=name&order=asc`,
+      );
+    });
+
+    it('pre-sanitizes undefined/garbage query params instead of sending a 400', async () => {
+      apiFetch.mockResolvedValueOnce(pageFixture());
+
+      // NaN (uninitialized state), out-of-range page/limit, blank strings.
+      await projectsApiModule.fetchProjects({
+        page: NaN,
+        limit: 500,
+        q: '   ',
+        sort: '',
+        order: undefined,
       });
 
-      await expect(projectsApiModule.fetchProjects()).rejects.toThrow('Unauthorized');
+      expect(apiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/projects?page=1&limit=50`);
     });
 
-    it('handles network error', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('drops non-integer and negative page/limit', async () => {
+      apiFetch.mockResolvedValueOnce(pageFixture());
 
-      await expect(projectsApiModule.fetchProjects()).rejects.toThrow('Network error — please check your connection');
+      await projectsApiModule.fetchProjects({ page: 1.5, limit: -3 });
+
+      expect(apiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/projects?page=1&limit=50`);
     });
 
-    it('handles empty error response body', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        json: () => Promise.reject(new Error('Parse error')),
-      });
+    it('propagates ApiError with status preserved', async () => {
+      apiFetch.mockRejectedValueOnce(new ApiError(401, 'Unauthorized'));
 
-      await expect(projectsApiModule.fetchProjects()).rejects.toThrow('Internal Server Error');
+      await expect(projectsApiModule.fetchProjects()).rejects.toMatchObject({ status: 401 });
     });
   });
 
   describe('createProject', () => {
-    it('creates project successfully', async () => {
-      const mockResponse = {
-        data: { id: 1, name: 'New Project', boardCount: 0, created_at: '', updated_at: '' },
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+    it('creates a project via POST with full URL incl BASE', async () => {
+      const body = { data: projectFixture({ id: 1, name: 'New Project', board_count: 0 }) };
+      apiFetch.mockResolvedValueOnce(body);
 
       const result = await projectsApiModule.createProject('New Project');
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/projects', {
-        credentials: 'include',
+      expect(apiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/projects`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'New Project' }),
       });
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual(body);
     });
 
-    it('throws error on failure', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        statusText: 'Bad Request',
-        json: () => Promise.resolve({ statusCode: 400, message: 'Name is required', error: 'Bad Request' }),
-      });
+    it('propagates validation errors', async () => {
+      apiFetch.mockRejectedValueOnce(new ApiError(400, 'Name is required'));
 
       await expect(projectsApiModule.createProject('')).rejects.toThrow('Name is required');
-    });
-
-    it('handles network error', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(projectsApiModule.createProject('Test')).rejects.toThrow('Network error — please check your connection');
     });
   });
 
   describe('updateProject', () => {
-    it('updates project successfully', async () => {
-      const mockResponse = {
-        data: { id: 1, name: 'Updated', boardCount: 0, created_at: '', updated_at: '' },
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+    it('renames a project via PATCH with full URL incl BASE', async () => {
+      const body = { data: projectFixture({ name: 'Updated' }) };
+      apiFetch.mockResolvedValueOnce(body);
 
       const result = await projectsApiModule.updateProject(1, 'Updated');
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/projects/1', {
-        credentials: 'include',
+      expect(apiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/projects/1`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Updated' }),
       });
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual(body);
     });
 
-    it('throws error on not found', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-        json: () => Promise.resolve({ statusCode: 404, message: 'Project not found', error: 'Not Found' }),
-      });
+    it('propagates not-found errors', async () => {
+      apiFetch.mockRejectedValueOnce(new ApiError(404, 'Project not found'));
 
-      await expect(projectsApiModule.updateProject(999, 'Test')).rejects.toThrow('Project not found');
-    });
-
-    it('handles network error', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(projectsApiModule.updateProject(1, 'Test')).rejects.toThrow('Network error — please check your connection');
+      await expect(projectsApiModule.updateProject(999, 'Test')).rejects.toThrow(
+        'Project not found',
+      );
     });
   });
 
   describe('deleteProject', () => {
-    it('deletes project successfully', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({}),
-      });
+    it('deletes via apiFetchVoid and resolves void (204, no body)', async () => {
+      apiFetchVoid.mockResolvedValueOnce(undefined);
 
-      await expect(projectsApiModule.deleteProject(1)).resolves.toEqual({ data: undefined });
+      const result = await projectsApiModule.deleteProject(1);
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/projects/1', {
-        credentials: 'include',
+      expect(apiFetchVoid).toHaveBeenCalledWith(`${BASE}/api/v1/projects/1`, {
         method: 'DELETE',
       });
+      expect(result).toBeUndefined();
     });
 
-    it('throws error on not found', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-        json: () => Promise.resolve({ statusCode: 404, message: 'Project not found', error: 'Not Found' }),
-      });
+    it('propagates not-found errors', async () => {
+      apiFetchVoid.mockRejectedValueOnce(new ApiError(404, 'Project not found'));
 
       await expect(projectsApiModule.deleteProject(999)).rejects.toThrow('Project not found');
-    });
-
-    it('handles network error', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(projectsApiModule.deleteProject(1)).rejects.toThrow('Network error — please check your connection');
     });
   });
 
   describe('recreateProject', () => {
     it('delegates to createProject', async () => {
-      const mockResponse = {
-        data: { id: 1, name: 'Recreated', boardCount: 0, created_at: '', updated_at: '' },
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+      const body = { data: projectFixture({ name: 'Recreated' }) };
+      apiFetch.mockResolvedValueOnce(body);
 
       const result = await projectsApiModule.recreateProject('Recreated');
 
-      expect(result).toEqual(mockResponse);
-      expect(mockFetch).toHaveBeenCalledWith('/api/projects', {
-        credentials: 'include',
+      expect(apiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/projects`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Recreated' }),
       });
+      expect(result).toEqual(body);
+    });
+  });
+
+  describe('resolveProjectsQuery', () => {
+    it('resolves defaults for empty input', () => {
+      expect(projectsApiModule.resolveProjectsQuery()).toEqual({ page: 1, limit: 50 });
+      expect(projectsApiModule.resolveProjectsQuery({})).toEqual({ page: 1, limit: 50 });
+    });
+
+    it('keeps valid values and trims the audit surface', () => {
+      expect(
+        projectsApiModule.resolveProjectsQuery({ page: 3, limit: 25, q: 'x', sort: 'name', order: 'desc' }),
+      ).toEqual({ page: 3, limit: 25, q: 'x', sort: 'name', order: 'desc' });
     });
   });
 
   describe('type exports', () => {
-    it('exports types', () => {
-      const projectType: projectsApiModule.Project = { id: 1, name: 'Test', boardCount: 0, created_at: '', updated_at: '' };
-      const apiResponse: projectsApiModule.ApiResponse<projectsApiModule.Project> = { data: projectType };
-      const listResponse: projectsApiModule.ListResponse<projectsApiModule.Project> = { data: [projectType], total: 1 };
-      expect(projectType.id).toBe(1);
-      expect(apiResponse.data).toBeDefined();
-      expect(listResponse.total).toBe(1);
+    it('aliases generated schemas (no hand-rolled shapes)', () => {
+      const project: projectsApiModule.Project = projectFixture();
+      const body: projectsApiModule.ApiResponse<projectsApiModule.Project> = { data: project };
+      const page: projectsApiModule.Paginated<projectsApiModule.Project> =
+        pageFixture([project]);
+      expect(project.board_count).toBe(2);
+      expect(body.data).toBeDefined();
+      expect(page.total).toBe(1);
     });
   });
 });

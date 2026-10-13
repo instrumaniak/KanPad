@@ -214,6 +214,17 @@
 - LOAD-BEARING review note (T50c design, accepted): `e2e_rest.rs` binds real `axum::serve` on `127.0.0.1:3001` + raw `TcpStream` HTTP instead of the `TestServer` harness pattern — fails fast with clear message if `:3001` occupied; self-contained client (helpers.rs untouched). Works (green x2) but diverges from house style; T50a's env-switch may subsume the overlap. Revisit in T52 if flaky under parallel runs.
 - Remaining Wave D: T50a (`wt-t50a`, in flight). After it lands: full-suite re-verify (now 81 tests: 79 + 2 e2e) + dispatch T41a-e.
 
+## Resume 2026-10-13 Wave D complete (T50a merged — full 82/82 green)
+- T50a MERGED `67c83d2` (commit `73a6be9`; `api.rs` 3-way union resolved: kept all three e2e mod lines; `helpers.rs` env-switch `e2e_base_url`/`e2e_target_is_nest` auto-merged; branch deleted, worktree pruned). Executor evidence: fmt clean, clippy 0, e2e 1 passed x2, prepare-check 0, no `.sqlx/` change (runtime `query_*` only). Red proof: `E2E_TARGET=nest` run FAILED 101 at `assert_nest_error` (one assertion set cannot pass on both targets).
+- Wave-D merge-verify on `67c83d2`: fmt 0, clippy 0, prepare-check 0, `cargo test --test api -- --skip e2e_` **79/79**, then serial e2e (port rule — all three bind `:3001`, never run parallel): `e2e_auth_projects_boards` ok/4.26s, `e2e_columns_cards` ok/11.22s, `e2e_rest` ok/2.02s. **Total 82/82.**
+- PORT RULE (load-bearing, for T52/runbooks): the three T50* e2e suites each bind `:3001` via in-test `axum::serve`. Full-suite parallel `cargo test --test api` would clash — always verify as `--skip e2e_` + three serial filters. Same rule applies to any future in-test server bind.
+- Wave D total: T40b + T50a/b/c merged. Progress ~35/42 ≈ **83%**.
+
+## Resume 2026-10-13 Wave E dispatched (T41a-e frontend migration, parallel)
+- Base `67c83d2` (82/82 green). 5 executors, worktrees `wt-t41a..e`, branches `rs-t41a-auth/t41b-projects/t41c-boards/t41d-colcards/t41e-rest`.
+- ISOLATION (load-bearing): each executor runs its OWN tmpfs mysql (`kanpad-t41{a..e}-mysql`, host ports 3341-3345) + backend on its own port (3101-3105) + `VITE_API_URL` pointed there. Never use shared `:3001`/`:3337` (siblings + orchestrator verify would clash). `stop+rm` scratch containers when done. Shared `CARGO_TARGET_DIR` still contends builds — serialize heavy cargo ops, `touch`-before-trust, `cargo clean -p utoipa-swagger-ui` on stale OUT_DIR.
+- Expected merge order: any (disjoint `features/*` dirs); `package.json`/`schema.d.ts` shared — keep T40b's exact `7.13.0`, regen `schema.d.ts` if `openapi.json` drifted.
+
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.
 2. Work ONLY in your worktree/branch. Never commit to `dev-rs-local` directly, never touch other tasks' files.

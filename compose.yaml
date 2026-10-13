@@ -65,8 +65,9 @@ services:
     depends_on:
       - nest
     environment:
-      # Points the Vite dev proxy / built app at Nest (:3000) or Rust (:3001).
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+      # T51 cutover: default target is now Rust (:3001).
+      # Set VITE_API_URL=http://localhost:3000 for a one-line app rollback.
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
 
 volumes:
   mysql-data:

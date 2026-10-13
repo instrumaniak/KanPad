@@ -33,6 +33,8 @@ mod columns_move_cards;
 mod columns_sort;
 #[path = "api/create_admin.rs"]
 mod create_admin;
+#[path = "api/e2e_auth_projects_boards.rs"]
+mod e2e_auth_projects_boards;
 #[path = "api/errors.rs"]
 mod errors;
 #[path = "api/golden.rs"]

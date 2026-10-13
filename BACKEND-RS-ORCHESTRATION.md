@@ -208,6 +208,12 @@
 - T50b executor session died mid-verify ("waiting on clippy"); uncommitted work survived in `wt-t50b` (`M tests/api.rs` + `?? e2e_columns_cards.rs`). Take-over re-dispatched (no rework).
 - T41a-e NOW UNBLOCKED (T40b merged): dispatch after T50 wave merges to avoid `package.json`/`schema.d.ts` contention — or parallel-safe now (frontend-only T41* vs Rust-only T50* touch disjoint files; `schema.d.ts` regen only if `openapi.json` changes, which neither does).
 
+## Resume 2026-10-13 Wave D merges II (T50b+T50c merged, T50a in flight)
+- T50b MERGED `dac2a65` (take-over commit `2c236ef`, auto-clean; branch deleted, worktree pruned). Executor evidence: fmt 0, clippy 0, `e2e_columns_cards` 1 passed/188s genuine run, prepare-check 0, no `.sqlx/` change. Merge-verify: fmt 0 + prepare-check 0.
+- T50c MERGED `686448d` (commit `f3cf3c7`; `api.rs` mod-line union resolved: kept both `e2e_columns_cards` + `e2e_rest`; branch deleted, worktree pruned). Executor evidence: fmt 0, clippy 0, `e2e_rest` 1 passed x2 (77s cold/15.6s warm), prepare-check 0, no `.sqlx/` change. Merge-verify: fmt 0 + prepare-check 0.
+- LOAD-BEARING review note (T50c design, accepted): `e2e_rest.rs` binds real `axum::serve` on `127.0.0.1:3001` + raw `TcpStream` HTTP instead of the `TestServer` harness pattern — fails fast with clear message if `:3001` occupied; self-contained client (helpers.rs untouched). Works (green x2) but diverges from house style; T50a's env-switch may subsume the overlap. Revisit in T52 if flaky under parallel runs.
+- Remaining Wave D: T50a (`wt-t50a`, in flight). After it lands: full-suite re-verify (now 81 tests: 79 + 2 e2e) + dispatch T41a-e.
+
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.
 2. Work ONLY in your worktree/branch. Never commit to `dev-rs-local` directly, never touch other tasks' files.

@@ -199,7 +199,7 @@ export function BoardView() {
           <FilterDropdown
             filters={filters}
             onFiltersChange={setFilters}
-            availableLabels={allLabels ?? []}
+            availableLabels={allLabels?.data ?? []}
           />
           <BoardViewToggle
             value={view}

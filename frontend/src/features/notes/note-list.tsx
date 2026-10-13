@@ -53,7 +53,7 @@ export function NoteList() {
   const filters = {
     search: debouncedSearch || undefined,
     type: typeFilter !== 'All' ? typeFilter.toLowerCase() as never : undefined,
-    tagId: tagFilter,
+    tag_id: tagFilter,
   };
 
   const handleTagClick = (tagId: number) => {

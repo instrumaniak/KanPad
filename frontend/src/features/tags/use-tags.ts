@@ -4,12 +4,15 @@ import type { CreateTagData, UpdateTagData } from './tags.api';
 
 export const tagKeys = {
   all: ['tags'] as const,
+  /** Paginated list key — page is part of the key (T41e `Paginated<T>`). */
+  list: (page?: number, limit?: number) =>
+    [...tagKeys.all, page ?? 1, limit ?? 50] as const,
 };
 
-export function useTags() {
+export function useTags(page?: number, limit?: number) {
   return useQuery({
-    queryKey: tagKeys.all,
-    queryFn: fetchTags,
+    queryKey: tagKeys.list(page, limit),
+    queryFn: () => fetchTags(page, limit),
   });
 }
 

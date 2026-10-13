@@ -26,7 +26,10 @@ const manyMockLabels = Array.from({ length: 24 }, (_, index) => ({
 let labelsData = mockLabels;
 
 vi.mock('../labels/use-labels', () => ({
-  useLabels: () => ({ data: labelsData, isLoading: false }),
+  useLabels: () => ({
+    data: { data: labelsData, page: 1, limit: 50, total: labelsData.length },
+    isLoading: false,
+  }),
   useCreateLabel: () => ({ mutate: mockCreateMutate, isPending: false }),
 }));
 

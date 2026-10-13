@@ -1,94 +1,60 @@
-import type { ApiResponse } from '../cards/cards.api';
+import type { components } from '@/lib/api/schema';
+import {
+  apiFetch,
+  apiFetchVoid,
+  type ApiResponse,
+  type Page,
+} from '@/lib/api/client';
 
-const FETCH_OPTIONS: RequestInit = {
-  credentials: 'include',
-};
+/**
+ * Wire tag (T27b `TagResponse` — carries `created_at` ONLY, no `updated_at`
+ * by design; color is free-form, defaulting to teal server-side).
+ */
+export type Tag = components['schemas']['TagResponse'];
 
-export interface Tag {
-  id: number;
-  name: string;
-  color: string;
-  user_id: number;
-  created_at: string;
-}
+export type CreateTagData = components['schemas']['CreateTagInput'];
+export type UpdateTagData = components['schemas']['UpdateTagInput'];
 
-export interface CreateTagData {
-  name: string;
-  color: string;
-}
-
-export interface UpdateTagData {
-  name?: string;
-  color?: string;
-}
-
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
+/**
+ * Newly-strict input audit (T41e): `page`/`limit` are strict server-side
+ * (`page >= 1`, `1 <= limit <= 100`, garbage → 400 problem+json). Only
+ * defined-and-valid values are sent; anything else is omitted so the
+ * backend defaults (`page=1, limit=50`) apply instead of 400ing on
+ * `undefined`/`NaN` from uninitialized state.
+ */
+function pageQuery(page?: number, limit?: number): string {
+  const params = new URLSearchParams();
+  if (Number.isInteger(page) && (page as number) >= 1) {
+    params.set('page', String(page));
   }
-  try {
-    return await response.json();
-  } catch {
-    throw new Error('Unexpected response format');
+  if (Number.isInteger(limit) && (limit as number) >= 1 && (limit as number) <= 100) {
+    params.set('limit', String(limit));
   }
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }
 
-export async function fetchTags(): Promise<ApiResponse<Tag[]>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/tags', FETCH_OPTIONS);
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse<ApiResponse<Tag[]>>(response);
+export async function fetchTags(page?: number, limit?: number): Promise<Page<Tag>> {
+  return apiFetch<Page<Tag>>(`/api/v1/tags${pageQuery(page, limit)}`);
 }
 
 export async function createTag(data: CreateTagData): Promise<ApiResponse<Tag>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/tags', {
-      ...FETCH_OPTIONS,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse<ApiResponse<Tag>>(response);
+  return apiFetch<ApiResponse<Tag>>('/api/v1/tags', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function updateTag(id: number, data: UpdateTagData): Promise<ApiResponse<Tag>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/tags/${id}`, {
-      ...FETCH_OPTIONS,
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse<ApiResponse<Tag>>(response);
+  return apiFetch<ApiResponse<Tag>>(`/api/v1/tags/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 }
 
-export async function deleteTag(id: number): Promise<ApiResponse<void>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/tags/${id}`, {
-      ...FETCH_OPTIONS,
-      method: 'DELETE',
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse<ApiResponse<void>>(response);
+/** Deletes are `204` — void via `apiFetchVoid` (signature change expected). */
+export async function deleteTag(id: number): Promise<void> {
+  return apiFetchVoid(`/api/v1/tags/${id}`, {
+    method: 'DELETE',
+  });
 }

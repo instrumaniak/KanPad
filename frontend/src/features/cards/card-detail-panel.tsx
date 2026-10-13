@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
-import { useUpdateCard, useCard, type Card as CardType } from './use-cards';
+import { useUpdateCard, useCard, type Card as CardType, type CardDetail } from './use-cards';
 import { LabelPicker } from '../labels/label-picker';
 import { DueDatePicker } from './due-date-picker';
 import { ChecklistSection } from '../checklists';
@@ -49,7 +49,11 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
   const updateCard = useUpdateCard();
   const { showError } = useToastHelpers();
   const { data: cardDetail, isLoading, isError, refetch } = useCard(open ? card.id : 0);
-  const displayCard = cardDetail ?? card;
+  // The panel enriches the board-cache summary via the detail query; type the
+  // merged view as detail (fallback fields read via `??` defaults, runtime
+  // unchanged from the old all-optional `Card` interface).
+  const displayCard: CardDetail & Pick<CardType, 'has_description'> =
+    (cardDetail ?? card) as CardDetail & Pick<CardType, 'has_description'>;
 
   useEffect(() => {
     latestCardRef.current = card;
@@ -313,7 +317,7 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Due Date</h3>
             <DueDatePicker
-              dueDate={displayCard.due_date}
+              dueDate={displayCard.due_date ?? null}
               onDateChange={handleDueDateChange}
               disabled={isSavingDueDate}
             />

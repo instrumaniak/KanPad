@@ -43,6 +43,8 @@ export function AddCardInput({ columnId, nextColumnId, onCardCreated, onCardCrea
           position: 0,
           description: null,
           due_date: null,
+          labels: [],
+          has_description: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };

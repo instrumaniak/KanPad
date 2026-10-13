@@ -35,6 +35,8 @@ mod columns_sort;
 mod create_admin;
 #[path = "api/e2e_columns_cards.rs"]
 mod e2e_columns_cards;
+#[path = "api/e2e_rest.rs"]
+mod e2e_rest;
 #[path = "api/errors.rs"]
 mod errors;
 #[path = "api/golden.rs"]

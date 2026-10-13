@@ -238,3 +238,17 @@
 2. In each worktree: `git status --short; git log --oneline -3`.
 3. Update Status column above. Commit WIP with `git commit -am "WIP <task> <note>"` on task branch (never on base).
 4. Resume: re-read this file + `git log dev-rs-local.. <branch>` per worktree, re-dispatch subagent with `sessionID` or fresh prompt pointing at same worktree/branch.
+
+## Resume 2026-10-13 Wave E complete (T41a-e merged; T51 merged)
+
+- Wave E work verified before commit:
+  - T41a auth: tsc 0, gen:api --check pass, vitest 49/49
+  - T41b projects: tsc 0, gen:api --check pass, vitest 36/36
+  - T41c boards: tsc 0, gen:api --check pass, vitest 174/174
+  - T41d columns+cards: fixed test mock for `sanitizeCardListParams`; tsc 0, gen:api --check pass, vitest 150/150
+  - T41e labels/checklists/notes/tags: tsc 0, gen:api --check pass, vitest 199/199
+- All merged into `dev-rs-local` (`43e19465` chain), then clean combined frontend run: 77 files / 723 tests passing; tsc 0; gen:api --check pass.
+- Worktrees removed per standing cleanup rule.
+- T51 cutover: defaults flipped to Rust :3001 (Vite proxy + compose), `docs/cutover.md` added; rollback remains one env var (`VITE_API_URL=http://localhost:3000`).
+- Verification after merge: backend fmt 0, clippy 0, prepare-check 0, non-e2e 79/79, 3 e2e 1/1 each = **82/82**.
+- Progress: 41/42 tasks merged — **≈98%** by task count. Remaining: T52 contract-amend process/doc amendments only (on-demand), no blocking feature work.

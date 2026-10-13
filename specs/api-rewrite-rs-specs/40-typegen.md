@@ -43,7 +43,7 @@ schemas generate as real components. DTO nullability follows the `20-api-contrac
 e.g. `checklist_progress` omitted when empty vs `description: null` emitted) — do not re-decide per feature. Paginated endpoints exist, so the frontend DOES take on
 page-in-queryKey work where lists paginate (T41b+).
 
-Frontend rules: `npm i -D openapi-typescript@<exact>` (exact version pinned in `package.json`, no floating `^`; T40b records the chosen version here in the same PR); add `gen:api` script
+Frontend rules: `npm i -D openapi-typescript@7.13.0` (exact version pinned in `package.json`, no floating `^`; T40b records the chosen version here in the same PR — pinned `7.13.0`, latest at time of T40b); add `gen:api` script
 (`openapi-typescript ../backend-rs/openapi.json -o src/lib/api/schema.d.ts`,
 no `--enum` flag — `erasableSyntaxOnly` forbids generated enums);
 `schema.d.ts` never hand-edited (drift gate: `npm run gen:api -- --check`

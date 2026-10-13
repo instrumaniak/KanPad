@@ -38,6 +38,8 @@ const mockBoard = {
   project_id: null,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',
+  is_archived: false,
+  view_mode: 'board',
 };
 
 const renderWithToastAndRouter = (ui: React.ReactElement) => {

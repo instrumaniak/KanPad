@@ -1,180 +1,112 @@
-interface Board {
-  id: number;
-  name: string;
-  background_color?: string;
-  project_id: number | null;
-  project?: { id: number; name: string } | null;
-  created_at: string;
-  updated_at: string;
-  columns?: { id: number; name: string; position: number }[];
-  is_archived?: boolean;
-  view_mode?: 'board' | 'list';
+import { apiFetch, apiFetchVoid, type ApiResponse, type Page } from '@/lib/api/client';
+import type { components } from '@/lib/api/schema';
+
+/**
+ * Boards feature types are aliases over the generated Rust-openapi schemas
+ * (`schema.d.ts` — never hand-edited). Wire keys stay snake_case verbatim.
+ */
+export type Board = components['schemas']['BoardListResponse'];
+export type BoardDetail = components['schemas']['BoardDetailResponse'];
+export type CreateBoardData = components['schemas']['CreateBoardInput'];
+export type UpdateBoardData = components['schemas']['UpdateBoardInput'];
+
+// Shared envelopes live in `@/lib/api/client`; re-exported so existing
+// imports keep working. The Nest-only `ListResponse` is retired.
+export type { ApiResponse, Page };
+
+const BOARDS_BASE = '/api/v1/boards';
+
+export interface BoardsQuery {
+  project_id?: number;
+  archived?: boolean;
+  page?: number;
+  limit?: number;
 }
 
-interface ApiResponse<T> {
-  data: T;
-  message?: string;
-}
-
-interface ListResponse<T> {
-  data: T[];
-  total: number;
-}
-
-interface ApiError {
-  statusCode: number;
-  message: string | string[];
-  error: string;
-}
-
-const FETCH_OPTIONS: RequestInit = { credentials: 'include' };
-
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error: ApiError = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
+/**
+ * Newly-strict input audit (T41c): the Rust rewrite answers `?project_id=abc`,
+ * `?page=0`, `?limit=500` with `400 problem+json`. Omit garbage instead of
+ * sending it — `undefined` simply means "no filter".
+ */
+export function buildBoardsQuery(query: BoardsQuery = {}): string {
+  const params = new URLSearchParams();
+  if (
+    query.project_id !== undefined &&
+    Number.isInteger(query.project_id) &&
+    query.project_id >= 1
+  ) {
+    params.set('project_id', String(query.project_id));
   }
-  try {
-    return await response.json();
-  } catch {
-    throw new Error('Unexpected response format');
+  if (query.archived === true) {
+    params.set('archived', 'true');
   }
-}
-
-export async function fetchBoards(projectId?: number): Promise<ListResponse<Board>> {
-  let response: Response;
-  const url = projectId ? `/api/boards?projectId=${projectId}` : '/api/boards';
-  try {
-    response = await fetch(url, FETCH_OPTIONS);
-  } catch {
-    throw new Error('Network error — please check your connection');
+  if (query.page !== undefined && Number.isInteger(query.page) && query.page >= 1) {
+    params.set('page', String(query.page));
   }
-  return handleResponse(response);
-}
-
-export async function fetchBoard(id: number): Promise<ApiResponse<Board>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/boards/${id}`, FETCH_OPTIONS);
-  } catch {
-    throw new Error('Network error — please check your connection');
+  if (
+    query.limit !== undefined &&
+    Number.isInteger(query.limit) &&
+    query.limit >= 1 &&
+    query.limit <= 100
+  ) {
+    params.set('limit', String(query.limit));
   }
-  return handleResponse(response);
+  const qs = params.toString();
+  return qs ? `${BOARDS_BASE}?${qs}` : BOARDS_BASE;
 }
 
-export interface CreateBoardData {
-  name: string;
-  background_color?: string;
-  project_id?: number | null;
+export async function fetchBoards(query: BoardsQuery = {}): Promise<Page<Board>> {
+  return apiFetch<Page<Board>>(buildBoardsQuery(query));
 }
 
-export async function createBoard(data: CreateBoardData): Promise<ApiResponse<Board>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/boards', {
-      ...FETCH_OPTIONS,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+export async function fetchBoard(id: number): Promise<ApiResponse<BoardDetail>> {
+  return apiFetch<ApiResponse<BoardDetail>>(`${BOARDS_BASE}/${id}`);
 }
 
-export interface UpdateBoardData {
-  name?: string;
-  background_color?: string;
-  project_id?: number | null;
-  view_mode?: 'board' | 'list';
+export async function createBoard(data: CreateBoardData): Promise<ApiResponse<BoardDetail>> {
+  return apiFetch<ApiResponse<BoardDetail>>(BOARDS_BASE, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
-export async function updateBoard(id: number, data: UpdateBoardData): Promise<ApiResponse<Board>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/boards/${id}`, {
-      ...FETCH_OPTIONS,
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+export async function updateBoard(
+  id: number,
+  data: UpdateBoardData,
+): Promise<ApiResponse<BoardDetail>> {
+  return apiFetch<ApiResponse<BoardDetail>>(`${BOARDS_BASE}/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 }
 
-export async function deleteBoard(id: number): Promise<ApiResponse<void>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/boards/${id}`, {
-      ...FETCH_OPTIONS,
-      method: 'DELETE',
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+/** `DELETE` is `204` (archived boards only; active → `409`). Void by contract. */
+export async function deleteBoard(id: number): Promise<void> {
+  return apiFetchVoid(`${BOARDS_BASE}/${id}`, { method: 'DELETE' });
 }
 
-export async function archiveBoard(id: number): Promise<ApiResponse<Board>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/boards/${id}/archive`, {
-      ...FETCH_OPTIONS,
-      method: 'PATCH',
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+/** Verb route `PATCH /:id/archive` deleted — archive is an `is_archived` flip. */
+export async function archiveBoard(id: number): Promise<ApiResponse<BoardDetail>> {
+  return updateBoard(id, { is_archived: true });
 }
 
-export async function restoreBoard(id: number): Promise<ApiResponse<Board>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/boards/${id}/restore`, {
-      ...FETCH_OPTIONS,
-      method: 'PATCH',
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+/** Verb route `PATCH /:id/restore` deleted — restore is an `is_archived` flip. */
+export async function restoreBoard(id: number): Promise<ApiResponse<BoardDetail>> {
+  return updateBoard(id, { is_archived: false });
 }
 
-export async function permanentDeleteBoard(id: number): Promise<ApiResponse<void>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/boards/${id}/permanent`, {
-      ...FETCH_OPTIONS,
-      method: 'DELETE',
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+/** Verb route `DELETE /:id/permanent` deleted — plain `DELETE` (archived only). */
+export async function permanentDeleteBoard(id: number): Promise<void> {
+  return deleteBoard(id);
 }
 
-export async function fetchArchivedBoards(): Promise<ListResponse<Board>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/boards/archived', FETCH_OPTIONS);
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+/** Duplicate route `GET /boards/archived` deleted — `?archived=true` instead. */
+export async function fetchArchivedBoards(
+  query: Omit<BoardsQuery, 'archived'> = {},
+): Promise<Page<Board>> {
+  return fetchBoards({ ...query, archived: true });
 }
 
-export async function recreateBoard(name: string): Promise<ApiResponse<Board>> {
+export async function recreateBoard(name: string): Promise<ApiResponse<BoardDetail>> {
   return createBoard({ name });
 }
-
-export type { Board, ApiResponse, ListResponse };

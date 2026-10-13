@@ -193,6 +193,16 @@
 - LOAD-BEARING: fix1062 resolves the T25 1062→409 gap at kernel level (ErrorKind::UniqueViolation), eliminating per-store workarounds. T02b migration is live-safe (CONVERT TO, no FK changes, ROW_FORMAT=DYNAMIC for 1020-byte UNIQUE).
 - Next unblocked: T30 already merged → T40b (Swagger UI serve) + T41a-e (spec hardening) + T50a-c (runbooks) + T51 (cutover) + T52 (amendments).
 
+## Resume 2026-10-13 Wave D (T40b+T50a+T50b+T50c dispatched)
+- Base verified before dispatch: fmt 0 (`cargo fmt --check` in `backend-rs/`), shared DB `kanpad-rs-testdb` (:3337) re-migrated (`migrate run` applied baseline + 0002, `migrate info` pending=0 — container had restarted, DB was pending). HEAD `89fb22d` (2 commits ahead of Wave-C note: `30a8c56` test-opt plan + `89fb22d` slow-tests investigation, incl. `backend-rs/docker-compose.test.yml` + trimmed `53-test-optimization.md`).
+- Dispatched 4 parallel executors (fresh sessions, worktrees on persistent `KanPad-wt/`, branches off `89fb22d`):
+  T40b `ses_ecba65380ffe6SgH4KiHdGzOan` → branch `rs-t40b-client` in `wt-t40b` (frontend client + gen:api CI, frontend-only);
+  T50a `ses_ecba65370ffe97i4MtTeKUjl3o` → branch `rs-t50a-e2e-auth` in `wt-t50a` (e2e auth/projects/boards + helpers env-switch);
+  T50b `ses_ecba65355ffegf1gwFPcICqlB4` → branch `rs-t50b-e2e-cards` in `wt-t50b` (e2e columns/cards + 500-move fuzz);
+  T50c `ses_ecba65353ffeNa9P0PSLC0BcLQ` → branch `rs-t50c-e2e-rest` in `wt-t50c` (e2e labels/checklists/notes/tags).
+- Expected merge order: T40b (frontend, no Rust conflicts) + T50a → T50b → T50c (each adds one `tests/api.rs` mod line — union-resolve, keep all). T50b/T50c must NOT touch `helpers.rs` (T50a owns env-switch).
+- Next unblocked after Wave D: T41a-e (need T40b merged) → T51 (needs T41a-e + T50a-c) + T52 amendments on demand.
+
 ## Subagent contract (copy into every dispatch)
 1. Read `specs/api-rewrite-rs-specs/README.md`, `00-overview.md`, your task in `50-tasks.md` + linked `10/20/21/30` sections. `50-tasks.md` Touch-only is hard scope.
 2. Work ONLY in your worktree/branch. Never commit to `dev-rs-local` directly, never touch other tasks' files.

@@ -2,14 +2,17 @@
 //!
 //! Precedence: real environment > `.env` > defaults. [`Settings::load`]
 //! validates everything fail-fast (secret length in bytes, port range,
-//! `NODE_ENV` whitelist, `HASH_COST` prod floor, `DATABASE_URL` charset,
-//! CORS allowlist shape) and never logs secrets — [`Settings`] implements a
-//! redacting [`fmt::Debug`](std::fmt::Debug).
+//! `NODE_ENV` whitelist, `HASH_COST` prod floor, `DATABASE_URL` charset +
+//! database-name identifier rule, CORS allowlist shape) and never logs
+//! secrets — [`Settings`] implements a redacting
+//! [`fmt::Debug`](std::fmt::Debug).
 
 use std::fmt;
 
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+
+use crate::db;
 
 /// Minimum `SESSION_SECRET` length in **bytes** (not chars).
 pub const MIN_SESSION_SECRET_BYTES: usize = 32;
@@ -193,6 +196,18 @@ impl Settings {
     /// Load once at boot: `.env` (if present), then environment, then validate.
     pub fn load() -> Result<Self, ConfigError> {
         dotenvy::dotenv().ok();
+        Settings::load_from_env()
+    }
+
+    /// Load from the process environment **only** — no `.env` lookup.
+    ///
+    /// `dotenvy::dotenv()` never overrides an existing variable, so it can
+    /// only *add* keys. A developer's local `.env` therefore silently
+    /// re-supplies a key a caller deliberately unset (e.g. `SESSION_SECRET`),
+    /// which makes a "this must fail to boot" assertion pass for the wrong
+    /// reason. Boot keeps using [`Settings::load`]; tests that assert on a
+    /// missing/invalid key use this so ambient `.env` cannot leak in.
+    pub fn load_from_env() -> Result<Self, ConfigError> {
         let settings: Settings = envy::from_env()?;
         settings.validate()?;
         Ok(settings)
@@ -285,6 +300,24 @@ impl Settings {
             return Err(ConfigError::Invalid(
                 "DATABASE_URL must include ?charset=utf8mb4".to_string(),
             ));
+        }
+        // The session store binds to this database via
+        // `MySqlStore::with_schema_name`, whose identifier rule is STRICTER
+        // than MySQL's (a leading digit, or `-`/`.`/space, is a legal schema
+        // name it refuses). Screen it here so a bad DB_NAME fails as a clean
+        // config error instead of panicking when the store is constructed
+        // (see `db::is_valid_db_name`). Never echoes credentials.
+        let db_name = self
+            .database_url()
+            .parse::<sqlx::mysql::MySqlConnectOptions>()
+            .ok()
+            .and_then(|options| options.get_database().map(str::to_string))
+            .unwrap_or_else(|| self.db_name.clone());
+        if !db::is_valid_db_name(&db_name) {
+            return Err(ConfigError::Invalid(format!(
+                "database name {db_name:?} is not a valid MySQL identifier: it must start with a \
+                 letter or underscore and contain only letters, digits, `_`, or `$`"
+            )));
         }
         let origins = self.cors_origin_list();
         if origins.iter().any(|origin| origin == "*") {
@@ -394,6 +427,15 @@ mod tests {
         BASE_VARS.to_vec()
     }
 
+    /// Env matrix driving `DB_NAME` instead of an explicit `DATABASE_URL`
+    /// (an explicit URL wins over the parts, so it must be removed).
+    fn with_db_name(name: &'static str) -> Vec<(&'static str, &'static str)> {
+        let mut vars = base_vars();
+        vars.retain(|(key, _)| *key != "DATABASE_URL");
+        vars.push(("DB_NAME", name));
+        vars
+    }
+
     fn with_overrides(
         overrides: &[(&'static str, &'static str)],
     ) -> Vec<(&'static str, &'static str)> {
@@ -415,7 +457,7 @@ mod tests {
         {
             let vars = with_overrides(&[("NODE_ENV", "production"), ("HASH_COST", "1")]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("production HASH_COST=1 must fail boot");
+            let err = Settings::load_from_env().expect_err("production HASH_COST=1 must fail boot");
             assert!(
                 err.to_string().contains("HASH_COST"),
                 "unexpected error: {err}"
@@ -425,7 +467,7 @@ mod tests {
         {
             let vars = with_overrides(&[("NODE_ENV", "test"), ("HASH_COST", "1")]);
             let _env = SavedEnv::set(&vars);
-            let settings = Settings::load().expect("test HASH_COST=1 must load");
+            let settings = Settings::load_from_env().expect("test HASH_COST=1 must load");
             assert_eq!(settings.hash_cost, 1);
         }
     }
@@ -436,7 +478,7 @@ mod tests {
         let mut vars = base_vars();
         vars.retain(|(name, _)| *name != "SESSION_SECRET");
         let _env = SavedEnv::set(&vars);
-        let err = Settings::load().expect_err("missing SESSION_SECRET must fail boot");
+        let err = Settings::load_from_env().expect_err("missing SESSION_SECRET must fail boot");
         assert!(
             err.to_string().contains("session_secret"),
             "unexpected error: {err}"
@@ -450,7 +492,7 @@ mod tests {
             assert!(secret.len() < MIN_SESSION_SECRET_BYTES);
             let vars = with_overrides(&[("SESSION_SECRET", secret)]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("short SESSION_SECRET must fail boot");
+            let err = Settings::load_from_env().expect_err("short SESSION_SECRET must fail boot");
             assert!(
                 err.to_string().contains("SESSION_SECRET"),
                 "unexpected error: {err}"
@@ -459,7 +501,7 @@ mod tests {
         // Exactly 32 bytes loads.
         let vars = with_overrides(&[("SESSION_SECRET", "0123456789abcdef0123456789abcdef")]);
         let _env = SavedEnv::set(&vars);
-        Settings::load().expect("32-byte SESSION_SECRET must load");
+        Settings::load_from_env().expect("32-byte SESSION_SECRET must load");
     }
 
     #[test]
@@ -468,7 +510,7 @@ mod tests {
         for bad_env in ["prod", "Production", "staging", ""] {
             let vars = with_overrides(&[("NODE_ENV", bad_env)]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("bad NODE_ENV must fail boot");
+            let err = Settings::load_from_env().expect_err("bad NODE_ENV must fail boot");
             assert!(
                 err.to_string().contains("NODE_ENV"),
                 "unexpected error for {bad_env:?}: {err}"
@@ -477,18 +519,53 @@ mod tests {
         for good_env in ["development", "test"] {
             let vars = with_overrides(&[("NODE_ENV", good_env)]);
             let _env = SavedEnv::set(&vars);
-            Settings::load().expect("whitelisted NODE_ENV must load");
+            Settings::load_from_env().expect("whitelisted NODE_ENV must load");
         }
         // Production needs HASH_COST>=2 to get past the cost floor.
         {
             let vars = with_overrides(&[("NODE_ENV", "production"), ("HASH_COST", "2")]);
             let _env = SavedEnv::set(&vars);
-            Settings::load().expect("production NODE_ENV must load");
+            Settings::load_from_env().expect("production NODE_ENV must load");
         }
         let vars = with_overrides(&[("PORT", "0")]);
         let _env = SavedEnv::set(&vars);
-        let err = Settings::load().expect_err("PORT=0 must fail boot");
+        let err = Settings::load_from_env().expect_err("PORT=0 must fail boot");
         assert!(err.to_string().contains("PORT"), "unexpected error: {err}");
+    }
+
+    /// AC: a database name the session store would reject (leading digit,
+    /// hyphen, dot, space) is a clean config error — never a boot panic from
+    /// `MySqlStore::with_schema_name`.
+    #[test]
+    fn rejects_database_names_the_session_store_would_refuse() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for (name, why) in [
+            ("123kanpad", "leading digit"),
+            ("kan-pad", "hyphen"),
+            ("kan.pad", "dot"),
+            ("kan pad", "space"),
+        ] {
+            let _env = SavedEnv::set(&with_db_name(name));
+
+            let err = Settings::load_from_env().expect_err("invalid DB_NAME must fail boot");
+            let message = err.to_string();
+            assert!(
+                message.contains("not a valid MySQL identifier"),
+                "{why} ({name:?}): unexpected error {message}"
+            );
+        }
+    }
+
+    /// AC: the legal-identifier happy path still boots — guards the check
+    /// above against over-rejecting the names sqlx actually creates.
+    #[test]
+    fn accepts_sqlx_test_style_database_names() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for name in ["kanpad", "_sqlx_test_a1b2c3", "kanpad_prod_1"] {
+            let _env = SavedEnv::set(&with_db_name(name));
+            Settings::load_from_env()
+                .unwrap_or_else(|err| panic!("{name:?} must be accepted: {err}"));
+        }
     }
 
     #[test]
@@ -498,7 +575,8 @@ mod tests {
         {
             let vars = with_overrides(&[("DATABASE_URL", "mysql://u:p@h:3306/db")]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("charset-less DATABASE_URL must fail boot");
+            let err =
+                Settings::load_from_env().expect_err("charset-less DATABASE_URL must fail boot");
             assert!(
                 err.to_string().contains("charset=utf8mb4"),
                 "unexpected error: {err}"
@@ -516,7 +594,7 @@ mod tests {
                 ("DB_NAME", "kanpad"),
             ]);
             let _env = SavedEnv::set(&vars);
-            let settings = Settings::load().expect("parts-derived config must load");
+            let settings = Settings::load_from_env().expect("parts-derived config must load");
             assert_eq!(
                 settings.database_url(),
                 "mysql://app:s3cret@db.internal:3307/kanpad?charset=utf8mb4"
@@ -529,7 +607,7 @@ mod tests {
                 ("DB_HOST", "ignored"),
             ]);
             let _env = SavedEnv::set(&vars);
-            let settings = Settings::load().expect("explicit DATABASE_URL must load");
+            let settings = Settings::load_from_env().expect("explicit DATABASE_URL must load");
             assert_eq!(settings.database_url(), "mysql://x:y@h:1/z?charset=utf8mb4");
         }
     }
@@ -540,7 +618,7 @@ mod tests {
         for origins in ["*", "http://localhost:5173, *"] {
             let vars = with_overrides(&[("CORS_ORIGINS", origins)]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("wildcard CORS must fail boot");
+            let err = Settings::load_from_env().expect_err("wildcard CORS must fail boot");
             assert!(
                 err.to_string().contains("CORS_ORIGINS"),
                 "unexpected error: {err}"
@@ -554,7 +632,7 @@ mod tests {
                 ("CORS_ORIGINS", "   "),
             ]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("prod empty CORS must fail boot");
+            let err = Settings::load_from_env().expect_err("prod empty CORS must fail boot");
             assert!(
                 err.to_string().contains("CORS_ORIGINS"),
                 "unexpected error: {err}"
@@ -564,14 +642,14 @@ mod tests {
         {
             let vars = with_overrides(&[("CORS_ORIGINS", "")]);
             let _env = SavedEnv::set(&vars);
-            let settings = Settings::load().expect("dev empty CORS must load");
+            let settings = Settings::load_from_env().expect("dev empty CORS must load");
             assert!(settings.cors_origin_list().is_empty());
         }
         // Malformed origins fail boot (fail fast, not silent deny).
         for origins in ["not-a-url", "localhost:5173", "ftp://files.example.com"] {
             let vars = with_overrides(&[("CORS_ORIGINS", origins)]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load().expect_err("malformed CORS origin must fail boot");
+            let err = Settings::load_from_env().expect_err("malformed CORS origin must fail boot");
             assert!(
                 err.to_string().contains("CORS_ORIGINS"),
                 "unexpected error for {origins:?}: {err}"
@@ -584,7 +662,7 @@ mod tests {
                 " https://app.example.com ,https://admin.example.com,,",
             )]);
             let _env = SavedEnv::set(&vars);
-            let settings = Settings::load().expect("multi-origin CORS must load");
+            let settings = Settings::load_from_env().expect("multi-origin CORS must load");
             assert_eq!(
                 settings.cors_origin_list(),
                 vec![
@@ -600,7 +678,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let vars = base_vars();
         let _env = SavedEnv::set(&vars);
-        let settings = Settings::load().expect("defaults must load");
+        let settings = Settings::load_from_env().expect("defaults must load");
         assert!(settings.trusted_proxy_list().is_empty());
         assert!(settings.registration_enabled);
         assert_eq!(settings.throttle_global_per_min, 120);
@@ -653,7 +731,7 @@ mod tests {
                 with_overrides(&[("NODE_ENV", env)])
             };
             let _env = SavedEnv::set(&vars);
-            let settings = Settings::load().expect("env must load");
+            let settings = Settings::load_from_env().expect("env must load");
             assert_eq!(settings.session_cookie_name(), name, "env: {env}");
             assert_eq!(settings.is_production(), env == "production");
         }

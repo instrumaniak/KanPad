@@ -12,9 +12,9 @@
 --   * No FK change (order irrelevant; FKs survive CONVERT untouched).
 --   * No Nest `session` convert: staging migrated from the baseline has no
 --     Nest table (unconditional ALTER would fail fail-fast); abandoned at
---     cutover. `tower_sessions.session` is created utf8mb4 by the baseline
---     already, so it is NOT converted here (store-owned — see baseline
---     deviation 11).
+--     cutover. The store-owned `sessions` table is created utf8mb4 by the
+--     baseline already, so it is NOT converted here (store-owned — see
+--     baseline deviation 11).
 --   * `CONVERT TO` (rewrites data) — never bare `MODIFY` (relabels bytes).
 --     On an already-utf8mb4 database this is a rewrite no-op; the real
 --     convert happens only against a latin1 database (proven via the

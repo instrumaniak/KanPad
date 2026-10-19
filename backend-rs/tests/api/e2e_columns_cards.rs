@@ -29,125 +29,18 @@
 //! Single `#[sqlx::test]` setup on purpose: all scenarios run sequentially in
 //! one test with distinct emails (mirrors T23/T24 suites). Every mutation is
 //! followed by a DB re-read (second GET or direct `SELECT` — never the echo
-//! alone). NO session wipe: `tower_sessions.session` is server-global.
+//! alone). NO session wipe: `sessions` is per-test-database, so there is
+//! nothing shared to wipe (see `helpers.rs` module docs).
 //!
-//! NOTE (touch scope): `helpers.rs` is owned by T50a (env-switch). The small
-//! `app_on_pool` / `send` / `cookie_jar` helpers below are duplicated
-//! minimally in-file per the T50b brief; if T50a lands a shared black-box
-//! client, this file should import it and delete the copies.
+//! Request plumbing comes from `super::helpers` — do not re-declare it here.
 
-use axum::{
-    body::{to_bytes, Body},
-    http::{header, HeaderMap, Request, StatusCode},
-    Router,
+use super::helpers::{
+    app_on_pool, assert_problem, authed_request, json_body, json_of, register, send,
 };
-use backend_rs::{config::Settings, create_app, state::AppState};
+use axum::http::{header, StatusCode};
 use serde_json::Value;
 use sqlx::MySqlPool;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
 
-const PROBLEM_JSON: &str = "application/problem+json";
-
-/// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
-/// `create_app` never spawns one). A FRESH app per request keeps each
-/// governor bucket at burst capacity (see `lib.rs`: in-process `oneshot`
-/// probes without `ConnectInfo` share one fallback bucket per app).
-fn app_on_pool(pool: &MySqlPool) -> Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn json_body(value: &Value) -> String {
-    value.to_string()
-}
-
-fn authed_request(
-    method: &str,
-    path: &str,
-    cookie: Option<&str>,
-    body: Option<String>,
-) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(path);
-    if let Some(jar) = cookie {
-        builder = builder.header(header::COOKIE, jar);
-    }
-    if let Some(payload) = body {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-        builder.body(Body::from(payload)).expect("request builds")
-    } else {
-        builder.body(Body::empty()).expect("request builds")
-    }
-}
-
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.oneshot(request).await.expect("e2e oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    (status, headers, bytes.to_vec())
-}
-
-fn json_of(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).expect("response is JSON")
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &str) {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .expect("error must set Content-Type")
-        .to_str()
-        .expect("Content-Type is ASCII");
-    assert_eq!(content_type, PROBLEM_JSON, "status: {status}");
-    assert_eq!(
-        body["type"],
-        format!("https://kanpad.dev/problems/{slug}"),
-        "status: {status}"
-    );
-    assert_eq!(body["status"], status.as_u16());
-}
-
-async fn register(app: Router, email: &str) -> (String, i64) {
-    let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
-    let (status, headers, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/auth/register",
-            None,
-            Some(json_body(&payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "register {email}: {body}");
-    assert!(body.get("message").is_none(), "no message key: {body}");
-    let jar = cookie_jar(&headers);
-    assert!(!jar.is_empty(), "register sets a session cookie");
-    let id = body["data"]["id"].as_i64().expect("register returns id");
-    (jar, id)
-}
-
-/// Column order re-read: card ids in `position ASC` (DB truth, never echo).
 async fn column_card_ids(pool: &MySqlPool, column_id: i64) -> Vec<i64> {
     sqlx::query_scalar("SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC")
         .bind(column_id)
@@ -225,7 +118,13 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
             StatusCode::UNAUTHORIZED,
             "{method} {path}: {failure}"
         );
-        assert_problem(status, &headers, &failure, "unauthorized");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "unauthorized",
+            "Anonymous access is 401 on every columns/cards route…",
+        );
     }
 
     // 1. Register owner + intruder; owner creates project + board (3 default
@@ -443,7 +342,13 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
             StatusCode::NOT_FOUND,
             "{method} verb path: {failure}"
         );
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "Sort (Rust noun shape): seed cards with scrambled…",
+        );
     }
     // Clean the sort seeds so the fuzz below starts from a known set.
     sqlx::query("DELETE FROM `cards` WHERE `column_id` = ?")
@@ -754,7 +659,13 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "verb path: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "not-found",
+        "move-cards (Nest move-all slice, Rust noun shape): seed…",
+    );
 
     // 10. Delete card → 204; SELECT COUNT=0 + second list GET confirm.
     //     Delete column → 204; positions re-read dense via second GET.
@@ -892,7 +803,13 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
             send(app(), authed_request(method, &path, Some(&owner_jar), body)).await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "Ownership: intruder board/column/card",
+        );
     }
     for path in [
         "/api/v1/columns/abc/cards?page=1&limit=50",
@@ -902,7 +819,13 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
             send(app(), authed_request("GET", path, Some(&owner_jar), None)).await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "garbage {path}: {failure}");
-        assert_problem(status, &headers, &failure, "invalid-path");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "invalid-path",
+            "Ownership: intruder board/column/card",
+        );
     }
 
     // 12. Sequential fuzz: 500 random moves over the two stage columns with

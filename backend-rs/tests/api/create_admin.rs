@@ -2,9 +2,10 @@
 //!
 //! Single `#[sqlx::test]` setup on purpose: all scenarios run sequentially
 //! inside one test against one isolated pool (fresh migrated DB, so no admin
-//! row exists at start), with distinct emails per scenario. The
-//! `tower_sessions.session` store table is server-global — this suite never
-//! touches it (no jars here, no wipe).
+//! row exists at start), with distinct emails per scenario. The `sessions`
+//! store table lives in THIS test's own database (the store follows the
+//! pool's database — see `AppState::with_pool`) — this suite never touches
+//! it (no jars here, no wipe).
 //!
 //! Covered per `50-tasks.md` T12 AC + `10-architecture.md` create-admin CLI:
 //! * creates admin with role `admin`; DB re-read finds the row (+ Argon2id

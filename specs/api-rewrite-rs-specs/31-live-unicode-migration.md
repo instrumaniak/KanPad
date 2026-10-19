@@ -71,7 +71,7 @@ Small DB (KBs) — no `pt-online-schema-change` needed. Use `CONVERT TO`
 -- No Nest `session` convert: staging migrated from the baseline has no Nest table (unconditional ALTER would fail fail-fast); the table is abandoned at cutover.
 ALTER TABLE `boards` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci, ROW_FORMAT=DYNAMIC;
 -- ... repeat per app table (order irrelevant, no FK change).
--- `tower_sessions.session` is created utf8mb4 by the baseline already.
+-- `sessions` (in the app DB) is created utf8mb4 by the baseline already.
 ```
 
 Owned by new task `T02b` (see `50-tasks.md` Phase 6). Staging proves it on a

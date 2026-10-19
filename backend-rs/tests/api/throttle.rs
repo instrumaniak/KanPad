@@ -12,15 +12,15 @@
 use std::net::SocketAddr;
 
 use axum::{
-    body::{to_bytes, Body},
+    body::Body,
     extract::ConnectInfo,
     http::{header, HeaderMap, Request, StatusCode},
 };
 use backend_rs::{build_state, config::Settings, create_app};
 use serde_json::Value;
-use tower::ServiceExt;
 
-const PROBLEMS: &str = "https://kanpad.dev/problems";
+use super::helpers::{send_ref, PROBLEM_BASE};
+
 /// Unroutable DB port (refused fast): `/ready` deterministically 503s, and no
 /// probe below can accidentally pass via a live database.
 const BROKEN_DB_URL: &str = "mysql://kanpad:invalid@127.0.0.1:1/kanpad?charset=utf8mb4";
@@ -87,20 +87,6 @@ fn logout_request(peer: &str) -> Request<Body> {
     )
 }
 
-async fn send(app: &axum::Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app
-        .clone()
-        .oneshot(request)
-        .await
-        .expect("oneshot must answer");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body must read");
-    (status, headers, body.to_vec())
-}
-
 /// Shape proof for every 429: problem+json `Content-Type`, exact `type` URI,
 /// numeric `status`, and a non-empty `Retry-After`.
 fn assert_rate_limited(status: StatusCode, headers: &HeaderMap, raw: &[u8]) {
@@ -118,7 +104,7 @@ fn assert_rate_limited(status: StatusCode, headers: &HeaderMap, raw: &[u8]) {
         .expect("Retry-After must be visible ASCII");
     assert!(!retry_after.is_empty(), "Retry-After must not be empty");
     let body: Value = serde_json::from_slice(raw).expect("429 body must be JSON");
-    assert_eq!(body["type"], format!("{PROBLEMS}/rate-limited"));
+    assert_eq!(body["type"], format!("{PROBLEM_BASE}/rate-limited"));
     assert_eq!(body["status"], 429);
     assert!(body["instance"].is_string(), "instance must be set: {body}");
     // Secure-headers + request-id layers are outermost, so even the governor
@@ -137,10 +123,10 @@ fn assert_rate_limited(status: StatusCode, headers: &HeaderMap, raw: &[u8]) {
 async fn global_limit_trips_429_problem_json_with_retry_after() {
     let app = throttle_app(3, 1000, "");
     for _ in 0..3 {
-        let (status, _, _) = send(&app, me_request("10.30.0.1")).await;
+        let (status, _, _) = send_ref(&app, me_request("10.30.0.1")).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
-    let (status, headers, raw) = send(&app, me_request("10.30.0.1")).await;
+    let (status, headers, raw) = send_ref(&app, me_request("10.30.0.1")).await;
     assert_rate_limited(status, &headers, &raw);
 }
 
@@ -150,10 +136,10 @@ async fn health_and_ready_exempt_under_flood() {
     // Exhaust the global bucket for this peer (3x401 then 429 proves the
     // flood actually counted).
     for _ in 0..3 {
-        let (status, _, _) = send(&app, me_request("10.30.0.2")).await;
+        let (status, _, _) = send_ref(&app, me_request("10.30.0.2")).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
-    let (status, _, _) = send(&app, me_request("10.30.0.2")).await;
+    let (status, _, _) = send_ref(&app, me_request("10.30.0.2")).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 
     // Same flood, same peer: liveness never throttles.
@@ -163,7 +149,7 @@ async fn health_and_ready_exempt_under_flood() {
             .expect("test request must build"),
         "10.30.0.2",
     );
-    let (status, _, raw) = send(&app, health).await;
+    let (status, _, raw) = send_ref(&app, health).await;
     assert_eq!(status, StatusCode::OK);
     let body: Value = serde_json::from_slice(&raw).expect("health must be JSON");
     assert_eq!(body, serde_json::json!({"status": "ok"}));
@@ -175,7 +161,7 @@ async fn health_and_ready_exempt_under_flood() {
             .expect("test request must build"),
         "10.30.0.2",
     );
-    let (status, headers, _) = send(&app, ready).await;
+    let (status, headers, _) = send_ref(&app, ready).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(
         !headers.contains_key(header::RETRY_AFTER) || status != StatusCode::TOO_MANY_REQUESTS,
@@ -187,14 +173,14 @@ async fn health_and_ready_exempt_under_flood() {
 async fn sixth_auth_login_in_window_is_429() {
     let app = throttle_app(1000, 5, "");
     for _ in 0..5 {
-        let (status, _, _) = send(&app, login_request("10.30.0.3", None)).await;
+        let (status, _, _) = send_ref(&app, login_request("10.30.0.3", None)).await;
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
             "first 5 logins must pass the auth limiter"
         );
     }
-    let (status, headers, raw) = send(&app, login_request("10.30.0.3", None)).await;
+    let (status, headers, raw) = send_ref(&app, login_request("10.30.0.3", None)).await;
     assert_rate_limited(status, &headers, &raw);
 }
 
@@ -205,14 +191,14 @@ async fn spoofed_xff_from_untrusted_peer_does_not_reset_bucket() {
     // the bucket stays keyed by peer IP, so the 6th login still 429s.
     for i in 0..5 {
         let xff = Some(format!("198.51.100.{}", i + 1));
-        let (status, _, _) = send(&app, login_request("10.30.0.5", xff)).await;
+        let (status, _, _) = send_ref(&app, login_request("10.30.0.5", xff)).await;
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
             "spoofed XFF must not consume a fresh bucket"
         );
     }
-    let (status, headers, raw) = send(
+    let (status, headers, raw) = send_ref(
         &app,
         login_request("10.30.0.5", Some("198.51.100.99".to_string())),
     )
@@ -227,7 +213,7 @@ async fn trusted_peer_honors_xff_as_client_ip() {
     // so 6 logins with rotating XFF never 429.
     for i in 0..6 {
         let xff = Some(format!("203.0.113.{}", i + 1));
-        let (status, _, _) = send(&app, login_request("10.30.0.6", xff)).await;
+        let (status, _, _) = send_ref(&app, login_request("10.30.0.6", xff)).await;
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
@@ -242,22 +228,22 @@ async fn logout_and_me_exempt_from_auth_limiter() {
     // Six anonymous logouts: never 429 (logout is unthrottled by the auth
     // limiter by design — logging out must never lock users out).
     for _ in 0..6 {
-        let (status, _, _) = send(&app, logout_request("10.30.0.7")).await;
+        let (status, _, _) = send_ref(&app, logout_request("10.30.0.7")).await;
         assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
     }
     // The auth bucket is untouched by those logouts: a login still passes.
-    let (status, _, _) = send(&app, login_request("10.30.0.7", None)).await;
+    let (status, _, _) = send_ref(&app, login_request("10.30.0.7", None)).await;
     assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
 
     // And back the other way: an exhausted auth bucket still lets logout
     // through (same peer already spent 0 auth quota above, so spend it now).
     for _ in 0..5 {
-        let (status, _, _) = send(&app, login_request("10.30.0.8", None)).await;
+        let (status, _, _) = send_ref(&app, login_request("10.30.0.8", None)).await;
         assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
     }
-    let (status, _, _) = send(&app, login_request("10.30.0.8", None)).await;
+    let (status, _, _) = send_ref(&app, login_request("10.30.0.8", None)).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    let (status, _, _) = send(&app, logout_request("10.30.0.8")).await;
+    let (status, _, _) = send_ref(&app, logout_request("10.30.0.8")).await;
     assert_ne!(
         status,
         StatusCode::TOO_MANY_REQUESTS,

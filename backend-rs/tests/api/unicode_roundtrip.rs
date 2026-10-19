@@ -14,103 +14,19 @@
 //! Single `#[sqlx::test]` setup (mirrors T21a): one isolated per-test DB,
 //! migrations applied from `./migrations` (0001 + 0002).
 //!
-//! NO session wipe here: `tower_sessions.session` is server-global. This
-//! suite holds only its own jar, so concurrent suites are unaffected.
+//! NO session wipe here: the `sessions` store table lives in THIS test's own
+//! database (the store follows the pool's database — see
+//! `AppState::with_pool`), so no other suite can reach it. Never issue a
+//! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 
-use axum::{
-    body::{to_bytes, Body},
-    http::{header, HeaderMap, Request, StatusCode},
-    Router,
-};
-use backend_rs::{config::Settings, create_app, state::AppState};
-use serde_json::Value;
+use super::helpers::{app_on_pool, authed_request, json_body, json_of, register, send};
+use axum::http::StatusCode;
 use sqlx::MySqlPool;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
 
 /// Gate string: Bengali (BMP, 3-byte) + rocket emoji (astral, 4-byte) +
 /// Gothic letter hwair (astral, 4-byte). Any latin1 link in the chain
 /// corrupts at least one of these.
 const GATE: &str = "কানপ্যাড 🚀 𐍈";
-
-/// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
-/// `create_app` never spawns one).
-fn app_on_pool(pool: &MySqlPool) -> Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn json_body(value: &Value) -> String {
-    value.to_string()
-}
-
-fn authed_request(
-    method: &str,
-    path: &str,
-    cookie: Option<&str>,
-    body: Option<String>,
-) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(path);
-    if let Some(jar) = cookie {
-        builder = builder.header(header::COOKIE, jar);
-    }
-    if let Some(payload) = body {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-        builder.body(Body::from(payload)).expect("request builds")
-    } else {
-        builder.body(Body::empty()).expect("request builds")
-    }
-}
-
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.oneshot(request).await.expect("unicode oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    (status, headers, bytes.to_vec())
-}
-
-fn json_of(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).expect("response is JSON")
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-async fn register(app: Router, email: &str) -> String {
-    let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
-    let (status, headers, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/auth/register",
-            None,
-            Some(json_body(&payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "register {email}: {body}");
-    let jar = cookie_jar(&headers);
-    assert!(!jar.is_empty(), "register sets a session cookie");
-    jar
-}
 
 #[sqlx::test(migrations = "./migrations")]
 async fn unicode_emoji_gate_roundtrip(pool: MySqlPool) {
@@ -125,7 +41,7 @@ async fn unicode_emoji_gate_roundtrip(pool: MySqlPool) {
     assert_eq!(client_charset, "utf8mb4", "connection must speak utf8mb4");
 
     // 1. Authenticate (register mints user + live session jar).
-    let jar = register(app(), "unicode-gate@example.com").await;
+    let (jar, _) = register(app(), "unicode-gate@example.com").await;
 
     // 2. `boards.name` round-trip via POST + detail GET + direct SELECT.
     let (status, _, bytes) = send(

@@ -1,11 +1,14 @@
 //! Black-box e2e (rest slice): labels, checklists + checklist items, notes,
-//! tags, and the card-labels M2M — driven over real HTTP against
-//! `127.0.0.1:3001` (T50c).
+//! tags, and the card-labels M2M — driven over real HTTP against the Rust
+//! server (T50c).
 //!
 //! Unlike the in-process suites (which drive the `Router` via `oneshot`),
-//! this suite binds the real app with `axum::serve` on `:3001` and speaks
-//! HTTP/1.1 over TCP, so status lines, headers (`Location`, `Set-Cookie`,
-//! `served-by`, `Content-Type`), and cookie jars are asserted on the wire.
+//! this suite binds the real app with `axum::serve` on an OS-ASSIGNED
+//! (ephemeral) loopback port and speaks HTTP/1.1 over TCP, so status lines,
+//! headers (`Location`, `Set-Cookie`, `served-by`, `Content-Type`), and
+//! cookie jars are asserted on the wire. The ephemeral port is what lets
+//! this suite and `e2e_auth_projects_boards` run in PARALLEL in the same
+//! test binary (see `super::wire::bind_blackbox`).
 //! It mirrors the Nest slices `backend/test/labels.e2e-spec.ts` (absent —
 //! labels have no Nest e2e file; covered here from the Rust contract) and
 //! `backend/test/checklists.e2e-spec.ts` (CRUD + items + authorization +
@@ -17,9 +20,10 @@
 //! Single `#[sqlx::test]` setup on purpose (mirrors T25/T26a): one flow,
 //! distinct users, sequential steps. Request budget stays well under the
 //! T30 governor defaults (120 global/min; exactly 2 auth-register hits
-//! against the 5/min auth bucket). NO session-store wipe here:
-//! `tower_sessions.session` is server-global — this suite holds only its
-//! own jars and asserts no absolute store counts.
+//! against the 5/min auth bucket). NO session-store wipe here: the
+//! `sessions` store table lives in THIS test's own database (the store
+//! follows the pool's database — see `AppState::with_pool`) — this suite
+//! holds only its own jars and asserts no absolute store counts.
 //!
 //! Contract: `specs/api-rewrite-rs-specs/20-api-contract.md` (§ labels,
 //! § checklists, § notes, § tags, § cards label-M2M) +
@@ -29,40 +33,40 @@
 //! Touch ownership: T50c owns this file; the `api.rs` mod-registration line
 //! is shared with T50a/T50b (expected union conflict on merge).
 
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use backend_rs::{config::Settings, create_app, state::AppState};
 use serde_json::Value;
 use sqlx::MySqlPool;
-use tower_sessions_sqlx_store::MySqlStore;
 
-const BASE: &str = "127.0.0.1:3001";
-const PROBLEM_JSON: &str = "application/problem+json";
+use super::helpers::assert_errors_nonempty;
+use super::wire::{assert_problem, cookie_jar, header_first, parse_response, WireResponse};
 
-/// Build the app on the `#[sqlx::test]` pool (in-process state, real TCP
-/// serve — `create_app` never spawns the session sweeper).
-fn app_on_pool(pool: &MySqlPool) -> axum::Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
+/// This suite's black-box listener address (`host:port`), set once by the
+/// single `#[sqlx::test]` below, right after the bind.
+///
+/// The port is OS-assigned (ephemeral) — see
+/// [`super::wire::bind_blackbox`] — so this suite and
+/// `e2e_auth_projects_boards` can run in PARALLEL in the same test binary
+/// without colliding on a fixed port, and a dev server already holding
+/// `:3001` cannot break the suite.
+///
+/// A `OnceLock` (rather than an extra parameter on every call) keeps the 50+
+/// `http(...)` call sites readable. It is safe because this file has exactly
+/// ONE test function, so there is no second writer to race with.
+static BASE: OnceLock<String> = OnceLock::new();
+
+/// The black-box address to drive. Set by the test before the first request.
+fn base() -> &'static str {
+    BASE.get()
+        .expect("the black-box base address is set right after the listener binds")
 }
 
 // ---------------------------------------------------------------------------
 // Minimal blocking HTTP/1.1 client (no new deps in T50c scope).
 // ---------------------------------------------------------------------------
-
-struct WireResponse {
-    status: u16,
-    headers: HashMap<String, Vec<String>>,
-    body: Vec<u8>,
-}
 
 fn blocking_roundtrip(
     method: &str,
@@ -70,7 +74,7 @@ fn blocking_roundtrip(
     cookie: Option<&str>,
     body: Option<&str>,
 ) -> WireResponse {
-    let mut stream = TcpStream::connect(BASE).expect("connect :3001");
+    let mut stream = TcpStream::connect(base()).expect("connect to the black-box listener");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .expect("read timeout sets");
@@ -78,8 +82,10 @@ fn blocking_roundtrip(
         .set_write_timeout(Some(Duration::from_secs(10)))
         .expect("write timeout sets");
     let payload = body.unwrap_or("");
-    let mut request =
-        format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:3001\r\nConnection: close\r\n");
+    let mut request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
+        base()
+    );
     if let Some(jar) = cookie {
         request.push_str(&format!("Cookie: {jar}\r\n"));
     }
@@ -94,68 +100,7 @@ fn blocking_roundtrip(
         .expect("request writes");
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).expect("response reads");
-    parse_response(&raw)
-}
-
-fn parse_response(raw: &[u8]) -> WireResponse {
-    let sep = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .expect("response has a header terminator");
-    let (head, rest) = raw.split_at(sep);
-    let body_raw = &rest[4..];
-    let head = String::from_utf8_lossy(head);
-    let mut lines = head.lines();
-    let status_line = lines.next().expect("response has a status line");
-    let status: u16 = status_line
-        .split_whitespace()
-        .nth(1)
-        .expect("status line has a code")
-        .parse()
-        .expect("status code parses");
-    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
-    for line in lines {
-        if let Some((name, value)) = line.split_once(':') {
-            headers
-                .entry(name.trim().to_ascii_lowercase())
-                .or_default()
-                .push(value.trim().to_string());
-        }
-    }
-    let chunked = headers.get("transfer-encoding").is_some_and(|values| {
-        values
-            .iter()
-            .any(|v| v.to_ascii_lowercase().contains("chunked"))
-    });
-    let body = if chunked {
-        dechunk(body_raw)
-    } else {
-        body_raw.to_vec()
-    };
-    WireResponse {
-        status,
-        headers,
-        body,
-    }
-}
-
-fn dechunk(mut input: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let eol = input
-            .windows(2)
-            .position(|w| w == b"\r\n")
-            .expect("chunk has a size line");
-        let size_hex = std::str::from_utf8(&input[..eol]).expect("chunk size is ASCII");
-        let size = usize::from_str_radix(size_hex.trim(), 16).expect("chunk size parses");
-        input = &input[eol + 2..];
-        if size == 0 {
-            break;
-        }
-        out.extend_from_slice(&input[..size]);
-        input = &input[size + 2..];
-    }
-    out
+    parse_response(&raw, method, path)
 }
 
 async fn http(method: &str, path: &str, cookie: Option<&str>, body: Option<Value>) -> WireResponse {
@@ -170,55 +115,7 @@ async fn http(method: &str, path: &str, cookie: Option<&str>, body: Option<Value
     .expect("blocking HTTP join")
 }
 
-fn json_of(body: &[u8]) -> Value {
-    assert!(!body.is_empty(), "expected a JSON body, got empty");
-    serde_json::from_slice(body).expect("response is JSON")
-}
-
-fn header_first(headers: &HashMap<String, Vec<String>>, name: &str) -> Option<String> {
-    headers.get(name).and_then(|v| v.first()).cloned()
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HashMap<String, Vec<String>>) -> String {
-    headers
-        .get("set-cookie")
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn assert_problem(response: &WireResponse, body: &Value, slug: &str, what: &str) {
-    let content_type =
-        header_first(&response.headers, "content-type").expect("error must set Content-Type");
-    assert_eq!(
-        content_type, PROBLEM_JSON,
-        "{what}: status {}",
-        response.status
-    );
-    assert_eq!(
-        body["type"],
-        format!("https://kanpad.dev/problems/{slug}"),
-        "{what}: status {}",
-        response.status
-    );
-    assert_eq!(body["status"], response.status, "{what}");
-}
-
-fn assert_errors_nonempty(body: &Value, what: &str) {
-    assert!(
-        body["errors"]
-            .as_array()
-            .is_some_and(|errors| !errors.is_empty()),
-        "{what} must carry errors[]: {body}"
-    );
-}
-
-async fn register(jar_holder: &mut String, email: &str) -> i64 {
+async fn register_user(jar_holder: &mut String, email: &str) -> i64 {
     let response = http(
         "POST",
         "/api/v1/auth/register",
@@ -226,7 +123,7 @@ async fn register(jar_holder: &mut String, email: &str) -> i64 {
         Some(serde_json::json!({"email": email, "password": "Str0ng!pass"})),
     )
     .await;
-    let body = json_of(&response.body);
+    let body = response.json("POST /api/v1/auth/register");
     assert_eq!(response.status, 201, "register {email}: {body}");
     let jar = cookie_jar(&response.headers);
     assert!(!jar.is_empty(), "register sets a session cookie");
@@ -244,13 +141,16 @@ async fn label_count(pool: &MySqlPool, user_id: i64) -> i64 {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn e2e_rest_full_flow(pool: MySqlPool) {
-    // 0. Serve the real app on :3001 (black-box: real TCP + HTTP wire).
-    let listener = tokio::net::TcpListener::bind(BASE)
-        .await
-        .expect("bind :3001 for black-box e2e");
+    // 0. Serve the real app on an OS-assigned loopback port (black-box:
+    //    real TCP + HTTP wire). The port is ephemeral so this suite and
+    //    `e2e_auth_projects_boards` can run in parallel in the same test
+    //    binary without an `AddrInUse` clash.
+    let (listener, addr) = super::wire::bind_blackbox().await;
+    BASE.set(addr.to_string())
+        .expect("the black-box base address is set once per process");
     let server_pool = pool.clone();
     let server = tokio::spawn(async move {
-        axum::serve(listener, app_on_pool(&server_pool))
+        axum::serve(listener, super::helpers::app_on_pool(&server_pool))
             .await
             .expect("e2e server serves");
     });
@@ -265,9 +165,12 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         tokio::time::sleep(Duration::from_millis(100)).await;
         health = http("GET", "/health", None, None).await;
     }
-    assert_eq!(health.status, 200, "GET /health is 200 on :3001");
     assert_eq!(
-        json_of(&health.body),
+        health.status, 200,
+        "GET /health is 200 on the black-box port"
+    );
+    assert_eq!(
+        health.json("health"),
         serde_json::json!({"status": "ok"}),
         "health body"
     );
@@ -280,8 +183,8 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
     // 1. Register owner + intruder (starts each at the 6 seeded defaults).
     let mut owner_jar = String::new();
     let mut intruder_jar = String::new();
-    let owner_id = register(&mut owner_jar, "e2e-rest-owner@example.com").await;
-    let intruder_id = register(&mut intruder_jar, "e2e-rest-intruder@example.com").await;
+    let owner_id = register_user(&mut owner_jar, "e2e-rest-owner@example.com").await;
+    let intruder_id = register_user(&mut intruder_jar, "e2e-rest-intruder@example.com").await;
     assert_eq!(label_count(&pool, owner_id).await, 6);
     assert_eq!(label_count(&pool, intruder_id).await, 6);
 
@@ -294,7 +197,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Rest Board"})),
     )
     .await;
-    let created_board = json_of(&response.body);
+    let created_board = response.json("POST /api/v1/boards");
     assert_eq!(response.status, 201, "create board: {created_board}");
     let col_id = created_board["data"]["columns"][0]["id"]
         .as_i64()
@@ -307,7 +210,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "Rest card", "column_id": col_id})),
     )
     .await;
-    let created_card = json_of(&response.body);
+    let created_card = response.json("POST /api/v1/cards");
     assert_eq!(response.status, 201, "create card: {created_card}");
     let card_id = created_card["data"]["id"].as_i64().expect("card id");
     let response = http(
@@ -317,7 +220,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Theirs"})),
     )
     .await;
-    let foreign_board = json_of(&response.body);
+    let foreign_board = response.json("POST /api/v1/boards");
     assert_eq!(response.status, 201, "foreign board: {foreign_board}");
     let foreign_col = foreign_board["data"]["columns"][0]["id"]
         .as_i64()
@@ -329,14 +232,14 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "Intruder card", "column_id": foreign_col})),
     )
     .await;
-    let intruder_card_body = json_of(&response.body);
+    let intruder_card_body = response.json("POST /api/v1/cards");
     assert_eq!(response.status, 201, "intruder card: {intruder_card_body}");
     let foreign_card = intruder_card_body["data"]["id"]
         .as_i64()
         .expect("foreign card id");
     // Intruder's first default label is the guaranteed-foreign label id.
     let response = http("GET", "/api/v1/labels", Some(&intruder_jar), None).await;
-    let intruder_labels = json_of(&response.body);
+    let intruder_labels = response.json("GET /api/v1/labels");
     assert_eq!(response.status, 200, "intruder labels: {intruder_labels}");
     let foreign_label = intruder_labels["data"][0]["id"]
         .as_i64()
@@ -351,7 +254,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "  Side  ", "color": "red"})),
     )
     .await;
-    let created = json_of(&response.body);
+    let created = response.json("POST /api/v1/labels");
     assert_eq!(response.status, 201, "create label: {created}");
     assert!(
         created.get("message").is_none(),
@@ -373,7 +276,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
     assert_eq!(stored, ("Side".to_string(), "red".to_string()));
     // Second GET proves persistence (not an echo).
     let response = http("GET", "/api/v1/labels", Some(&owner_jar), None).await;
-    let listed = json_of(&response.body);
+    let listed = response.json("GET /api/v1/labels");
     assert_eq!(response.status, 200, "list after create: {listed}");
     assert_eq!(listed["total"], 7, "6 defaults + Side");
     assert_eq!(
@@ -387,7 +290,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         response.status,
         200,
         "alias list: {}",
-        json_of(&response.body)
+        response.json("alias list")
     );
 
     // 3. Per-user uniqueness → 409 incl. case-variant (utf8mb4_unicode_ci);
@@ -403,7 +306,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         ),
     ] {
         let response = http("POST", "/api/v1/labels", Some(&owner_jar), Some(payload)).await;
-        let failure = json_of(&response.body);
+        let failure = response.json("POST /api/v1/labels");
         assert_eq!(response.status, 409, "{what}: {failure}");
         assert_problem(&response, &failure, "conflict", what);
     }
@@ -414,7 +317,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Bad", "color": "teal"})),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("POST /api/v1/labels");
     assert_eq!(response.status, 400, "bad color: {failure}");
     assert_problem(&response, &failure, "validation-error", "bad color");
     assert_errors_nonempty(&failure, "bad color");
@@ -429,7 +332,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "  Renamed  "})),
     )
     .await;
-    let updated = json_of(&response.body);
+    let updated = response.json("PATCH /api/v1/labels/{side_id}");
     assert_eq!(response.status, 200, "patch label: {updated}");
     assert_eq!(updated["data"]["name"], "Renamed");
     let renamed: String = sqlx::query_scalar("SELECT `name` FROM `labels` WHERE `id` = ?")
@@ -445,7 +348,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Urgent"})),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("PATCH /api/v1/labels/{side_id}");
     assert_eq!(response.status, 409, "patch onto owned name: {failure}");
     assert_problem(&response, &failure, "conflict", "patch dup");
     let response = http(
@@ -455,7 +358,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Hijack"})),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("PATCH /api/v1/labels/{foreign_label}");
     assert_eq!(response.status, 404, "foreign patch: {failure}");
     assert_problem(&response, &failure, "not-found", "foreign patch");
 
@@ -476,7 +379,11 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         .expect("deleted label re-reads gone");
     assert_eq!(gone, 0);
     let response = http("GET", "/api/v1/labels", Some(&owner_jar), None).await;
-    assert_eq!(json_of(&response.body)["total"], 6, "back to 6 defaults");
+    assert_eq!(
+        response.json("label total")["total"],
+        6,
+        "back to 6 defaults"
+    );
     let response = http(
         "DELETE",
         &format!("/api/v1/labels/{side_id}"),
@@ -484,7 +391,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("DELETE /api/v1/labels/{side_id}");
     assert_eq!(response.status, 404, "repeat delete: {failure}");
     assert_problem(&response, &failure, "not-found", "repeat delete");
 
@@ -497,7 +404,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "Acceptance"})),
     )
     .await;
-    let created = json_of(&response.body);
+    let created = response.json("POST /api/v1/cards/{card_id}/checklists");
     assert_eq!(response.status, 201, "create checklist: {created}");
     let checklist_id = created["data"]["id"].as_i64().expect("checklist id");
     assert_eq!(
@@ -517,7 +424,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let detail = json_of(&response.body);
+    let detail = response.json("GET /api/v1/checklists/{checklist_id}");
     assert_eq!(response.status, 200, "get checklist: {detail}");
     assert_eq!(detail["data"]["title"], "Acceptance");
     // Card-scoped list (small-N, unpaginated `data[]`).
@@ -528,7 +435,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let scoped = json_of(&response.body);
+    let scoped = response.json("GET /api/v1/cards/{card_id}/checklists");
     assert_eq!(response.status, 200, "card-scoped list: {scoped}");
     assert_eq!(scoped["data"].as_array().expect("data[]").len(), 1);
     // Foreign card → 404 on create; blank title → 400 errors[].
@@ -539,7 +446,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "Hijack"})),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("POST /api/v1/cards/{foreign_card}/checklists");
     assert_eq!(response.status, 404, "foreign card create: {failure}");
     assert_problem(&response, &failure, "not-found", "foreign card");
     let response = http(
@@ -549,7 +456,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "   "})),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("POST /api/v1/cards/{card_id}/checklists");
     assert_eq!(response.status, 400, "blank title: {failure}");
     assert_problem(&response, &failure, "validation-error", "blank title");
     assert_errors_nonempty(&failure, "blank title");
@@ -562,7 +469,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "Renamed list"})),
     )
     .await;
-    let patched = json_of(&response.body);
+    let patched = response.json("PATCH /api/v1/checklists/{checklist_id}");
     assert_eq!(response.status, 200, "patch checklist: {patched}");
     let stored: String = sqlx::query_scalar("SELECT `title` FROM `checklists` WHERE `id` = ?")
         .bind(checklist_id)
@@ -580,7 +487,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"text": "First item"})),
     )
     .await;
-    let item_one = json_of(&response.body);
+    let item_one = response.json("POST /api/v1/checklists/{checklist_id}/items");
     assert_eq!(response.status, 201, "create item: {item_one}");
     let item_id = item_one["data"]["id"].as_i64().expect("item id");
     assert_eq!(item_one["data"]["position"], 0);
@@ -592,7 +499,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"text": "Second item"})),
     )
     .await;
-    let item_two = json_of(&response.body);
+    let item_two = response.json("POST /api/v1/checklists/{checklist_id}/items");
     assert_eq!(response.status, 201, "second item: {item_two}");
     assert_eq!(item_two["data"]["position"], 1, "MAX+1 default");
     let second_id = item_two["data"]["id"].as_i64().expect("second item id");
@@ -603,7 +510,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"is_completed": true})),
     )
     .await;
-    let toggled = json_of(&response.body);
+    let toggled = response.json("PATCH /api/v1/checklist-items/{item_id}");
     assert_eq!(response.status, 200, "toggle item: {toggled}");
     assert_eq!(toggled["data"]["is_completed"], true);
     let completed: i64 =
@@ -621,7 +528,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"text": "Bad", "position": -1})),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("POST /api/v1/checklists/{checklist_id}/items");
     assert_eq!(response.status, 400, "negative position: {failure}");
     assert_problem(&response, &failure, "validation-error", "negative position");
     // Item DELETE → 204; checklist detail re-read shows one item left.
@@ -666,7 +573,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let card_detail = json_of(&response.body);
+    let card_detail = response.json("GET /api/v1/cards/{card_id}");
     assert_eq!(response.status, 200, "card detail: {card_detail}");
     assert_eq!(
         card_detail["data"]["checklists"],
@@ -685,7 +592,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Attachable", "color": "blue"})),
     )
     .await;
-    let attach_label = json_of(&response.body);
+    let attach_label = response.json("POST /api/v1/labels");
     assert_eq!(response.status, 201, "attach label: {attach_label}");
     let attach_id = attach_label["data"]["id"]
         .as_i64()
@@ -707,7 +614,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let attached = json_of(&response.body);
+    let attached = response.json("PUT /api/v1/cards/{card_id}/labels/{attach_id}");
     assert_eq!(response.status, 200, "PUT attach: {attached}");
     assert_eq!(link_count().await, 1);
     let response = http(
@@ -721,7 +628,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         response.status,
         200,
         "double PUT: {}",
-        json_of(&response.body)
+        response.json("double attach")
     );
     assert_eq!(link_count().await, 1, "double attach stays one row");
     let response = http(
@@ -731,7 +638,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "Second", "color": "green"})),
     )
     .await;
-    let second_label_body = json_of(&response.body);
+    let second_label_body = response.json("POST /api/v1/labels");
     assert_eq!(response.status, 201, "second label: {second_label_body}");
     let second_label = second_label_body["data"]["id"]
         .as_i64()
@@ -743,7 +650,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"label_id": second_label})),
     )
     .await;
-    let alias_attached = json_of(&response.body);
+    let alias_attached = response.json("POST /api/v1/cards/{card_id}/labels");
     assert_eq!(response.status, 200, "POST alias attach: {alias_attached}");
     let response = http(
         "POST",
@@ -752,7 +659,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"labelId": second_label})),
     )
     .await;
-    let legacy_attached = json_of(&response.body);
+    let legacy_attached = response.json("POST /api/v1/cards/{card_id}/labels");
     assert_eq!(
         response.status, 200,
         "legacy camelCase attach: {legacy_attached}"
@@ -773,7 +680,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let with_labels = json_of(&response.body);
+    let with_labels = response.json("GET /api/v1/cards/{card_id}");
     assert_eq!(response.status, 200, "card with labels: {with_labels}");
     assert_eq!(
         with_labels["data"]["labels"]
@@ -791,7 +698,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("PUT /api/v1/cards/{card_id}/labels/{foreign_label}");
     assert_eq!(response.status, 404, "foreign label attach: {failure}");
     assert_problem(&response, &failure, "not-found", "foreign label");
 
@@ -812,7 +719,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let detached = json_of(&response.body);
+    let detached = response.json("GET /api/v1/cards/{card_id}");
     assert_eq!(response.status, 200, "card after detach: {detached}");
     assert_eq!(
         detached["data"]["labels"]
@@ -829,7 +736,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("DELETE /api/v1/cards/{card_id}/labels/{attach_id}");
     assert_eq!(response.status, 404, "detach unassigned: {failure}");
     assert_problem(&response, &failure, "not-found", "detach unassigned");
 
@@ -843,7 +750,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "  Backend  "})),
     )
     .await;
-    let tag_created = json_of(&response.body);
+    let tag_created = response.json("POST /api/v1/tags");
     assert_eq!(response.status, 201, "create tag: {tag_created}");
     let tag_id = tag_created["data"]["id"].as_i64().expect("tag id");
     assert_eq!(
@@ -862,7 +769,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         (serde_json::json!({"name": "backend"}), "case-variant dup"),
     ] {
         let response = http("POST", "/api/v1/tags", Some(&owner_jar), Some(payload)).await;
-        let failure = json_of(&response.body);
+        let failure = response.json("POST /api/v1/tags");
         assert_eq!(response.status, 409, "{what}: {failure}");
         assert_problem(&response, &failure, "conflict", what);
     }
@@ -873,7 +780,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"name": "  Frontend  "})),
     )
     .await;
-    let tag_patched = json_of(&response.body);
+    let tag_patched = response.json("PATCH /api/v1/tags/{tag_id}");
     assert_eq!(response.status, 200, "patch tag: {tag_patched}");
     assert_eq!(tag_patched["data"]["name"], "Frontend");
     let renamed_tag: String = sqlx::query_scalar("SELECT `name` FROM `tags` WHERE `id` = ?")
@@ -883,7 +790,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         .expect("patched tag re-reads");
     assert_eq!(renamed_tag, "Frontend");
     let response = http("GET", "/api/v1/tags", Some(&owner_jar), None).await;
-    let tag_list = json_of(&response.body);
+    let tag_list = response.json("GET /api/v1/tags");
     assert_eq!(response.status, 200, "tag list: {tag_list}");
     assert!(
         tag_list["total"].as_i64().expect("total") >= 1,
@@ -906,7 +813,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         })),
     )
     .await;
-    let note_created = json_of(&response.body);
+    let note_created = response.json("POST /api/v1/notes");
     assert_eq!(response.status, 201, "create note: {note_created}");
     let note_id = note_created["data"]["id"].as_i64().expect("note id");
     assert_eq!(
@@ -927,7 +834,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let note_detail = json_of(&response.body);
+    let note_detail = response.json("GET /api/v1/notes/{note_id}");
     assert_eq!(response.status, 200, "note detail: {note_detail}");
     assert_eq!(
         note_detail["data"]["content"], "# Hello",
@@ -935,7 +842,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
     );
     // List is a Page with NO `content` key; filters all hit the created row.
     let response = http("GET", "/api/v1/notes", Some(&owner_jar), None).await;
-    let note_list = json_of(&response.body);
+    let note_list = response.json("GET /api/v1/notes");
     assert_eq!(response.status, 200, "note list: {note_list}");
     assert!(note_list["data"].is_array(), "Page data[]");
     for item in note_list["data"].as_array().expect("data[]") {
@@ -957,7 +864,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
             None,
         )
         .await;
-        let filtered = json_of(&response.body);
+        let filtered = response.json("GET /api/v1/notes{query}");
         assert_eq!(response.status, 200, "filter {query}: {filtered}");
         let ids: Vec<i64> = filtered["data"]
             .as_array()
@@ -983,7 +890,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         })),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("POST /api/v1/notes");
     assert_eq!(response.status, 400, "multi-FK: {failure}");
     assert_problem(&response, &failure, "validation-error", "multi-FK");
     let response = http(
@@ -997,7 +904,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         })),
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("POST /api/v1/notes");
     assert_eq!(response.status, 404, "unknown tag: {failure}");
     assert_problem(&response, &failure, "not-found", "unknown tag");
 
@@ -1010,7 +917,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         Some(serde_json::json!({"title": "Renamed note"})),
     )
     .await;
-    let note_patched = json_of(&response.body);
+    let note_patched = response.json("PATCH /api/v1/notes/{note_id}");
     assert_eq!(response.status, 200, "patch note: {note_patched}");
     let response = http(
         "GET",
@@ -1019,7 +926,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let reread = json_of(&response.body);
+    let reread = response.json("GET /api/v1/notes/{note_id}");
     assert_eq!(response.status, 200, "re-get after patch: {reread}");
     assert_eq!(reread["data"]["title"], "Renamed note");
     let response = http(
@@ -1038,7 +945,7 @@ async fn e2e_rest_full_flow(pool: MySqlPool) {
         None,
     )
     .await;
-    let failure = json_of(&response.body);
+    let failure = response.json("GET /api/v1/notes/{note_id}");
     assert_eq!(response.status, 404, "re-get deleted note: {failure}");
     assert_problem(&response, &failure, "not-found", "deleted note");
     let note_gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM `notes` WHERE `id` = ?")

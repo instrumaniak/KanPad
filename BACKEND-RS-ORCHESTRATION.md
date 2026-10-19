@@ -127,7 +127,7 @@
 - Timestamp convention for summaries: `YYYY-MM-DDTHH:MM:SS.ffffffZ`; `due_date: null` when unset; `checklist_progress` absent (not null) without checklists.
 
 ## Standing test rule (hardened by session fix — fail-closed)
-- `clear_sessions()` DELETED (compile error on reintroduction). No global DELETE/UPDATE-all/DROP on `tower_sessions`, ever. Store assertions via set difference only. Stale "coordinated wipe" comments remain in 6 suite files (comments only, no calls — verified by grep).
+- `clear_sessions()` DELETED (compile error on reintroduction). No global DELETE/UPDATE-all/DROP on the store's `sessions` table, ever. Store assertions via set difference only, or scope session SQL by `WHERE id = ?`.
 
 ## Findings from T22 (for T52/AGENTS.md)
 - sqlx `QueryBuilder::separated()` inserts separator between EVERY push: a `` `col` = `` prefix push must use `push_bind_unseparated`. In code comment.
@@ -217,7 +217,7 @@
 ## Resume 2026-10-13 Wave D complete (T50a merged — full 82/82 green)
 - T50a MERGED `67c83d2` (commit `73a6be9`; `api.rs` 3-way union resolved: kept all three e2e mod lines; `helpers.rs` env-switch `e2e_base_url`/`e2e_target_is_nest` auto-merged; branch deleted, worktree pruned). Executor evidence: fmt clean, clippy 0, e2e 1 passed x2, prepare-check 0, no `.sqlx/` change (runtime `query_*` only). Red proof: `E2E_TARGET=nest` run FAILED 101 at `assert_nest_error` (one assertion set cannot pass on both targets).
 - Wave-D merge-verify on `67c83d2`: fmt 0, clippy 0, prepare-check 0, `cargo test --test api -- --skip e2e_` **79/79**, then serial e2e (port rule — all three bind `:3001`, never run parallel): `e2e_auth_projects_boards` ok/4.26s, `e2e_columns_cards` ok/11.22s, `e2e_rest` ok/2.02s. **Total 82/82.**
-- PORT RULE (load-bearing, for T52/runbooks): the three T50* e2e suites each bind `:3001` via in-test `axum::serve`. Full-suite parallel `cargo test --test api` would clash — always verify as `--skip e2e_` + three serial filters. Same rule applies to any future in-test server bind.
+- PORT RULE (load-bearing, for T52/runbooks) — **RESOLVED 2026-10-19**: the three T50* e2e suites each bind `:3001` via in-test `axum::serve`. Full-suite parallel `cargo test --test api` would clash — always verify as `--skip e2e_` + three serial filters. Same rule applies to any future in-test server bind. *Resolution: the two suites that actually bind a listener (`e2e_rest`, `e2e_auth_projects_boards` — `e2e_columns_cards` is in-process) now bind an OS-assigned EPHEMERAL port via `wire::bind_blackbox()` and drive `listener.local_addr()`. Parallel full-suite runs are green; `E2E_BASE_URL` still pins a fixed port when an operator needs one.*
 - Wave D total: T40b + T50a/b/c merged. Progress ~35/42 ≈ **83%**.
 
 ## Resume 2026-10-13 Wave E dispatched (T41a-e frontend migration, parallel)
@@ -252,3 +252,102 @@
 - T51 cutover: defaults flipped to Rust :3001 (Vite proxy + compose), `docs/cutover.md` added; rollback remains one env var (`VITE_API_URL=http://localhost:3000`).
 - Verification after merge: backend fmt 0, clippy 0, prepare-check 0, non-e2e 79/79, 3 e2e 1/1 each = **82/82**.
 - Progress: 41/42 tasks merged — **≈98%** by task count. Remaining: T52 contract-amend process/doc amendments only (on-demand), no blocking feature work.
+
+## Resume 2026-10-19 (session store moved into the app database + test-harness dedup)
+
+- **Session store follows the pool's database.** `AppState::with_pool(settings, pool)` binds
+  `MySqlStore` to `pool.connect_options().get_database()` with `.with_table_name("sessions")`;
+  the separate `tower_sessions` schema is gone. The baseline creates a fail-fast
+  `CREATE TABLE sessions` in the app database (deviation 11 in `30-db-schema.md`).
+- **Consequence: sessions are per-database, not server-global.** Under `#[sqlx::test]` each
+  test gets its own database, so no suite can reach another's sessions and there is nothing
+  to wipe. The old "the store table is server-global, so no wipe here" rationale across the
+  suite module docs is stale — those notes were rewritten (this also retired the last
+  "T11 owns the one coordinated wipe" comments).
+- **Boot-panic fix:** `MySqlStore::with_schema_name` rejects identifiers stricter than
+  MySQL (leading digit, `-`, `.`, space). `Settings::validate` now screens the DB name via
+  `db::is_valid_db_name`, so a bad `DB_NAME` fails as a clean `ConfigError` instead of
+  panicking when the store is constructed.
+- **Test-harness dedup (Phases 0-3):** `tests/api/helpers.rs` is now the single owner of
+  the HTTP harness (`app_on_pool`, `send`, `json_of`, `authed_request`, `cookie_jar`,
+  `assert_problem` with a `what` label, `assert_errors_nonempty`, `assert_no_legacy_keys`,
+  `register`, `create_project`, `create_board`, `create_board_json`). All suites import
+  EXPLICITLY (`use super::helpers::{…}`) so a leftover local copy is a compile error
+  (E0255) rather than a silently-shadowed glob import. Dead `JarClient`/`login_as`/
+  `authed` scaffolding deleted. `tests/api` went 19,508 → ~18,200 LOC.
+- **Config-test fix:** `Settings::load_from_env()` (no dotenv) added; the config unit tests
+  use it so a developer's local `backend-rs/.env` cannot re-supply a key a test deliberately
+  unset (that made 5 `config::tests` fail whenever a local `.env` existed).
+- Verification: `cargo fmt --check` clean, `cargo clippy --workspace --all-targets -D warnings`
+  clean, `cargo test -p backend-rs --test api` **82/82** (serial; the parallel run has one
+  pre-existing `:3001` port conflict between the two black-box e2e suites).
+- **`:3001` port conflict RESOLVED (same day).** The two black-box suites that bind a
+  listener (`e2e_rest`, `e2e_auth_projects_boards`; `e2e_columns_cards` is in-process)
+  now bind an OS-assigned EPHEMERAL port via the new `wire::bind_blackbox()` and drive
+  `listener.local_addr()` — so cargo's parallel scheduler can no longer collide, and a
+  dev server already holding `:3001` cannot break the suite either. `E2E_BASE_URL` still
+  pins a fixed port when an operator needs one (the Nest-target workflow).
+  `helpers::e2e_base_url()` now returns `Option<String>` (`None` = "no pin").
+  Parallel full-suite runs are green: **82/82** x3 consecutive runs.
+
+## Resume 2026-10-19 (code review of the session-store + harness change — 5 findings fixed)
+
+A review of the uncommitted change above found 5 issues. All are fixed; the tree is
+still UNCOMMITTED (the user is preparing the commits by hand).
+
+- **F1 — the `helpers.rs` ownership header was NORMATIVE but the code violated it.**
+  The header declared a "complete forbidden-local set" (`send`, `json_body`, `json_of`,
+  `assert_errors_nonempty`, …) that FOUR suites still defined locally — and the E0255
+  guard never fired for them, because a suite can shadow a shared name forever simply by
+  NOT importing it (`auth_register.rs` aliased `json_of as parse_json`; `throttle.rs`
+  imported nothing from `super::helpers` and kept its own `send` + a duplicate
+  `PROBLEMS` const). Fixes:
+  - `helpers.rs` gained the shared variants the suites were re-implementing:
+    `send_ref` (borrowed router — `throttle.rs` drives ONE app across many flood
+    probes), `send_json` (pre-parsed body — `auth_register.rs`), and `cookie_jar_from`
+    (the cookie-jar core, now shared with the wire adapter). `send` delegates to
+    `send_ref`.
+  - `auth_register.rs`: local `send` deleted (imports `send_json`), local `json_body`
+    renamed `register_body` — no more name collision, and the `json_of as parse_json`
+    alias hack is gone.
+  - `throttle.rs`: local `send` deleted (imports `send_ref`), duplicate `PROBLEMS` const
+    deleted (imports `helpers::PROBLEM_BASE`). It is no longer a self-contained island.
+  - `e2e_rest.rs`: local `json_of` deleted (uses `WireResponse::json(what)`, the wire
+    counterpart), local `register` renamed `register_user` (it collided with
+    `helpers::register`; it stays per-suite because it is bound to that suite's
+    blocking client).
+  - `e2e_auth_projects_boards.rs`: its target-aware `assert_errors_nonempty` adapter is
+    legitimate — it is now documented as a SANCTIONED EXCEPTION, and the header grew a
+    "Sanctioned exceptions" section + a precise scope (IN-PROCESS suites).
+  - A second, broader audit (this time against the COMPLETE forbidden set, including
+    `test_settings` / `test_app` / `PROBLEM_BASE`) found THREE more suites that were
+    shadowing shared names: `health.rs` (local `test_settings` + `test_app`, byte-identical
+    to the shared ones) and `errors.rs` (local `test_settings`) — plus a duplicated
+    `PROBLEMS` const in `health.rs`, `errors.rs` and `validation.rs`, and inline
+    `"https://kanpad.dev/problems/…"` literals in `boards_list.rs`. All deleted; the suites
+    now import `test_settings` / `test_app` / `PROBLEM_BASE` from the shared harness.
+    The first review had MISSED these because its grep pattern omitted those three names.
+- **F2 — the in-place baseline edit is a sqlx checksum break.** `0001_baseline.sql` was
+  amended in place, and sqlx stores a SHA-384 of each migration's bytes in
+  `_sqlx_migrations` — a DB migrated with the pre-2026-10-19 baseline now fails with
+  `VersionMismatch` (app boot AND `migrate run`). The baseline is a squash (the cutover
+  always builds a FRESH DB), so an empty target is unaffected; but any pre-existing DB
+  must be dropped and re-migrated. Documented in
+  `docs/data-migration-live.md` §"Baseline amendment (2026-10-19)" and in
+  `30-db-schema.md` deviation 11. Never hand-edit `_sqlx_migrations`.
+- **F3 — `wire::header_first` now lowercases its name argument**, matching
+  `WireResponse::header` (all 6 call sites already passed lowercase, so no behavior
+  change — only the footgun is gone).
+- **F4 — the two `cookie_jar` implementations now share one core.**
+  `helpers::cookie_jar_from` is the core; `helpers::cookie_jar` (axum `HeaderMap`) and
+  `wire::cookie_jar` (raw wire headers) are per-transport adapters over it — the same
+  pattern as `assert_problem_fields`.
+- **F5 — `AppState::with_pool`'s panic is now contractual.** The `pub` constructor
+  panics if the pool's database name is not a valid identifier; the doc now has a
+  `# Panics` section explaining the precondition, why it is unreachable in production
+  (`Settings::validate` screens it) and why a silent fallback would be worse. The
+  `session_store` panic message now names the rule and the reachability.
+- AGENTS.md gained the matching rules (forbidden-set names + sanctioned exceptions,
+  "pick the shared variant", the cookie-jar core) and a lesson: **a normative header
+  that the code violates is worse than no header — audit the forbidden set against the
+  actual `fn` definitions, not against the import statements.**

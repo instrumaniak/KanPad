@@ -26,40 +26,30 @@
 --      (TypeORM emitted bare ENGINE=InnoDB, inheriting DB defaults).
 --   9. columns.position gains DEFAULT 0 (parity with cards/checklist_items).
 --  10. cards.due_date normalized to DATETIME(6) NULL (was precision-0 datetime).
---  11. Store-owned session schema tower_sessions.session replaces the Nest
---      public-schema session table (no rename, no row port, force re-login).
---      Table columns/PK are verbatim from tower-sessions-sqlx-store 0.15
---      MySqlStore::migrate() (keeps the store IF NOT EXISTS: documented
---      exception). IDX_session_expiry_date is a baseline addition for the
---      sweeper: the store migrate() creates no index (verified against the
---      0.15.0 crate source), so SHOW CREATE TABLE differs from a pure
---      migrate() run by exactly this index. The index is declared INLINE in
---      the CREATE TABLE (not a separate CREATE INDEX) so parallel
---      #[sqlx::test] setups don't race on this server-global table (1061).
+--  11. Store-owned session table `sessions` lives in the SAME database as the
+--      app tables (not a separate `tower_sessions` schema) for operational
+--      simplicity (single-schema backups/GRANTs). Columns/PK are verbatim
+--      from tower-sessions-sqlx-store 0.15 MySqlStore::migrate()
+--      (char(22)/blob/timestamp(6)); the sweeper index IDX_session_expiry_date
+--      is a baseline addition (the store migrate() creates no index). The store
+--      is configured via `.with_schema_name(<current DB>)` + `.with_table_name("sessions")`
+--      in src/state.rs. Fail-fast (no IF NOT EXISTS): the table is per-database now,
+--      so parallel #[sqlx::test] migrators operate on separate databases and do
+--      not race. Force re-login on cutover unchanged (new SESSION_SECRET + codec).
 --  12. sqlx journal is _sqlx_migrations (TypeORM journal abandoned).
 --  13. AUTO_INCREMENT=N table options stripped (nondeterministic checksums).
 
--- First statement: store-owned session schema.
--- `IF NOT EXISTS` (early-T52 amendment of T02-D3, 2026-10-11): the schema is
--- server-global, so parallel `#[sqlx::test]` migrator setups raced on it
--- (1007) and repeat setups failed. App tables below keep fail-fast (no
--- `IF NOT EXISTS`) — only this server-global statement is idempotent.
-CREATE SCHEMA IF NOT EXISTS tower_sessions;
-
--- Store-owned session table: column shape verbatim from
--- tower-sessions-sqlx-store 0.15 MySqlStore::migrate() (char(22)/blob/
--- timestamp(6), PK(id), no store-side index). The sweeper index below is a
--- baseline addition (see deviation 11): declared INLINE (not a separate
--- CREATE INDEX) so parallel `#[sqlx::test]` migrator setups stay race-free —
--- a standalone CREATE INDEX on this server-global table fails the loser with
--- 1061. `IF NOT EXISTS` likewise covers concurrent first-creates.
-CREATE TABLE IF NOT EXISTS `tower_sessions`.`session` (
+-- Store-owned session table (same database as app tables; see deviation 11).
+-- Columns/PK are verbatim from tower-sessions-sqlx-store 0.15 MySqlStore::migrate();
+-- the sweeper index IDX_session_expiry_date is a baseline addition. Fail-fast
+-- (no IF NOT EXISTS): per-database now, so no cross-process race.
+CREATE TABLE `sessions` (
   `id` CHAR(22) NOT NULL,
   `data` BLOB NOT NULL,
   `expiry_date` TIMESTAMP(6) NOT NULL,
   PRIMARY KEY (`id`),
   KEY `IDX_session_expiry_date` (`expiry_date`)
-);
+) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `users` (
   `id` INT NOT NULL AUTO_INCREMENT,

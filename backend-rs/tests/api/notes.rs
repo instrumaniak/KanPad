@@ -7,8 +7,10 @@
 //! creates project/board/card targets via the API, and seeds tags via SQL
 //! (tag routes land in T27b — no HTTP path exists yet).
 //!
-//! NO session wipe here: `tower_sessions.session` is server-global. This
-//! suite holds only its own jars, so concurrent suites are unaffected.
+//! NO session wipe here: the `sessions` store table lives in THIS test's own
+//! database (the store follows the pool's database — see
+//! `AppState::with_pool`), so no other suite can reach it. Never issue a
+//! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 //!
 //! Covered (red first: notes routes do not exist yet):
 //!
@@ -30,142 +32,14 @@
 //! update) + `21-api-standard-shapes.md` notes row (`tagIds→tag_ids`,
 //! `Page<NoteSummary>`, deleted `/boards/:boardId/notes`).
 
-use axum::{
-    body::{to_bytes, Body},
-    http::{header, HeaderMap, Request, StatusCode},
-    Router,
+use super::helpers::{
+    app_on_pool, assert_errors_nonempty, assert_problem, authed_request, create_board_json,
+    json_body, json_of, register, send,
 };
-use backend_rs::{config::Settings, create_app, state::AppState};
+use axum::http::{header, StatusCode};
+use axum::Router;
 use serde_json::Value;
 use sqlx::MySqlPool;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
-
-const PROBLEM_JSON: &str = "application/problem+json";
-
-/// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
-/// `create_app` never spawns one).
-fn app_on_pool(pool: &MySqlPool) -> Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn json_body(value: &Value) -> String {
-    value.to_string()
-}
-
-fn authed_request(
-    method: &str,
-    path: &str,
-    cookie: Option<&str>,
-    body: Option<String>,
-) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(path);
-    if let Some(jar) = cookie {
-        builder = builder.header(header::COOKIE, jar);
-    }
-    if let Some(payload) = body {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-        builder.body(Body::from(payload)).expect("request builds")
-    } else {
-        builder.body(Body::empty()).expect("request builds")
-    }
-}
-
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.oneshot(request).await.expect("notes oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    (status, headers, bytes.to_vec())
-}
-
-fn json_of(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).expect("response is JSON")
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &str) {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .expect("error must set Content-Type")
-        .to_str()
-        .expect("Content-Type is ASCII");
-    assert_eq!(content_type, PROBLEM_JSON, "status: {status}");
-    assert_eq!(
-        body["type"],
-        format!("https://kanpad.dev/problems/{slug}"),
-        "status: {status}"
-    );
-    assert_eq!(body["status"], status.as_u16());
-}
-
-fn assert_errors_nonempty(body: &Value, what: &str) {
-    assert!(
-        body["errors"]
-            .as_array()
-            .is_some_and(|errors| !errors.is_empty()),
-        "{what} must carry errors[]: {body}"
-    );
-}
-
-async fn register(app: Router, email: &str) -> (String, i64) {
-    let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
-    let (status, headers, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/auth/register",
-            None,
-            Some(json_body(&payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "register {email}: {body}");
-    let jar = cookie_jar(&headers);
-    assert!(!jar.is_empty(), "register sets a session cookie");
-    let id = body["data"]["id"].as_i64().expect("register returns id");
-    (jar, id)
-}
-
-async fn create_board(app: Router, jar: &str, name: &str) -> (i64, i64) {
-    let (status, _, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/boards",
-            Some(jar),
-            Some(json_body(&serde_json::json!({"name": name}))),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "create board: {body}");
-    let board_id = body["data"]["id"].as_i64().expect("board id");
-    let col_id = body["data"]["columns"][0]["id"]
-        .as_i64()
-        .expect("column id");
-    (board_id, col_id)
-}
 
 async fn create_tag(pool: &MySqlPool, user_id: i64, name: &str) -> i64 {
     let result = sqlx::query("INSERT INTO `tags` (`name`, `user_id`) VALUES (?, ?)")
@@ -175,6 +49,17 @@ async fn create_tag(pool: &MySqlPool, user_id: i64, name: &str) -> i64 {
         .await
         .expect("seed tag");
     i64::try_from(result.last_insert_id()).expect("tag id fits")
+}
+
+/// Board + its first default column (notes attach to both), from the create
+/// response. Notes-specific, so it stays local rather than in `helpers`.
+async fn create_board_with_column(app: Router, jar: &str, name: &str) -> (i64, i64) {
+    let body = create_board_json(app, jar, &serde_json::json!({"name": name})).await;
+    let board_id = body["data"]["id"].as_i64().expect("board id");
+    let col_id = body["data"]["columns"][0]["id"]
+        .as_i64()
+        .expect("column id");
+    (board_id, col_id)
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -206,7 +91,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
             StatusCode::UNAUTHORIZED,
             "{method} {path}: {failure}"
         );
-        assert_problem(status, &headers, &failure, "unauthorized");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "unauthorized",
+            "Anonymous access is 401 on every notes route (AuthSession…",
+        );
     }
 
     // 1. Register owner + intruder; owner creates project/board/card targets
@@ -230,7 +121,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         "create project: {project_body}"
     );
     let project_id = project_body["data"]["id"].as_i64().expect("project id");
-    let (board_id, col_id) = create_board(app(), &owner_jar, "Notes board").await;
+    let (board_id, col_id) = create_board_with_column(app(), &owner_jar, "Notes board").await;
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -246,7 +137,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     let card_body = json_of(&bytes);
     assert_eq!(status, StatusCode::CREATED, "create card: {card_body}");
     let card_id = card_body["data"]["id"].as_i64().expect("card id");
-    let (foreign_board_id, _) = create_board(app(), &intruder_jar, "Theirs").await;
+    let (foreign_board_id, _) = create_board_with_column(app(), &intruder_jar, "Theirs").await;
     // Intruder owns one note (for foreign-note 404s).
     let (status, _, bytes) = send(
         app(),
@@ -476,7 +367,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
             send(app(), authed_request("GET", uri, Some(&owner_jar), None)).await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "bad {uri}: {failure}");
-        assert_problem(status, &headers, &failure, "validation-error");
+        assert_problem(status, &headers, &failure, "validation-error", "List");
         assert_errors_nonempty(&failure, uri);
     }
 
@@ -536,14 +427,26 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "bad type: {failure}");
-    assert_problem(status, &headers, &failure, "validation-error");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "validation-error",
+        "Filter matrix: search/type/tag_id/board_id combos",
+    );
     assert_errors_nonempty(&failure, "bad type");
     for uri in ["/api/v1/notes?tag_id=abc", "/api/v1/notes?board_id=abc"] {
         let (status, headers, bytes) =
             send(app(), authed_request("GET", uri, Some(&owner_jar), None)).await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "garbage {uri}: {failure}");
-        assert_problem(status, &headers, &failure, "invalid-query");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "invalid-query",
+            "Filter matrix: search/type/tag_id/board_id combos",
+        );
     }
     let (status, headers, bytes) = send(
         app(),
@@ -552,7 +455,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "tag_id 0: {failure}");
-    assert_problem(status, &headers, &failure, "validation-error");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "validation-error",
+        "Filter matrix: search/type/tag_id/board_id combos",
+    );
 
     // 7. LIKE wildcards are escaped: a bare `%`/`_` matches only literal
     //    carriers, `'`/`\` neither break the query nor widen it.
@@ -590,7 +499,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "multi-FK: {failure}");
-    assert_problem(status, &headers, &failure, "validation-error");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "validation-error",
+        "Create validation: multiple FKs",
+    );
     assert_errors_nonempty(&failure, "multi-FK");
     for (payload, what) in [
         (
@@ -626,7 +541,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "Create validation: multiple FKs",
+        );
     }
     for (payload, what) in [
         (
@@ -658,7 +579,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "validation-error");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "validation-error",
+            "Create validation: multiple FKs",
+        );
         assert_errors_nonempty(&failure, what);
     }
     for (payload, what) in [
@@ -680,7 +607,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "invalid-json");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "invalid-json",
+            "Create validation: multiple FKs",
+        );
     }
     // Boundary: exactly 65_535 chars is accepted.
     let (status, _, bytes) = send(
@@ -830,7 +763,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
             StatusCode::NOT_FOUND
         };
         assert_eq!(status, expected, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, slug);
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            slug,
+            "PATCH scalars + tag replace",
+        );
     }
     // PATCH foreign/missing → 404 (never 403); garbage id → 400.
     for id in [foreign_note.to_string(), "999999".to_string()] {
@@ -846,7 +785,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "patch {id}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "PATCH scalars + tag replace",
+        );
     }
     let (status, headers, bytes) = send(
         app(),
@@ -860,7 +805,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "garbage id: {failure}");
-    assert_problem(status, &headers, &failure, "invalid-path");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "invalid-path",
+        "PATCH scalars + tag replace",
+    );
     // GET foreign/missing → 404 (never 403); garbage id → 400.
     for id in [foreign_note.to_string(), "999999".to_string()] {
         let (status, headers, bytes) = send(
@@ -875,7 +826,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "get {id}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "PATCH scalars + tag replace",
+        );
     }
     let (status, headers, bytes) = send(
         app(),
@@ -884,7 +841,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "garbage id: {failure}");
-    assert_problem(status, &headers, &failure, "invalid-path");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "invalid-path",
+        "PATCH scalars + tag replace",
+    );
 
     // 11. No `GET /boards/:boardId/notes` duplicate: the path 404s from the
     //     router (use `?board_id=` instead).
@@ -904,7 +867,13 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         StatusCode::NOT_FOUND,
         "deleted duplicate route: {failure}"
     );
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "not-found",
+        "No `GET /boards/:boardId/notes` duplicate: the path 404s…",
+    );
 
     // 12. DELETE → 204 empty body; re-GET 404s + `SELECT COUNT` = 0.
     let (status, headers, bytes) = send(
@@ -941,7 +910,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "re-get deleted: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(status, &headers, &failure, "not-found", "DELETE");
     let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM `notes` WHERE `id` = ?")
         .bind(boundary_id)
         .fetch_one(&pool)
@@ -961,7 +930,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "delete twice: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(status, &headers, &failure, "not-found", "DELETE");
     for id in [foreign_note.to_string(), "999999".to_string()] {
         let (status, headers, bytes) = send(
             app(),
@@ -975,7 +944,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "delete {id}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(status, &headers, &failure, "not-found", "DELETE");
     }
     let (status, headers, bytes) = send(
         app(),
@@ -984,7 +953,7 @@ async fn notes_crud_list_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "garbage id: {failure}");
-    assert_problem(status, &headers, &failure, "invalid-path");
+    assert_problem(status, &headers, &failure, "invalid-path", "DELETE");
 
     // NO TEARDOWN WIPE/DROP (see module docs): the shared store must survive
     // until every suite in this process is done.

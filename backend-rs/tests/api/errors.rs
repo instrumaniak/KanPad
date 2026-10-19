@@ -18,9 +18,7 @@ use axum::{
     Json, Router,
 };
 use backend_rs::{
-    build_state,
-    config::Settings,
-    create_app,
+    build_state, create_app,
     error::{capture_request_context, handle_timeout, AppError},
     extract::PaginationParams,
 };
@@ -30,21 +28,10 @@ use tower::ServiceBuilder;
 use tower::ServiceExt;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 
+use super::helpers::{test_settings, PROBLEM_BASE};
+
 /// Request-id header name (tower-http keeps its own copy private).
 const X_REQUEST_ID: header::HeaderName = header::HeaderName::from_static("x-request-id");
-
-const PROBLEMS: &str = "https://kanpad.dev/problems";
-
-fn test_settings() -> Settings {
-    Settings {
-        node_env: "test".to_string(),
-        hash_cost: 1,
-        port: 3001,
-        // T05 added Settings fields with `Default`; keep the T04 kernel probe
-        // on test defaults (compile-compat only, no behavior change).
-        ..Default::default()
-    }
-}
 
 /// Thin wrappers that route real axum rejections through [`AppError`],
 /// proving the `From` mappings over HTTP.
@@ -335,7 +322,7 @@ async fn pagination_page_zero_is_strict_400() {
 
     let (status, headers, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/validation-error"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/validation-error"));
     let errors = body["errors"].as_array().expect("errors[] must be set");
     assert!(
         errors.iter().any(|e| e["field"] == json!("page")),
@@ -359,7 +346,7 @@ async fn pagination_limit_over_max_is_strict_400_not_clamped() {
 
     let (status, _, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/validation-error"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/validation-error"));
     let errors = body["errors"].as_array().expect("errors[] must be set");
     assert!(
         errors.iter().any(|e| e["field"] == json!("limit")),
@@ -381,7 +368,7 @@ async fn pagination_non_integer_and_negative_are_400() {
             .unwrap();
         let (status, _, body) = read_problem(response).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "query: {query}");
-        assert_problem_shape(&body, 400, &format!("{PROBLEMS}/validation-error"));
+        assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/validation-error"));
         assert!(body["errors"].is_array(), "errors[] must be set: {body}");
     }
 }
@@ -401,7 +388,7 @@ async fn path_rejection_is_problem_json_with_request_id() {
 
     let (status, headers, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-path"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-path"));
     assert_eq!(request_id(&headers), "path-1");
     assert_eq!(body["instance"], json!("GET /t/items/abc#path-1"));
 }
@@ -420,7 +407,7 @@ async fn query_rejection_is_problem_json_with_request_id() {
 
     let (status, headers, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-query"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-query"));
     assert!(!request_id(&headers).is_empty());
 }
 
@@ -462,7 +449,7 @@ async fn malformed_json_is_400_problem() {
 
     let (status, _, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-json"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-json"));
 }
 
 #[tokio::test]
@@ -479,7 +466,7 @@ async fn missing_json_content_type_is_415_problem() {
 
     let (status, _, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    assert_problem_shape(&body, 415, &format!("{PROBLEMS}/invalid-json"));
+    assert_problem_shape(&body, 415, &format!("{PROBLEM_BASE}/invalid-json"));
 }
 
 #[tokio::test]
@@ -500,7 +487,7 @@ async fn oversized_body_is_400_not_413() {
 
     let (status, _, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-json"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-json"));
 }
 
 #[tokio::test]
@@ -518,7 +505,7 @@ async fn slow_route_times_out_with_503_and_retry_after() {
 
     let (status, headers, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_problem_shape(&body, 503, &format!("{PROBLEMS}/service-unavailable"));
+    assert_problem_shape(&body, 503, &format!("{PROBLEM_BASE}/service-unavailable"));
     assert!(
         headers.get(header::RETRY_AFTER).is_some(),
         "timeout must carry Retry-After"
@@ -540,7 +527,7 @@ async fn forced_db_error_renders_generic_500() {
 
     let (status, headers, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_problem_shape(&body, 500, &format!("{PROBLEMS}/internal"));
+    assert_problem_shape(&body, 500, &format!("{PROBLEM_BASE}/internal"));
     assert_eq!(body["detail"], json!("An unexpected error occurred."));
     let raw = serde_json::to_string(&body).unwrap();
     assert!(!raw.contains("sqlx"), "no driver text may leak: {raw}");
@@ -569,7 +556,7 @@ async fn mysql_dup_key_kind_maps_to_409_conflict_through_kernel() {
 
     let (status, headers, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::CONFLICT);
-    assert_problem_shape(&body, 409, &format!("{PROBLEMS}/conflict"));
+    assert_problem_shape(&body, 409, &format!("{PROBLEM_BASE}/conflict"));
     assert_eq!(body["instance"], json!("GET /t/db-dup#dup-1"));
     assert_eq!(request_id(&headers), "dup-1");
 }
@@ -600,7 +587,7 @@ async fn fail_kinds_map_status_and_type_uri() {
             StatusCode::from_u16(status_code).unwrap(),
             "kind: {kind}"
         );
-        assert_problem_shape(&body, status_code, &format!("{PROBLEMS}/{slug}"));
+        assert_problem_shape(&body, status_code, &format!("{PROBLEM_BASE}/{slug}"));
         if kind == "validation" {
             assert!(
                 body["errors"].is_array(),

@@ -6,8 +6,10 @@
 //! live cookie jars). Tags have NO lazy seed (unlike labels): a fresh user
 //! lists `total == 0`.
 //!
-//! NO session wipe here: `tower_sessions.session` is server-global. This
-//! suite holds only its own jars, so concurrent suites are no-ops for it.
+//! NO session wipe here: the `sessions` store table lives in THIS test's own
+//! database (the store follows the pool's database — see
+//! `AppState::with_pool`), so no other suite can reach it. Never issue a
+//! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 //!
 //! Covered (red first: the tags router is an empty stub):
 //! list `200 Page` (`data,page,limit,total`, `id ASC`);
@@ -37,122 +39,12 @@
 //! `UQ_tags_user_name UNIQUE(user_id,name)` + `note_tags(note_id,tag_id)`
 //! composite PK with `ON DELETE CASCADE` both sides.
 
-use axum::{
-    body::{to_bytes, Body},
-    http::{header, HeaderMap, Request, StatusCode},
-    Router,
+use super::helpers::{
+    app_on_pool, assert_errors_nonempty, assert_problem, authed_request, json_body, json_of,
+    register, send,
 };
-use backend_rs::{config::Settings, create_app, state::AppState};
-use serde_json::Value;
+use axum::http::{header, StatusCode};
 use sqlx::MySqlPool;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
-
-const PROBLEM_JSON: &str = "application/problem+json";
-
-/// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
-/// `create_app` never spawns one).
-fn app_on_pool(pool: &MySqlPool) -> Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn json_body(value: &Value) -> String {
-    value.to_string()
-}
-
-fn authed_request(
-    method: &str,
-    path: &str,
-    cookie: Option<&str>,
-    body: Option<String>,
-) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(path);
-    if let Some(jar) = cookie {
-        builder = builder.header(header::COOKIE, jar);
-    }
-    if let Some(payload) = body {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-        builder.body(Body::from(payload)).expect("request builds")
-    } else {
-        builder.body(Body::empty()).expect("request builds")
-    }
-}
-
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.oneshot(request).await.expect("tags oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    (status, headers, bytes.to_vec())
-}
-
-fn json_of(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).expect("response is JSON")
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &str) {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .expect("error must set Content-Type")
-        .to_str()
-        .expect("Content-Type is ASCII");
-    assert_eq!(content_type, PROBLEM_JSON, "status: {status}");
-    assert_eq!(
-        body["type"],
-        format!("https://kanpad.dev/problems/{slug}"),
-        "status: {status}"
-    );
-    assert_eq!(body["status"], status.as_u16());
-}
-
-fn assert_errors_nonempty(body: &Value, what: &str) {
-    assert!(
-        body["errors"]
-            .as_array()
-            .is_some_and(|errors| !errors.is_empty()),
-        "{what} must carry errors[]: {body}"
-    );
-}
-
-async fn register(app: Router, email: &str) -> (String, i64) {
-    let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
-    let (status, headers, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/auth/register",
-            None,
-            Some(json_body(&payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "register {email}: {body}");
-    let jar = cookie_jar(&headers);
-    assert!(!jar.is_empty(), "register sets a session cookie");
-    let id = body["data"]["id"].as_i64().expect("register returns id");
-    (jar, id)
-}
 
 async fn tag_count(pool: &MySqlPool, user_id: i64) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM `tags` WHERE `user_id` = ?")
@@ -188,7 +80,13 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
             StatusCode::UNAUTHORIZED,
             "{method} {path}: {failure}"
         );
-        assert_problem(status, &headers, &failure, "unauthorized");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "unauthorized",
+            "Anonymous access is 401 on every verb (AuthSession guard)",
+        );
     }
 
     // 1. Register owner + intruder: a fresh user owns zero tags (no lazy
@@ -312,7 +210,13 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "validation-error");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "validation-error",
+            "Validation: blank / overlong name / missing name /…",
+        );
         assert_errors_nonempty(&failure, what);
     }
     for (payload, what) in [
@@ -336,7 +240,13 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "invalid-json");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "invalid-json",
+            "Validation: blank / overlong name / missing name /…",
+        );
     }
     // Color is free-form (NOT the label enum): teal/hex/words all 201.
     for color in ["chartreuse", "#abc123", "RED"] {
@@ -442,7 +352,13 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::CONFLICT, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "conflict");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "conflict",
+            "Per-user uniqueness",
+        );
     }
     let work_rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM `tags` WHERE `user_id` = ? AND `name` = 'Work'")
@@ -498,7 +414,13 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "?{query}: {failure}");
-        assert_problem(status, &headers, &failure, "validation-error");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "validation-error",
+            "Strict pagination: slices + total stable",
+        );
         assert_errors_nonempty(&failure, query);
     }
     // Unknown query keys are ignored (serde default, Nest parity): still 200.
@@ -595,7 +517,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "validation-error");
+        assert_problem(status, &headers, &failure, "validation-error", "`PATCH");
         assert_errors_nonempty(&failure, what);
     }
     // Rename onto another owned name (incl. case-variant) → 409, row kept.
@@ -615,7 +537,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::CONFLICT, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "conflict");
+        assert_problem(status, &headers, &failure, "conflict", "`PATCH");
     }
     let kept: String = sqlx::query_scalar("SELECT `name` FROM `tags` WHERE `id` = ?")
         .bind(side_id)
@@ -657,7 +579,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(status, &headers, &failure, "not-found", "`PATCH");
     }
     let (status, headers, bytes) = send(
         app(),
@@ -671,7 +593,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "garbage id: {failure}");
-    assert_problem(status, &headers, &failure, "invalid-path");
+    assert_problem(status, &headers, &failure, "invalid-path", "`PATCH");
     // Failed hijack left the foreign row untouched (DB re-read).
     let foreign_name: String = sqlx::query_scalar("SELECT `name` FROM `tags` WHERE `id` = ?")
         .bind(intruder_work_id)
@@ -750,7 +672,13 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "Foreign or missing tag on note create",
+        );
     }
 
     // 11. `DELETE → 204` empty body; row gone on re-read, others survive.
@@ -805,7 +733,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "repeat delete: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(status, &headers, &failure, "not-found", "`DELETE");
     let (status, headers, bytes) = send(
         app(),
         authed_request(
@@ -818,7 +746,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "foreign delete: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(status, &headers, &failure, "not-found", "`DELETE");
     let foreign_survives: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM `tags` WHERE `id` = ?")
         .bind(intruder_work_id)
         .fetch_one(&pool)
@@ -832,7 +760,7 @@ async fn tags_crud_full_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::BAD_REQUEST, "garbage delete: {failure}");
-    assert_problem(status, &headers, &failure, "invalid-path");
+    assert_problem(status, &headers, &failure, "invalid-path", "`DELETE");
 
     // 12. Quote-named tag deletes cleanly too (bound params everywhere).
     let (status, _, bytes) = send(

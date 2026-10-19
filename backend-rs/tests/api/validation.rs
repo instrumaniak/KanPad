@@ -39,10 +39,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 
+use super::helpers::PROBLEM_BASE;
+
 /// Request-id header name (tower-http keeps its own copy private).
 const X_REQUEST_ID: header::HeaderName = header::HeaderName::from_static("x-request-id");
-
-const PROBLEMS: &str = "https://kanpad.dev/problems";
 
 async fn v_register(
     ValidJson(body): ValidJson<RegisterInput>,
@@ -268,7 +268,7 @@ fn errors_for(body: &Value, field: &str) -> Vec<String> {
 }
 
 fn assert_field_error(body: &Value, field: &str) {
-    assert_problem_shape(body, 400, &format!("{PROBLEMS}/validation-error"));
+    assert_problem_shape(body, 400, &format!("{PROBLEM_BASE}/validation-error"));
     assert!(
         !errors_for(body, field).is_empty(),
         "errors[] must contain field {field:?}: {body}"
@@ -403,14 +403,14 @@ async fn register_oversized_body_is_400_invalid_json() {
     );
     let (status, _, body) = read_problem(post_json("/v/register", &big).await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-json"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-json"));
 }
 
 #[tokio::test]
 async fn register_malformed_and_missing_content_type() {
     let (status, _, body) = read_problem(post_json("/v/register", r#"{"email": "#).await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-json"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-json"));
 
     let response = probe_router()
         .oneshot(
@@ -422,7 +422,7 @@ async fn register_malformed_and_missing_content_type() {
         .unwrap();
     let (status, _, body) = read_problem(response).await;
     assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    assert_problem_shape(&body, 415, &format!("{PROBLEMS}/invalid-json"));
+    assert_problem_shape(&body, 415, &format!("{PROBLEM_BASE}/invalid-json"));
 }
 
 #[tokio::test]
@@ -497,7 +497,7 @@ async fn board_name_blank_and_bad_hex_fail() {
 async fn board_path_param_abc_is_400_problem_json() {
     let (status, headers, body) = read_problem(get_uri("/api/v1/boards/abc").await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-path"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-path"));
     assert_eq!(
         headers.get(header::CONTENT_TYPE).unwrap(),
         "application/problem+json"
@@ -522,7 +522,7 @@ async fn board_path_param_abc_is_400_problem_json() {
 async fn boards_list_rejects_garbage_project_id() {
     let (status, _, body) = read_problem(get_uri("/v/boards-list?project_id=abc").await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-query"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-query"));
 
     let (status, _, body) = read_problem(get_uri("/v/boards-list?project_id=0").await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -539,7 +539,7 @@ async fn notes_list_rejects_bad_type_and_ids() {
 
     let (status, _, body) = read_problem(get_uri("/v/notes-list?tag_id=abc").await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_shape(&body, 400, &format!("{PROBLEMS}/invalid-query"));
+    assert_problem_shape(&body, 400, &format!("{PROBLEM_BASE}/invalid-query"));
 
     let (status, _, body) = read_problem(get_uri("/v/notes-list?board_id=0").await).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

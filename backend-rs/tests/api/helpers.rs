@@ -1,55 +1,110 @@
 //! Shared integration-test helpers (T07 owns this file).
 //!
-//! # Ownership (normative for T10/T25/T50)
-//! Import from here — never redefine: `login_as`, `ensure_default_labels`,
-//! `test_app`, fixture loading order. T10/T25 call prod
-//! `backend_rs::common::label_seed::ensure_default_labels` only through the
-//! [`ensure_default_labels`] wrapper below; the wrapper exists so the
-//! call-site contract (executor-generic, `(pool_or_tx, user_id)` shape) is
-//! documented in one place.
+//! # Ownership (NORMATIVE — import, never redefine)
+//!
+//! **Scope: the IN-PROCESS suites** — the ones that drive an `axum::Router`
+//! through `tower::ServiceExt::oneshot` (everything except the two
+//! black-box suites, which are covered by the `super::wire` section below).
+//!
+//! An in-process suite gets its request plumbing from HERE. Do NOT
+//! re-declare any of these per suite; a local copy shadows the shared one
+//! silently and drifts. The complete forbidden-local set is:
+//!
+//! **App / settings** — `app_on_pool` · `app_on_pool_with` · `test_app` ·
+//! `test_settings` · `ensure_default_labels`
+//!
+//! **Request plumbing** — `send` · `send_ref` · `send_json` ·
+//! `authed_request` · `json_body` · `json_of`
+//!
+//! **Assertions** — `assert_problem` · `assert_problem_fields` ·
+//! `assert_errors_nonempty` · `assert_no_legacy_keys`
+//!
+//! **Cookies** — `cookie_jar` · `cookie_jar_from`
+//!
+//! **Scenario builders** — `register` · `create_project` · `create_board` ·
+//! `create_board_json`
+//!
+//! **Constants** — `PROBLEM_JSON` · `PROBLEM_BASE` · `FIXTURE_ORDER`
+//!
+//! (`e2e_base_url` / `e2e_target_is_nest` are the black-box suites' knobs —
+//! they belong here, but only the black-box suites may call them.)
+//!
+//! ## Sanctioned exceptions
+//!
+//! A suite MAY define a local helper when it is genuinely suite-specific —
+//! but it must NOT reuse a name from the forbidden set above, and it MUST be
+//! listed here. The two current exceptions:
+//!
+//! - `throttle.rs` — DB-free governor probes. It injects an explicit
+//!   [`axum::extract::ConnectInfo`] peer per request and drives ONE router
+//!   repeatedly, so it uses the borrowed [`send_ref`] (not [`send`]) and
+//!   keeps its own request builders. Everything it can share, it shares.
+//! - `e2e_auth_projects_boards.rs` — a target-aware
+//!   `assert_errors_nonempty(target, body, what)` adapter over
+//!   [`assert_errors_nonempty`], because the Nest column asserts a different
+//!   body shape than the Rust column. It delegates to the shared core and
+//!   imports it aliased (`assert_errors_nonempty_fields`).
+//!
+//! ## Import EXPLICITLY, never glob
+//!
+//! `use super::helpers::*` is forbidden: an explicit `use` that collides
+//! with a leftover local definition is a compile error (E0255), whereas a
+//! glob import lets the local silently win. That difference is the
+//! regression guard for this rule.
+//!
+//! # Black-box suites: `super::wire`
+//! The two black-box suites (T50a/T50c) drive the real app over a raw TCP
+//! socket, so they cannot use the in-process plumbing above. Their
+//! transport-independent pieces live in [`super::wire`]: `WireResponse` ·
+//! `parse_response` · `dechunk` · `header_first` · `cookie_jar` (wire
+//! flavor) · `assert_problem` (wire flavor) · `bind_blackbox`.
+//! (`WireResponse::json` is the wire-flavored body parser; the in-process
+//! counterpart is [`json_of`].)
+//!
+//! `wire::assert_problem` delegates to [`assert_problem_fields`] and
+//! `wire::cookie_jar` delegates to [`cookie_jar_from`] — the SAME cores the
+//! in-process suites use, so the two transports cannot drift. Import from
+//! `super::wire` explicitly, by the same rule as above.
+//!
+//! What deliberately stays PER-SUITE: the socket client itself. T50a speaks
+//! async `tokio::net::TcpStream` and keeps a name/value jar; T50c speaks a
+//! blocking `std::net::TcpStream` and derives the jar from the response
+//! headers on demand. They are not interchangeable, so they are not shared.
+//!
+//! T10/T25 call prod `backend_rs::common::label_seed::ensure_default_labels`
+//! only through the [`ensure_default_labels`] wrapper below; the wrapper
+//! exists so the call-site contract (executor-generic, `(pool_or_tx,
+//! user_id)` shape) is documented in one place.
 //!
 //! # DB strategy (cost control, per 10-architecture.md Tests/CI)
-//! - Migration/unicode tests use `#[sqlx::test(migrations, fixtures)]`
-//!   per-test DBs (parallel, isolated). The test at the bottom of this
-//!   file is the pattern reference — read its NOTE first: the baseline's
-//!   fail-fast `CREATE SCHEMA tower_sessions` allows exactly one migrator
-//!   setup per `cargo test` process on a shared server.
-//! - Resource suites (T20+) share ONE database and wrap each test in a
-//!   transaction with rollback per test (per-test `CREATE DATABASE` on MySQL
-//!   is minutes at ~150 tests). Fixture files insert fixed ids in FK order
-//!   (`users -> projects -> boards -> columns -> cards -> labels/card_labels
-//!   -> checklists -> items -> notes/tags`), so a shared-DB suite loads them
-//!   once in the order listed in [`FIXTURE_ORDER`] and rolls back per test.
-//!   Fixed ids + isolated DBs (or tx rollback) = parallel-safe.
-//!
-//! # Cookie-jar persistence decision
-//! `axum-test::TestServer` is NOT a dev-dependency (T03 pins only
-//! `tower::util` + `oneshot`; `Cargo.toml` is outside T07 touch scope, so no
-//! new dev-dep is added here). [`login_as`] therefore drives the app via
-//! `tower::ServiceExt::oneshot` and propagates cookies MANUALLY: every
-//! `set-cookie` value is stored and re-sent as one joined `cookie` header
-//! (see [`JarClient`]). T11 may switch to `TestServer` cookie-jar storage
-//! when auth routes land; manual propagation stays valid either way.
+//! - Suites use `#[sqlx::test(migrations = "./migrations")]` per-test
+//!   databases (parallel, isolated). The test at the bottom of this file is
+//!   the pattern reference — read its NOTE.
+//! - Fixture files insert fixed ids in FK order (`users -> projects ->
+//!   boards -> columns -> cards -> labels/card_labels -> checklists ->
+//!   items -> notes/tags`), so a suite loads them once in the order listed in
+//!   [`FIXTURE_ORDER`].
 //!
 //! # Sessions between suites
-//! The store-owned `tower_sessions.session` table is server-global (shared
-//! by every suite in this process). There is deliberately NO helper to
-//! wipe it: even a single startup `DELETE` races parallel suites' live jars
-//! and 401s them mid-flight (3 flakes; rs-fix-session-isolation retired
-//! T11's coordinated wipe). Every suite mints its own user+jar, nothing
-//! asserts absolute store counts, and store assertions must use id-set
-//! difference. Tests needing a dirty/clean row scope their SQL to rows
-//! they minted (`WHERE id = ?` — see `auth_session.rs`).
+//! The store-owned `sessions` table lives in each test's OWN database (see
+//! `30-db-schema.md` deviation 11 — it is NOT the store's default
+//! `tower_sessions` schema). Isolation is therefore structural: parallel
+//! suites can never see each other's rows, so there is nothing to wipe and
+//! no coordinated-delete dance. [`app_on_pool`] reads the database name from
+//! the pool's connect options via `AppState::with_pool`, so no suite needs
+//! `SELECT DATABASE()` or hand-wires the store.
 //!
-//! NEVER reintroduce a global `DELETE FROM tower_sessions.session`,
-//! `UPDATE`-all, or schema drop in any suite's setup/teardown.
+//! Every suite still mints its own user + jar; store assertions should use
+//! id-set difference or scope their SQL to rows they minted (`WHERE id = ?`).
+//! NEVER reintroduce a global `DELETE FROM sessions`, an `UPDATE`-all, or a
+//! schema drop in any suite's setup/teardown.
 
-use axum::{
-    body::Body,
-    http::{header, HeaderMap, Request, Response},
-    Router,
-};
+use axum::body::{to_bytes, Body};
+use axum::http::{header, HeaderMap, Request, StatusCode};
+use axum::Router;
+use backend_rs::state::AppState;
 use backend_rs::{build_state, config::Settings, create_app};
+use serde_json::Value;
 use sqlx::MySqlPool;
 use tower::ServiceExt;
 
@@ -70,6 +125,12 @@ pub const FIXTURE_ORDER: [&str; 12] = [
     "note_tags",
 ];
 
+/// `Content-Type` every problem+json error must carry.
+pub const PROBLEM_JSON: &str = "application/problem+json";
+
+/// Base URI of the problem-type slugs asserted by [`assert_problem`].
+pub const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
+
 /// Test settings: `NODE_ENV=test`, minimal Argon2 cost for speed.
 pub fn test_settings() -> Settings {
     Settings {
@@ -87,71 +148,258 @@ pub fn test_app() -> Router {
     create_app(build_state(test_settings()))
 }
 
+// ---------------------------------------------------------------------------
+// HTTP harness (the single definition of every suite's request plumbing)
+// ---------------------------------------------------------------------------
+
+/// Build the app bound to a `#[sqlx::test]` pool: prod settings, prod
+/// session-store wiring, but the pool the fixture migrator actually created.
+///
+/// `AppState::with_pool` reads the database name straight from the pool's
+/// connect options, so suites never wire the store by hand and never query
+/// `SELECT DATABASE()`.
+///
+/// In-process via `create_app` — never spawns the session sweeper.
+pub fn app_on_pool(pool: &MySqlPool) -> Router {
+    app_on_pool_with(pool, Settings::default())
+}
+
+/// [`app_on_pool`] with a settings override — for suites that boot the app
+/// with one flag flipped (registration gate, `SESSION_SECRET`, `NODE_ENV`).
+/// The session store still follows the pool's database, so overrides never
+/// cost a suite its store wiring.
+pub fn app_on_pool_with(pool: &MySqlPool, settings: Settings) -> Router {
+    create_app(AppState::with_pool(settings, pool.clone()))
+}
+
+/// Serialize a JSON payload for a request body.
+pub fn json_body(value: &Value) -> String {
+    value.to_string()
+}
+
+/// Build a request, optionally carrying a cookie jar and a JSON body.
+pub fn authed_request(
+    method: &str,
+    path: &str,
+    cookie: Option<&str>,
+    body: Option<String>,
+) -> Request<Body> {
+    let mut builder = Request::builder().method(method).uri(path);
+    if let Some(jar) = cookie {
+        builder = builder.header(header::COOKIE, jar);
+    }
+    if let Some(payload) = body {
+        builder = builder.header(header::CONTENT_TYPE, "application/json");
+        builder.body(Body::from(payload)).expect("request builds")
+    } else {
+        builder.body(Body::empty()).expect("request builds")
+    }
+}
+
+/// Drive one request through the router, returning status + headers + raw
+/// body (parse with [`json_of`] when the response is JSON).
+pub async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+    send_ref(&app, request).await
+}
+
+/// [`send`], but the router is BORROWED — for suites that drive the same app
+/// repeatedly (e.g. `throttle.rs`'s flood probes, which must keep one
+/// governor state alive across many requests).
+pub async fn send_ref(app: &Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("request completes");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body reads");
+    (status, headers, bytes.to_vec())
+}
+
+/// [`send`], pre-parsed — for suites whose every assertion is on JSON.
+pub async fn send_json(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
+    let (status, headers, bytes) = send(app, request).await;
+    (status, headers, json_of(&bytes))
+}
+
+/// Parse a response body as JSON.
+pub fn json_of(bytes: &[u8]) -> Value {
+    serde_json::from_slice(bytes).expect("response is JSON")
+}
+
+/// Core of the cookie-jar extraction: the `name=value` pair of every
+/// `Set-Cookie` value, joined as one `Cookie` header value.
+///
+/// Shared by [`cookie_jar`] (axum `HeaderMap`) and `super::wire::cookie_jar`
+/// (raw wire headers) — one core, so the two transports cannot drift on how
+/// a jar is built.
+pub fn cookie_jar_from<'a>(values: impl Iterator<Item = &'a str>) -> String {
+    values
+        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
+        .filter(|pair| !pair.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
+pub fn cookie_jar(headers: &HeaderMap) -> String {
+    cookie_jar_from(
+        headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok()),
+    )
+}
+
+/// Assert a problem+json error carries `slug`, the right status, and a
+/// non-empty `instance`.
+///
+/// `what` labels the failing step in the panic message — every call site
+/// passes one so a failure names the scenario, not just the line.
+pub fn assert_problem(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: &Value,
+    slug: &str,
+    what: &str,
+) {
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .unwrap_or_else(|| panic!("{what}: error must set Content-Type"))
+        .to_str()
+        .expect("Content-Type is ASCII");
+    assert_problem_fields(content_type, body, status.as_u16(), slug, what);
+}
+
+/// Transport-independent core of the problem+json assertion.
+///
+/// Shared by the in-process suites ([`assert_problem`], which reads the
+/// `Content-Type` from an axum `HeaderMap`) and the black-box wire suites
+/// (`super::wire::assert_problem`, which reads it off the raw HTTP response).
+/// One core, so the two transports can never drift on what a problem body
+/// must contain.
+pub fn assert_problem_fields(
+    content_type: &str,
+    body: &Value,
+    status: u16,
+    slug: &str,
+    what: &str,
+) {
+    assert_eq!(content_type, PROBLEM_JSON, "{what}: status {status}");
+    assert_eq!(
+        body["type"],
+        format!("{PROBLEM_BASE}/{slug}"),
+        "{what}: status {status}"
+    );
+    assert_eq!(body["status"], status, "{what}");
+    assert!(
+        body["instance"].as_str().is_some_and(|s| !s.is_empty()),
+        "{what}: instance always set"
+    );
+}
+
+/// Assert a validation-class problem carries a non-empty `errors[]`.
+pub fn assert_errors_nonempty(body: &Value, what: &str) {
+    assert!(
+        body["errors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty()),
+        "{what} must carry errors[]: {body}"
+    );
+}
+
+/// Assert the body carries none of the legacy Nest response keys, at any
+/// depth (a raw-substring scan, so nested `description`/`content` also fail).
+pub fn assert_no_legacy_keys(body: &Value, what: &str) {
+    let raw = body.to_string();
+    for key in ["message", "description", "content"] {
+        assert!(
+            body.get(key).is_none(),
+            "{what} must not carry top-level `{key}`: {body}"
+        );
+    }
+    assert!(
+        !raw.contains("\"description\""),
+        "{what} must not carry `description` anywhere: {body}"
+    );
+    assert!(
+        !raw.contains("\"content\""),
+        "{what} must not carry `content` anywhere: {body}"
+    );
+}
+
+/// Register a fresh user with a live cookie jar; returns `(jar, user_id)`.
+pub async fn register(app: Router, email: &str) -> (String, i64) {
+    let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
+    let (status, headers, bytes) = send(
+        app,
+        authed_request(
+            "POST",
+            "/api/v1/auth/register",
+            None,
+            Some(json_body(&payload)),
+        ),
+    )
+    .await;
+    let body = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED, "register {email}: {body}");
+    let jar = cookie_jar(&headers);
+    assert!(!jar.is_empty(), "register sets a session cookie");
+    let id = body["data"]["id"].as_i64().expect("register returns id");
+    (jar, id)
+}
+
+/// Create a project under `jar`; returns its id.
+pub async fn create_project(app: Router, jar: &str, name: &str) -> i64 {
+    let payload = serde_json::json!({"name": name});
+    let (status, _, bytes) = send(
+        app,
+        authed_request(
+            "POST",
+            "/api/v1/projects",
+            Some(jar),
+            Some(json_body(&payload)),
+        ),
+    )
+    .await;
+    let body = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED, "create project {name}: {body}");
+    body["data"]["id"].as_i64().expect("project id")
+}
+
+/// Create a board under `jar` from a caller-built payload; returns its id.
+pub async fn create_board(app: Router, jar: &str, payload: &Value) -> i64 {
+    create_board_json(app, jar, payload).await["data"]["id"]
+        .as_i64()
+        .expect("board id")
+}
+
+/// [`create_board`] returning the whole `data` envelope — for suites that
+/// assert on `background_color` / `project_id` off the create response.
+pub async fn create_board_json(app: Router, jar: &str, payload: &Value) -> Value {
+    let (status, _, bytes) = send(
+        app,
+        authed_request(
+            "POST",
+            "/api/v1/boards",
+            Some(jar),
+            Some(json_body(payload)),
+        ),
+    )
+    .await;
+    let body = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED, "create board: {body}");
+    body
+}
+
 /// Test-only wrapper around prod
 /// `backend_rs::common::label_seed::ensure_default_labels`.
 /// Returns rows inserted (6 on first call, 0 when already seeded).
 pub async fn ensure_default_labels(pool: &MySqlPool, user_id: i32) -> Result<u64, sqlx::Error> {
     backend_rs::common::label_seed::ensure_default_labels(pool, user_id).await
-}
-
-/// Authenticated cookie jar with MANUAL `Set-Cookie` propagation
-/// (see module docs: no `axum-test` dev-dep in T07 scope).
-#[allow(dead_code)] // wired fully in T11 when auth routes land
-#[derive(Debug, Default)]
-pub struct JarClient {
-    cookies: Vec<String>,
-}
-
-#[allow(dead_code)] // wired fully in T11 when auth routes land
-impl JarClient {
-    /// Collect every `set-cookie` response value into the jar.
-    pub fn store_from(&mut self, headers: &HeaderMap) {
-        for value in headers.get_all(header::SET_COOKIE) {
-            if let Ok(cookie) = value.to_str() {
-                let pair = cookie.split(';').next().unwrap_or("").trim();
-                if !pair.is_empty() && !self.cookies.contains(&pair.to_string()) {
-                    self.cookies.push(pair.to_string());
-                }
-            }
-        }
-    }
-
-    /// Render the jar as one `Cookie` header value.
-    pub fn cookie_header(&self) -> String {
-        self.cookies.join("; ")
-    }
-}
-
-/// Log in via `POST /api/v1/auth/login` and return the cookie jar.
-/// Requires T11 auth routes; until then this is scaffolding only.
-#[allow(dead_code)] // wired fully in T11 when auth routes land
-pub async fn login_as(app: Router, email: &str, password: &str) -> JarClient {
-    let body = serde_json::json!({ "email": email, "password": password }).to_string();
-    let request = Request::post("/api/v1/auth/login")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body))
-        .expect("login request builds");
-    let response = app.oneshot(request).await.expect("login oneshot");
-    let mut jar = JarClient::default();
-    jar.store_from(response.headers());
-    jar
-}
-
-/// Send a request carrying the jar's cookies (manual propagation).
-#[allow(dead_code)] // wired fully in T11 when auth routes land
-pub async fn authed(app: Router, jar: &JarClient, request: Request<Body>) -> Response<Body> {
-    let (mut parts, body) = request.into_parts();
-    if !jar.cookies.is_empty() {
-        parts.headers.insert(
-            header::COOKIE,
-            jar.cookie_header()
-                .parse()
-                .expect("jar cookies form a valid header"),
-        );
-    }
-    app.oneshot(Request::from_parts(parts, body))
-        .await
-        .expect("authed oneshot")
 }
 
 // ---------------------------------------------------------------------------
@@ -180,18 +428,18 @@ async fn helpers_test_app_serves_health() {
 /// (second call = no dup, still 6 rows).
 /// AC: fixtures insert fixed ids in FK order and load cleanly together.
 ///
-/// NOTE (load-bearing): the `tower_sessions.session` store table is
-/// server-global, shared by every suite in this process — so there is NO
-/// global wipe helper at all (rs-fix-session-isolation retired T11's single
-/// coordinated wipe: under parallel scheduling even a startup `DELETE`
-/// lands mid-flight of other suites' live jars and 401s them). NEVER wipe
-/// or drop the shared store from any suite: a concurrent
-/// `DELETE`/`UPDATE`-all/`DROP SCHEMA` 401s/500s (1049 `Unknown database
-/// 'tower_sessions'`) in-flight suites' live jars. The baseline DDL is
-/// `CREATE SCHEMA/TABLE IF NOT EXISTS` (early-T52), so repeat setups are
-/// safe with the schema present and no "server-fresh" teardown is needed.
-/// Resource suites (T20+) sidestep this entirely via the shared-DB +
-/// tx-rollback strategy (migrations run once).
+/// NOTE (load-bearing): the `sessions` store table lives in the SAME
+/// database as the pool (see `AppState::with_pool`), so under
+/// `#[sqlx::test]` it is PER-TEST — every suite gets its own database and
+/// no suite can reach another's sessions. There is therefore NO global
+/// wipe helper at all (rs-fix-session-isolation retired T11's single
+/// coordinated wipe; a blanket `DELETE`/`UPDATE`-all/`DROP` would only
+/// reach that test's own rows — while racing the test's own live jars and
+/// 401ing them). NEVER wipe or drop the store from any suite: scope
+/// session mutations by `WHERE id = ?` instead. The baseline DDL for
+/// `sessions` is fail-fast `CREATE TABLE` (no `IF NOT EXISTS`) — safe
+/// because each `#[sqlx::test]` migrates its own fresh database, so there
+/// is no cross-process race and no "server-fresh" teardown is needed.
 #[sqlx::test(
     migrations = "./migrations",
     fixtures(
@@ -210,9 +458,9 @@ async fn helpers_test_app_serves_health() {
     )
 )]
 async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
-    // NO session wipe here: the store table is server-global (see NOTE
-    // above) — global wipes are retired entirely. This suite holds no
-    // session jars, so other suites' rows are harmless to it.
+    // NO session wipe here: the `sessions` table lives in this test's own
+    // database (see NOTE above) — global wipes are retired entirely, and
+    // this suite holds no session jars anyway.
 
     let expected_counts = FIXTURE_ORDER.map(|table| {
         let expected = match table {
@@ -296,15 +544,26 @@ async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
 
 // ---------------------------------------------------------------------------
 // T50a black-box e2e env-switch (T50a owns ONLY these two fns in this file).
-// `E2E_BASE_URL` selects the black-box target (default the Rust `:3001`
-// server); `E2E_TARGET=rust|nest` selects the per-target expectation params
-// in `e2e_auth_projects_boards.rs` (Nest = behavior-class assertions only —
-// the contract diverges, so one assertion set cannot pass on both).
+// `E2E_BASE_URL` PINS the black-box port (default: none — the suite binds an
+// OS-assigned ephemeral port); `E2E_TARGET=rust|nest` selects the per-target
+// expectation params in `e2e_auth_projects_boards.rs` (Nest = behavior-class
+// assertions only — the contract diverges, so one assertion set cannot pass
+// on both).
 // ---------------------------------------------------------------------------
 
-/// Base URL of the black-box target under test (default Rust `:3001`).
-pub fn e2e_base_url() -> String {
-    std::env::var("E2E_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3001".to_string())
+/// The operator-pinned black-box base URL (`E2E_BASE_URL`), if any.
+///
+/// `None` means "no pin": the black-box suites then bind an OS-assigned
+/// EPHEMERAL port (see [`super::wire::bind_blackbox`]). That default is
+/// deliberate — the two black-box suites run in parallel inside the SAME test
+/// binary, so a fixed default port made one of them fail with `AddrInUse`;
+/// an ephemeral port also means a dev server already holding `:3001` cannot
+/// break the suite.
+pub fn e2e_base_url() -> Option<String> {
+    std::env::var("E2E_BASE_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Whether black-box suites should use Nest behavior-class expectations

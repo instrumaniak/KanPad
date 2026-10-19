@@ -5,10 +5,10 @@
 //! owner + intruder via `POST /api/v1/auth/register` (real Argon2id hashes,
 //! live cookie jars) and creates projects/boards via the API.
 //!
-//! NO session wipe here: `tower_sessions.session` is server-global and T11's
-//! auth-session suite owns this process's one coordinated wipe at its
-//! startup. This suite holds only its own jars, so concurrent wipes are
-//! no-ops for it.
+//! NO session wipe here: the `sessions` store table lives in THIS test's own
+//! database (the store follows the pool's database — see
+//! `AppState::with_pool`), so no other suite can reach it. Never issue a
+//! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 //!
 //! Covered (red first: PATCH/DELETE routes do not exist yet):
 //! `PATCH {name?,background_color?,project_id?|null,view_mode?,is_archived?}
@@ -21,155 +21,12 @@
 //! every 4xx asserts `Content-Type: application/problem+json` + exact `type`
 //! URI; every mutation re-reads state via second GET or direct `SELECT`.
 
-use axum::{
-    body::{to_bytes, Body},
-    http::{header, HeaderMap, Request, StatusCode},
-    Router,
+use super::helpers::{
+    app_on_pool, assert_errors_nonempty, assert_problem, authed_request, create_board_json,
+    create_project, json_body, json_of, register, send, PROBLEM_JSON,
 };
-use backend_rs::{config::Settings, create_app, state::AppState};
-use serde_json::Value;
+use axum::http::{header, StatusCode};
 use sqlx::MySqlPool;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
-
-const PROBLEM_JSON: &str = "application/problem+json";
-
-/// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
-/// `create_app` never spawns one).
-fn app_on_pool(pool: &MySqlPool) -> Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn json_body(value: &Value) -> String {
-    value.to_string()
-}
-
-fn authed_request(
-    method: &str,
-    path: &str,
-    cookie: Option<&str>,
-    body: Option<String>,
-) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(path);
-    if let Some(jar) = cookie {
-        builder = builder.header(header::COOKIE, jar);
-    }
-    if let Some(payload) = body {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-        builder.body(Body::from(payload)).expect("request builds")
-    } else {
-        builder.body(Body::empty()).expect("request builds")
-    }
-}
-
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.oneshot(request).await.expect("boards oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    (status, headers, bytes.to_vec())
-}
-
-fn json_of(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).expect("response is JSON")
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &str) {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .expect("error must set Content-Type")
-        .to_str()
-        .expect("Content-Type is ASCII");
-    assert_eq!(content_type, PROBLEM_JSON, "status: {status}");
-    assert_eq!(
-        body["type"],
-        format!("https://kanpad.dev/problems/{slug}"),
-        "status: {status}"
-    );
-    assert_eq!(body["status"], status.as_u16());
-}
-
-fn assert_errors_nonempty(body: &Value, what: &str) {
-    assert!(
-        body["errors"]
-            .as_array()
-            .is_some_and(|errors| !errors.is_empty()),
-        "{what} must carry errors[]: {body}"
-    );
-}
-
-async fn register(app: Router, email: &str) -> (String, i64) {
-    let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
-    let (status, headers, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/auth/register",
-            None,
-            Some(json_body(&payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "register {email}: {body}");
-    let jar = cookie_jar(&headers);
-    assert!(!jar.is_empty(), "register sets a session cookie");
-    let id = body["data"]["id"].as_i64().expect("register returns id");
-    (jar, id)
-}
-
-async fn create_project(app: Router, jar: &str, name: &str) -> i64 {
-    let payload = serde_json::json!({"name": name});
-    let (status, _, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/projects",
-            Some(jar),
-            Some(json_body(&payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "create project {name}: {body}");
-    body["data"]["id"].as_i64().expect("project id")
-}
-
-async fn create_board(app: Router, jar: &str, payload: &Value) -> Value {
-    let (status, _, bytes) = send(
-        app,
-        authed_request(
-            "POST",
-            "/api/v1/boards",
-            Some(jar),
-            Some(json_body(payload)),
-        ),
-    )
-    .await;
-    let body = json_of(&bytes);
-    assert_eq!(status, StatusCode::CREATED, "create board: {body}");
-    body
-}
 
 #[sqlx::test(migrations = "./migrations")]
 async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
@@ -191,7 +48,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
             StatusCode::UNAUTHORIZED,
             "{method} {path}: {failure}"
         );
-        assert_problem(status, &headers, &failure, "unauthorized");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "unauthorized",
+            "Anonymous access is 401 on both verbs (AuthSession guard)",
+        );
     }
 
     // 1. Register owner + intruder; owner creates two projects, one board
@@ -201,7 +64,7 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
     let project_a = create_project(app(), &owner_jar, "Project A").await;
     let project_b = create_project(app(), &owner_jar, "Project B").await;
     let foreign_project = create_project(app(), &intruder_jar, "Foreign Project").await;
-    let created = create_board(
+    let created = create_board_json(
         app(),
         &owner_jar,
         &serde_json::json!({"name": "Stateful", "project_id": project_a}),
@@ -319,7 +182,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "validation-error");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "validation-error",
+            "Validation: blank/overlong name, bad hex, bad view_mode…",
+        );
         assert_errors_nonempty(&failure, what);
     }
     for (payload, what) in [
@@ -351,10 +220,22 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
             .expect("ASCII");
         assert_eq!(content_type, PROBLEM_JSON);
         if matches!(what, "zero project_id" | "negative project_id") {
-            assert_problem(status, &headers, &failure, "validation-error");
+            assert_problem(
+                status,
+                &headers,
+                &failure,
+                "validation-error",
+                "Validation: blank/overlong name, bad hex, bad view_mode…",
+            );
             assert_errors_nonempty(&failure, what);
         } else {
-            assert_problem(status, &headers, &failure, "invalid-json");
+            assert_problem(
+                status,
+                &headers,
+                &failure,
+                "invalid-json",
+                "Validation: blank/overlong name, bad hex, bad view_mode…",
+            );
         }
     }
 
@@ -426,7 +307,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
         .await;
         let failure = json_of(&bytes);
         assert_eq!(status, StatusCode::NOT_FOUND, "{what}: {failure}");
-        assert_problem(status, &headers, &failure, "not-found");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "not-found",
+            "`project_id` reassignment to an owned project links (200…",
+        );
     }
     let stored_project: Option<i64> =
         sqlx::query_scalar("SELECT `project_id` FROM `boards` WHERE `id` = ?")
@@ -550,7 +437,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::CONFLICT, "delete active: {failure}");
-    assert_problem(status, &headers, &failure, "conflict");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "conflict",
+        "Deleting an ACTIVE board",
+    );
     let (status, _, _) = send(
         app(),
         authed_request(
@@ -615,7 +508,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "re-get deleted: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "not-found",
+        "Archive, then DELETE",
+    );
     let board_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM `boards` WHERE `id` = ?")
         .bind(board_id)
         .fetch_one(&pool)
@@ -642,11 +541,17 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
     .await;
     let failure = json_of(&bytes);
     assert_eq!(status, StatusCode::NOT_FOUND, "delete twice: {failure}");
-    assert_problem(status, &headers, &failure, "not-found");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "not-found",
+        "Archive, then DELETE",
+    );
 
     // 10. Deprecated `/api/*` alias serves the same PATCH handler.
-    let alias_board = create_board(app(), &owner_jar, &serde_json::json!({"name": "Alias"})).await
-        ["data"]["id"]
+    let alias_board = create_board_json(app(), &owner_jar, &serde_json::json!({"name": "Alias"}))
+        .await["data"]["id"]
         .as_i64()
         .expect("alias board id");
     let (status, _, bytes) = send(
@@ -665,10 +570,11 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
 
     // 11. Ownership: foreign/missing id → 404 (never 403) on PATCH+DELETE;
     //     garbage id → 400 `invalid-path`.
-    let intruder_board = create_board(app(), &intruder_jar, &serde_json::json!({"name": "Theirs"}))
-        .await["data"]["id"]
-        .as_i64()
-        .expect("intruder board id");
+    let intruder_board =
+        create_board_json(app(), &intruder_jar, &serde_json::json!({"name": "Theirs"})).await
+            ["data"]["id"]
+            .as_i64()
+            .expect("intruder board id");
     for (method, what) in [
         (
             "PATCH",
@@ -692,7 +598,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
             .await;
             let failure = json_of(&bytes);
             assert_eq!(status, StatusCode::NOT_FOUND, "{method} {case}: {failure}");
-            assert_problem(status, &headers, &failure, "not-found");
+            assert_problem(
+                status,
+                &headers,
+                &failure,
+                "not-found",
+                "Ownership: foreign/missing id",
+            );
         }
         let (status, headers, bytes) = send(
             app(),
@@ -705,7 +617,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
             StatusCode::BAD_REQUEST,
             "{method} garbage id: {failure}"
         );
-        assert_problem(status, &headers, &failure, "invalid-path");
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "invalid-path",
+            "Ownership: foreign/missing id",
+        );
     }
 
     // 12. Deleted verb routes (`/:id/archive|/restore|/permanent`) → 404
@@ -733,7 +651,13 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
                 StatusCode::NOT_FOUND,
                 "{method} /boards/:id/{route}: {failure}"
             );
-            assert_problem(status, &headers, &failure, "not-found");
+            assert_problem(
+                status,
+                &headers,
+                &failure,
+                "not-found",
+                "Deleted verb routes (`/:id/archive|/restore|/permanent`)",
+            );
         }
     }
 

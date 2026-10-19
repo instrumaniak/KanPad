@@ -134,12 +134,14 @@ cap, no memory hardness). Folded into `10-architecture.md` pins and
 
 ## S2. Sessions, config, throttle, tests
 
-* Sessions: keep `tower-sessions 0.14` + store-owned `tower_sessions.session`,
+* Sessions: keep `tower-sessions 0.14` + store-owned `sessions` **in the app
+  database** (`.with_schema_name(<current DB>)` + `.with_table_name("sessions")`),
   `cycle_id()` on login **and** privilege change. Prod cookie uses `__Host-`
   prefix (`__Host-connect.sid`, `Secure + Path=/`, no `Domain`). Sweeper
   `continuously_delete_expired` spawns **only in `main.rs`**, never in
-  `lib::create_app` (tests would leak a task + conn per test). Baseline must
-  `CREATE SCHEMA tower_sessions` before `CREATE TABLE`.
+  `lib::create_app` (tests would leak a task + conn per test). The baseline
+  creates the `sessions` table before the app tables' consumers, in the same
+  database (no separate `CREATE SCHEMA`).
 * Deleted/demoted users keep a valid session until expiry under
   trust-without-DB-lookup (`10-architecture.md:79`). Accepted risk — record in
   `CONTRACT-CHANGES.md`, or re-lookup on `me`/admin routes only.

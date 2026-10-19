@@ -16,8 +16,8 @@
 //!
 //! DB-free by design: absence is a routing fact (`test_app()` boots without
 //! I/O), and the helper check is type-level. Never add `#[sqlx::test]` or
-//! session wipes here (the store table is server-global; T11 owns the single
-//! coordinated wipe — see `helpers.rs` module docs).
+//! session wipes here (the `sessions` store table lives in each test's own
+//! database — see `helpers.rs` module docs).
 
 use axum::{
     body::{to_bytes, Body},

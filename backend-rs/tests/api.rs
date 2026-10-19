@@ -65,3 +65,5 @@ mod unicode_roundtrip;
 mod users;
 #[path = "api/validation.rs"]
 mod validation;
+#[path = "api/wire.rs"]
+mod wire;

@@ -12,23 +12,11 @@ use backend_rs::{build_state, config::Settings, create_app};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const PROBLEMS: &str = "https://kanpad.dev/problems";
+use super::helpers::{test_app, test_settings, PROBLEM_BASE};
+
 const WRONG_PASSWORD: &str = "this-password-is-wrong-xyz";
 
 static PUBLIC_LOCK: Mutex<()> = Mutex::new(());
-
-fn test_settings() -> Settings {
-    Settings {
-        node_env: "test".to_string(),
-        hash_cost: 1,
-        port: 3001,
-        ..Default::default()
-    }
-}
-
-fn test_app() -> axum::Router {
-    create_app(build_state(test_settings()))
-}
 
 /// Pool that can never connect (unroutable port): refused fast, so the test
 /// stays deterministic with no live DB.
@@ -154,7 +142,7 @@ async fn ready_503_when_db_down_no_password_leak() {
         headers.get(header::CONTENT_TYPE).unwrap(),
         "application/problem+json"
     );
-    assert_eq!(body["type"], format!("{PROBLEMS}/service-unavailable"));
+    assert_eq!(body["type"], format!("{PROBLEM_BASE}/service-unavailable"));
     assert_eq!(body["status"], 503);
     assert!(body["instance"].is_string(), "instance must be set: {body}");
     let raw = serde_json::to_string(&body).unwrap();
@@ -244,7 +232,7 @@ async fn versioned_and_deprecated_api_miss_share_json_404() {
         );
         assert_eq!(
             body["type"],
-            format!("{PROBLEMS}/not-found"),
+            format!("{PROBLEM_BASE}/not-found"),
             "path: {path}"
         );
         let raw = serde_json::to_string(&body).unwrap();

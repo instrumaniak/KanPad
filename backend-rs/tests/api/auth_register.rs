@@ -2,14 +2,13 @@
 //!
 //! Single `#[sqlx::test]` setup on purpose: all register scenarios run
 //! sequentially inside one test against one pool, with distinct emails per
-//! scenario. The `tower_sessions.session` store table is server-global
-//! (shared by every suite in this process): this suite never wipes it —
-//! NOBODY drops the shared schema (baseline DDL is `IF NOT EXISTS` since
-//! early-T52, so the old fail-fast `DROP SCHEMA` hygiene is retired; a
-//! concurrent drop 500s in-flight suites with 1049
-//! `Unknown database 'tower_sessions'`). T11 owns this process's one
-//! coordinated wipe; this suite's cookie assertions need no live jars
-//! beyond the request that mints them, so concurrent wipes are no-ops here.
+//! scenario. The `sessions` store table lives in THIS test's own database
+//! (the store follows the pool's database — see `AppState::with_pool`),
+//! so no other suite can reach it: this suite never wipes it, and NOBODY
+//! drops the schema (baseline DDL is `IF NOT EXISTS` since early-T52, so
+//! the old fail-fast `DROP SCHEMA` hygiene is retired; a concurrent drop
+//! would 500 in-flight suites with 1049 `Unknown database`). This suite's
+//! cookie assertions need no live jars beyond the request that mints them.
 //!
 //! Covered: 201 + `{data:{id,email,role}}` + `Location: /api/v1/auth/me` +
 //! `Set-Cookie` (+ `cycle_id` rotation proof); DB re-read finds the user +
@@ -19,33 +18,33 @@
 //! `REGISTRATION_ENABLED=false` -> 403 problem+json.
 
 use axum::{
-    body::{to_bytes, Body},
+    body::Body,
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use backend_rs::{config::Settings, create_app, state::AppState};
-use serde_json::Value;
+use backend_rs::config::Settings;
 use sqlx::MySqlPool;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
 
-const PROBLEM_JSON: &str = "application/problem+json";
+use super::helpers::{app_on_pool_with, assert_problem, cookie_jar, send_json};
+
+/// This suite's register payload (its own email/password ordering).
+///
+/// Named `register_body`, not `json_body`: `json_body` is owned by
+/// `super::helpers` (see that file's ownership header).
+fn register_body(password: &str, email: &str) -> String {
+    serde_json::json!({ "email": email, "password": password }).to_string()
+}
 
 /// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
 /// `create_app` never spawns one), with a registration-gate override.
-fn app_on_pool(pool: &MySqlPool, registration_enabled: bool) -> Router {
-    let settings = Settings {
-        registration_enabled,
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn json_body(password: &str, email: &str) -> String {
-    serde_json::json!({ "email": email, "password": password }).to_string()
+fn app_with_registration(pool: &MySqlPool, registration_enabled: bool) -> Router {
+    app_on_pool_with(
+        pool,
+        Settings {
+            registration_enabled,
+            ..Default::default()
+        },
+    )
 }
 
 fn post_register(email: &str, password: &str, cookie: Option<&str>) -> Request<Body> {
@@ -55,19 +54,8 @@ fn post_register(email: &str, password: &str, cookie: Option<&str>) -> Request<B
         builder = builder.header(header::COOKIE, jar);
     }
     builder
-        .body(Body::from(json_body(password, email)))
+        .body(Body::from(register_body(password, email)))
         .expect("register request builds")
-}
-
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
 }
 
 fn raw_set_cookies(headers: &HeaderMap) -> String {
@@ -79,39 +67,13 @@ fn raw_set_cookies(headers: &HeaderMap) -> String {
         .join("\n")
 }
 
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
-    let response = app.oneshot(request).await.expect("register oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    let json: Value = serde_json::from_slice(&bytes).expect("response is JSON");
-    (status, headers, json)
-}
-
-fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &str) {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .expect("4xx must set Content-Type")
-        .to_str()
-        .expect("Content-Type is ASCII");
-    assert_eq!(content_type, PROBLEM_JSON, "status: {status}");
-    assert_eq!(
-        body["type"],
-        format!("https://kanpad.dev/problems/{slug}"),
-        "status: {status}"
-    );
-    assert_eq!(body["status"], status.as_u16());
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn register_full_flow(pool: MySqlPool) {
-    let app = || app_on_pool(&pool, true);
+    let app = || app_with_registration(&pool, true);
 
     // 1. Happy path: mixed-case + padded email normalizes; 201 + Location +
     //    Set-Cookie; body carries no `message` key.
-    let (status, headers, body) = send(
+    let (status, headers, body) = send_json(
         app(),
         post_register("  NewUser@Example.COM ", "Str0ng!pass", None),
     )
@@ -164,7 +126,7 @@ async fn register_full_flow(pool: MySqlPool) {
 
     // 2. Session fixation defense: registering again with the first session
     //    cookie rotates the session id (`cycle_id` on register).
-    let (status, headers, _) = send(
+    let (status, headers, _) = send_json(
         app(),
         post_register("second@example.com", "Str0ng!pass", Some(&jar_after_first)),
     )
@@ -181,13 +143,19 @@ async fn register_full_flow(pool: MySqlPool) {
     );
 
     // 3. Duplicate email -> 409 problem+json; no second row, labels untouched.
-    let (status, headers, body) = send(
+    let (status, headers, body) = send_json(
         app(),
         post_register("newuser@example.com", "Str0ng!pass", None),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "dup email: {body}");
-    assert_problem(status, &headers, &body, "conflict");
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "conflict",
+        "Duplicate email -> 409 problem+json",
+    );
     let dup_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM `users` WHERE `email` = 'newuser@example.com'")
             .fetch_one(&pool)
@@ -207,9 +175,15 @@ async fn register_full_flow(pool: MySqlPool) {
         ("weak@example.com", "password"),
         ("weak2@example.com", "short1!"),
     ] {
-        let (status, headers, body) = send(app(), post_register(email, password, None)).await;
+        let (status, headers, body) = send_json(app(), post_register(email, password, None)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "input {email:?}: {body}");
-        assert_problem(status, &headers, &body, "validation-error");
+        assert_problem(
+            status,
+            &headers,
+            &body,
+            "validation-error",
+            "Bad email / weak password -> 400 problem+json with…",
+        );
         let errors = body["errors"].as_array().expect("errors[] present");
         assert!(!errors.is_empty(), "errors[] must not be empty: {body}");
     }
@@ -223,21 +197,33 @@ async fn register_full_flow(pool: MySqlPool) {
         ("long2@example.com".to_string(), multibyte.clone()),
     ];
     for (email, password) in &overlong {
-        let (status, headers, body) = send(app(), post_register(email, password, None)).await;
+        let (status, headers, body) = send_json(app(), post_register(email, password, None)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "input {email:?}: {body}");
-        assert_problem(status, &headers, &body, "validation-error");
+        assert_problem(
+            status,
+            &headers,
+            &body,
+            "validation-error",
+            "Overlong passwords -> 400 (bytes, not chars): 73 ASCII…",
+        );
     }
 
     // 6. Closed registration -> 403 problem+json (role-denied, not 404), and
     //    no user row is created.
-    let closed = app_on_pool(&pool, false);
-    let (status, headers, body) = send(
+    let closed = app_with_registration(&pool, false);
+    let (status, headers, body) = send_json(
         closed,
         post_register("closed@example.com", "Str0ng!pass", None),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "closed registration: {body}");
-    assert_problem(status, &headers, &body, "forbidden");
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "forbidden",
+        "Closed registration -> 403 problem+json (role-denied, not…",
+    );
     let closed_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM `users` WHERE `email` = 'closed@example.com'")
             .fetch_one(&pool)

@@ -30,97 +30,17 @@
 //! items only. Ordering IS contract for nested board columns (`position ASC`)
 //! and is asserted explicitly via the fixture `ordering` key.
 //!
-//! NO session wipe here: `tower_sessions.session` is server-global (see
-//! `helpers.rs` module docs). This suite mints its own user+jar and asserts
-//! nothing about absolute store counts.
+//! NO session wipe here: the `sessions` store table lives in THIS test's own
+//! database (the store follows the pool's database — see
+//! `AppState::with_pool`; see also `helpers.rs` module docs). This suite
+//! mints its own user+jar and asserts nothing about absolute store counts.
 
-use axum::{
-    body::{to_bytes, Body},
-    http::{header, HeaderMap, Request, StatusCode},
-    Router,
-};
-use backend_rs::{config::Settings, create_app, state::AppState};
+use super::helpers::{app_on_pool, assert_problem, authed_request, cookie_jar, send};
+use axum::http::{header, StatusCode};
 use serde_json::Value;
 use sqlx::MySqlPool;
 use std::collections::HashMap;
-use tower::ServiceExt;
-use tower_sessions_sqlx_store::MySqlStore;
 
-const PROBLEM_JSON: &str = "application/problem+json";
-const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
-
-/// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
-/// `create_app` never spawns one).
-fn app_on_pool(pool: &MySqlPool) -> Router {
-    let settings = Settings {
-        ..Default::default()
-    };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    create_app(state)
-}
-
-fn authed_request(
-    method: &str,
-    path: &str,
-    cookie: Option<&str>,
-    body: Option<String>,
-) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(path);
-    if let Some(jar) = cookie {
-        builder = builder.header(header::COOKIE, jar);
-    }
-    if let Some(payload) = body {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-        builder.body(Body::from(payload)).expect("request builds")
-    } else {
-        builder.body(Body::empty()).expect("request builds")
-    }
-}
-
-async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.oneshot(request).await.expect("golden oneshot");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("response body reads");
-    (status, headers, bytes.to_vec())
-}
-
-/// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-fn cookie_jar(headers: &HeaderMap) -> String {
-    headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
-        .filter(|pair| !pair.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn assert_problem(status: StatusCode, headers: &HeaderMap, body: &Value, slug: &str, what: &str) {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .unwrap_or_else(|| panic!("{what}: error must set Content-Type"))
-        .to_str()
-        .expect("Content-Type is ASCII");
-    assert_eq!(content_type, PROBLEM_JSON, "{what}: status {status}");
-    assert_eq!(
-        body["type"],
-        format!("{PROBLEM_BASE}/{slug}"),
-        "{what}: status {status}"
-    );
-    assert_eq!(body["status"], status.as_u16(), "{what}");
-    assert!(
-        body["instance"].as_str().is_some_and(|s| !s.is_empty()),
-        "{what}: instance always set"
-    );
-}
-
-/// Dot-path lookup with numeric array indices (`data.columns.0.id`).
 fn lookup<'a>(body: &'a Value, path: &str) -> Option<&'a Value> {
     let mut current = body;
     for segment in path.split('.') {

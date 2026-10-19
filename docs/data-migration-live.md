@@ -7,7 +7,8 @@ Status: tested on local dev import with:
 
 This runbook migrates application data from a live Nest/TypeORM database to the Rust
 schema while preserving IDs. It does not migrate sessions: Rust uses the store-owned
-`tower_sessions.session` schema and sessions are force-relogin on cutover.
+`sessions` table in the app database (not the separate `tower_sessions` schema) and
+sessions are force-relogin on cutover.
 
 ## Principles
 
@@ -17,6 +18,34 @@ schema while preserving IDs. It does not migrate sessions: Rust uses the store-o
 - Strip ghost columns and Nest-only tables during import.
 - Validate staging before switching production traffic.
 - Own DB rollback as backup restore, never `migrate revert`.
+
+## Baseline amendment (2026-10-19) — read before `migrate run`
+
+`0001_baseline.sql` was amended in place on 2026-10-19: the store-owned session table
+moved out of the separate `tower_sessions` schema into the app database, as
+`sessions` (see `specs/api-rewrite-rs-specs/30-db-schema.md` deviation 11).
+
+sqlx stores a SHA-384 of each migration's bytes in `_sqlx_migrations` and refuses to
+run when an applied migration's bytes changed (`VersionMismatch`). So a database
+migrated with a **pre-2026-10-19 baseline** carries a stale checksum and will
+**not** migrate again — and the app fails to boot with the same error.
+
+The baseline is a squash, not a chain: the cutover always builds a FRESH database
+from the baseline, so an empty target is unaffected. But any database that was
+already migrated with the old baseline must be dropped and re-migrated:
+
+```bash
+# local compose stack (named volume `mysql-data`)
+docker compose down -v
+# or, for a database you can afford to lose:
+DROP DATABASE kanpad_rs_dev; CREATE DATABASE kanpad_rs_dev;
+cargo run migrate run
+cargo run migrate info   # expect: pending=0
+```
+
+Never hand-edit `_sqlx_migrations` to "fix" a checksum — the checksums are
+version-internal SHA-384 values over the file bytes, and a hand-written row
+diverges from what sqlx would compute.
 
 ## Required inputs
 
@@ -96,9 +125,10 @@ TRUNCATE TABLE columns;
 TRUNCATE TABLE boards;
 TRUNCATE TABLE projects;
 TRUNCATE TABLE users;
+TRUNCATE TABLE sessions;
 ```
 
-The `_sqlx_migrations` and `tower_sessions.session` tables are intentionally untouched.
+The `_sqlx_migrations` table is intentionally untouched. (The `sessions` table is cleared above since it lives in the app database.)
 
 ## 5. Import application data with transforms
 
@@ -192,7 +222,7 @@ Generate the literal values from `SELECT COALESCE(MAX(id), 0) + 1 ...`.
 
 ## 7. Tables intentionally not imported
 
-- `session` / Nest authentication sessions: Rust uses `tower_sessions.session` in schema `tower_sessions`, with a different shape and cookie codec. Users will force-relogin.
+- `session` / Nest authentication sessions: Rust uses the `sessions` table in the app database, with a different shape and cookie codec. Users will force-relogin.
 - `typeorm_migrations`: Rust uses `_sqlx_migrations`.
 - `users.username` and `projects.description`: Rust baseline intentionally omits these ghost columns.
 

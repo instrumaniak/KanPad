@@ -1,17 +1,22 @@
-//! T50a black-box e2e: auth → projects → boards slice vs `:3001` (Rust).
+//! T50a black-box e2e: auth → projects → boards slice vs the Rust server.
 //!
 //! Unlike every other suite in `tests/api/` (in-process `oneshot`), this
-//! suite is BLACK-BOX: it spawns the real app with `axum::serve` on the
-//! `E2E_BASE_URL` port (default `127.0.0.1:3001`) and drives it over TCP with
-//! a hand-rolled HTTP/1.1 client (no new dev-dep: `Cargo.toml` is outside
-//! T50a touch scope). Full middleware stack is exercised (`served-by: rust`,
-//! `x-request-id`, governor `route_layer` with `ConnectInfo` peer keys,
-//! session cookies, compression bypass via no `Accept-Encoding`).
+//! suite is BLACK-BOX: it spawns the real app with `axum::serve` on a
+//! loopback port and drives it over TCP with a hand-rolled HTTP/1.1 client
+//! (no new dev-dep: `Cargo.toml` is outside T50a touch scope). Full middleware
+//! stack is exercised (`served-by: rust`, `x-request-id`, governor
+//! `route_layer` with `ConnectInfo` peer keys, session cookies, compression
+//! bypass via no `Accept-Encoding`).
+//!
+//! The port is OS-ASSIGNED (ephemeral) by default — see
+//! `super::wire::bind_blackbox` — so this suite and `e2e_rest` can run in
+//! PARALLEL in the same test binary without an `AddrInUse` clash. Set
+//! `E2E_BASE_URL` to pin a fixed port instead.
 //!
 //! Per-target expectation params (`20-api-contract.md` + `21-api-standard-
 //! shapes.md` diverge, so one assertion set cannot pass on both):
 //!
-//! | Aspect | Rust `:3001` (exact) | Nest `:3000` (behavior-class only) |
+//! | Aspect | Rust (exact) | Nest (behavior-class only) |
 //! |---|---|---|
 //! | errors | RFC9457 `application/problem+json` + exact `type` URI + `instance` | status class + `statusCode`/`message` present |
 //! | lists | exact `Page{data,page,limit,total}` | `data` array contains the row |
@@ -21,7 +26,7 @@
 //! | verb routes (`/:id/archive|/restore|/permanent`, `/boards/archived`) | `404`/`400` deleted-route table | `200` behavior present |
 //! | register/login strictness | `400 errors[]` on weak input | behavior class only (Nest had no pipes on auth) |
 //!
-//! `E2E_TARGET=nest` selects the Nest column (needs a live `:3000`; not
+//! `E2E_TARGET=nest` selects the Nest column (needs a live Nest server; not
 //! reachable in CI — the Rust column is the gate). Default is `rust`.
 //!
 //! Coverage (Nest `backend/test/auth|projects|boards.e2e-spec.ts` slice,
@@ -29,9 +34,8 @@
 //! real `board_count`, boards create + detail/list + filters/state + delete
 //! incl. `409` active-delete + deleted-verb-route `404`s. Every mutation has
 //! a DB re-read via a second GET or a direct bound-parameter `SELECT`
-//! (never `format!`-interpolated SQL; no global session wipe — the
-//! `tower_sessions.session` store is server-global, assertions use id-set
-//! difference only).
+//! (never `format!`-interpolated SQL; no session wipe — the `sessions` store
+//! is per-test-database, assertions use id-set difference only).
 //!
 //! Throttle context (`10-architecture.md`): the spawned server raises the
 //! governor ceilings (`global/auth 10000/min`, mirroring the per-test-router
@@ -40,17 +44,17 @@
 //! path where it is safe: repeated `POST logout` never `429`s (logout is
 //! unthrottled by design).
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
-use backend_rs::{config::Settings, create_app, state::AppState};
+use backend_rs::config::Settings;
 use serde_json::Value;
 use sqlx::MySqlPool;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tower_sessions_sqlx_store::MySqlStore;
 
-const PROBLEM_JSON: &str = "application/problem+json";
-const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
+use super::helpers::{
+    assert_errors_nonempty as assert_errors_nonempty_fields, assert_no_legacy_keys,
+};
+use super::wire::{assert_problem, parse_response, WireResponse};
 
 // ---------------------------------------------------------------------------
 // Per-target expectation params.
@@ -93,31 +97,6 @@ impl Target {
 // Minimal HTTP/1.1 black-box client over TCP (hand-rolled: no new dev-dep).
 // ---------------------------------------------------------------------------
 
-struct BbResponse {
-    status: u16,
-    headers: HashMap<String, Vec<String>>,
-    body: Vec<u8>,
-}
-
-impl BbResponse {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .get(name)
-            .and_then(|values| values.first())
-            .map(String::as_str)
-    }
-
-    fn json(&self, what: &str) -> Value {
-        serde_json::from_slice(&self.body).unwrap_or_else(|_| {
-            panic!(
-                "{what}: response is not JSON (status {}): {}",
-                self.status,
-                String::from_utf8_lossy(&self.body)
-            )
-        })
-    }
-}
-
 /// Cookie jar with manual `Set-Cookie` propagation (mirrors the
 /// `helpers::JarClient` contract, over the wire).
 #[derive(Default)]
@@ -142,7 +121,7 @@ impl BbClient {
         }
     }
 
-    fn store_cookies(&mut self, response: &BbResponse) {
+    fn store_cookies(&mut self, response: &WireResponse) {
         if let Some(values) = response.headers.get("set-cookie") {
             for raw in values {
                 let pair = raw.split(';').next().unwrap_or("").trim();
@@ -164,7 +143,7 @@ impl BbClient {
         method: &str,
         path: &str,
         body: Option<&str>,
-    ) -> Option<BbResponse> {
+    ) -> Option<WireResponse> {
         let payload = body.unwrap_or("");
         let mut head = format!(
             "{method} {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n",
@@ -194,41 +173,10 @@ impl BbClient {
         Some(response)
     }
 
-    async fn request(&mut self, method: &str, path: &str, body: Option<&str>) -> BbResponse {
+    async fn request(&mut self, method: &str, path: &str, body: Option<&str>) -> WireResponse {
         self.try_request(method, path, body)
             .await
             .unwrap_or_else(|| panic!("black-box {method} {path}: no HTTP response"))
-    }
-}
-
-fn parse_response(raw: &[u8], method: &str, path: &str) -> BbResponse {
-    let split = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .unwrap_or_else(|| panic!("{method} {path}: malformed HTTP response"));
-    let head = std::str::from_utf8(&raw[..split])
-        .unwrap_or_else(|_| panic!("{method} {path}: response head is not UTF-8"));
-    let mut lines = head.lines();
-    let status_line = lines.next().expect("status line present");
-    let status: u16 = status_line
-        .split_whitespace()
-        .nth(1)
-        .expect("status code present")
-        .parse()
-        .expect("status code numeric");
-    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
-    for line in lines {
-        if let Some((name, value)) = line.split_once(':') {
-            headers
-                .entry(name.trim().to_lowercase())
-                .or_default()
-                .push(value.trim().to_string());
-        }
-    }
-    BbResponse {
-        status,
-        headers,
-        body: raw[split + 4..].to_vec(),
     }
 }
 
@@ -238,7 +186,7 @@ fn parse_response(raw: &[u8], method: &str, path: &str) -> BbResponse {
 
 /// Every response carries the transport proof: `served-by: rust` +
 /// `x-request-id` (middleware context — outermost layers cover 4xx too).
-fn assert_transport(response: &BbResponse, what: &str) {
+fn assert_transport(response: &WireResponse, what: &str) {
     assert_eq!(
         response.header("served-by"),
         Some("rust"),
@@ -252,27 +200,8 @@ fn assert_transport(response: &BbResponse, what: &str) {
     );
 }
 
-/// Exact RFC9457 problem assertion (Rust target).
-fn assert_problem(response: &BbResponse, body: &Value, slug: &str, what: &str) {
-    assert_eq!(
-        response.header("content-type"),
-        Some(PROBLEM_JSON),
-        "{what}: problem Content-Type"
-    );
-    assert_eq!(
-        body["type"],
-        format!("{PROBLEM_BASE}/{slug}"),
-        "{what}: problem type"
-    );
-    assert_eq!(body["status"], response.status, "{what}: problem status");
-    assert!(
-        body["instance"].as_str().is_some_and(|s| !s.is_empty()),
-        "{what}: instance always set: {body}"
-    );
-}
-
 /// Nest behavior-class error assertion: status class + legacy shape only.
-fn assert_nest_error(response: &BbResponse, body: &Value, what: &str) {
+fn assert_nest_error(response: &WireResponse, body: &Value, what: &str) {
     assert!(
         (400..600).contains(&response.status),
         "{what}: Nest error must be 4xx/5xx, got {}: {body}",
@@ -284,7 +213,7 @@ fn assert_nest_error(response: &BbResponse, body: &Value, what: &str) {
     );
 }
 
-fn assert_error(target: Target, response: &BbResponse, body: &Value, slug: &str, what: &str) {
+fn assert_error(target: Target, response: &WireResponse, body: &Value, slug: &str, what: &str) {
     if target.is_rust() {
         assert_problem(response, body, slug, what);
     } else {
@@ -292,56 +221,34 @@ fn assert_error(target: Target, response: &BbResponse, body: &Value, slug: &str,
     }
 }
 
+/// Validation-class errors carry a non-empty `errors[]` on the Rust target
+/// only (the Nest target has no such field).
+///
+/// A SANCTIONED EXCEPTION to the `super::helpers` ownership header: a
+/// target-aware adapter over the shared [`assert_errors_nonempty_fields`]
+/// core (imported under that alias). The Rust column asserts the shared
+/// core; the Nest column has no such field, so there is nothing to assert.
 fn assert_errors_nonempty(target: Target, body: &Value, what: &str) {
     if target.is_rust() {
-        assert!(
-            body["errors"]
-                .as_array()
-                .is_some_and(|errors| !errors.is_empty()),
-            "{what} must carry errors[]: {body}"
-        );
+        assert_errors_nonempty_fields(body, what);
     }
 }
 
-fn assert_no_legacy_keys(body: &Value, what: &str) {
-    assert!(
-        body.get("message").is_none(),
-        "{what} must not carry `message`: {body}"
-    );
-    let raw = body.to_string();
-    assert!(
-        !raw.contains("\"description\""),
-        "{what} must not carry `description`: {body}"
-    );
-    assert!(
-        !raw.contains("\"content\""),
-        "{what} must not carry `content`: {body}"
-    );
-}
-
-/// Live ids of the server-global session store — compare SETS, never
-/// absolute counts (parallel suites mint rows concurrently; only this
-/// suite's login/logout changes its own delta).
+/// Live ids of the session store in THIS test's own database — compare
+/// SETS, never absolute counts (parallel suites mint rows concurrently;
+/// only this suite's login/logout changes its own delta).
 async fn session_ids(pool: &MySqlPool) -> Vec<String> {
-    sqlx::query_scalar("SELECT `id` FROM `tower_sessions`.`session`")
+    sqlx::query_scalar("SELECT `id` FROM `sessions`")
         .fetch_all(pool)
         .await
         .expect("session ids read")
 }
 
 // ---------------------------------------------------------------------------
-// Server spawn (real TCP on the E2E port, default `:3001`).
+// Server spawn (real TCP on an OS-assigned loopback port).
 // ---------------------------------------------------------------------------
 
-fn e2e_port() -> u16 {
-    crate::helpers::e2e_base_url()
-        .rsplit(':')
-        .next()
-        .and_then(|port| port.trim_end_matches('/').parse().ok())
-        .unwrap_or(3001)
-}
-
-async fn spawn_blackbox(pool: &MySqlPool) -> (BbClient, tokio::task::JoinHandle<()>) {
+async fn spawn_blackbox(pool: &MySqlPool) -> (SocketAddr, tokio::task::JoinHandle<()>) {
     // Raised governor ceilings keep the auth-heavy flow deterministic
     // (same per-test-router rationale as `throttle.rs`); 429 coverage
     // itself stays in T30.
@@ -350,14 +257,10 @@ async fn spawn_blackbox(pool: &MySqlPool) -> (BbClient, tokio::task::JoinHandle<
         throttle_auth_per_min: 10_000,
         ..Default::default()
     };
-    let mut state = AppState::from_settings(settings);
-    state.pool = pool.clone();
-    state.sessions = MySqlStore::new(pool.clone());
-    let app = create_app(state);
-    let port = e2e_port();
-    let listener = tokio::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::LOCALHOST), port))
-        .await
-        .expect("black-box server binds the E2E port (default :3001)");
+    let app = crate::helpers::app_on_pool_with(pool, settings);
+    // Ephemeral port by default: this suite and `e2e_rest` run in parallel
+    // in the same test binary, so a fixed port would make one fail.
+    let (listener, addr) = super::wire::bind_blackbox().await;
     let handle = tokio::spawn(async move {
         axum::serve(
             listener,
@@ -367,8 +270,8 @@ async fn spawn_blackbox(pool: &MySqlPool) -> (BbClient, tokio::task::JoinHandle<
         .expect("black-box serve runs");
     });
     let mut probe = BbClient {
-        host: "127.0.0.1".to_string(),
-        port,
+        host: addr.ip().to_string(),
+        port: addr.port(),
         jar: Vec::new(),
     };
     for _ in 0..100 {
@@ -381,7 +284,7 @@ async fn spawn_blackbox(pool: &MySqlPool) -> (BbClient, tokio::task::JoinHandle<
     }
     let response = probe.request("GET", "/health", None).await;
     assert_eq!(response.status, 200, "black-box target is up");
-    (probe, handle)
+    (addr, handle)
 }
 
 // ---------------------------------------------------------------------------
@@ -391,16 +294,15 @@ async fn spawn_blackbox(pool: &MySqlPool) -> (BbClient, tokio::task::JoinHandle<
 #[sqlx::test(migrations = "./migrations")]
 async fn e2e_auth_projects_boards_blackbox(pool: MySqlPool) {
     let target = Target::current();
-    let (_probe, server) = spawn_blackbox(&pool).await;
-    let port = e2e_port();
+    let (addr, server) = spawn_blackbox(&pool).await;
     let mut anon = BbClient {
-        host: "127.0.0.1".to_string(),
-        port,
+        host: addr.ip().to_string(),
+        port: addr.port(),
         jar: Vec::new(),
     };
     let mut owner = BbClient {
-        host: "127.0.0.1".to_string(),
-        port,
+        host: addr.ip().to_string(),
+        port: addr.port(),
         jar: Vec::new(),
     };
 
@@ -1175,8 +1077,8 @@ async fn e2e_auth_projects_boards_blackbox(pool: MySqlPool) {
 
     // 21. Cross-user isolation: intruder owns nothing of the owner's.
     let mut intruder = BbClient {
-        host: "127.0.0.1".to_string(),
-        port,
+        host: addr.ip().to_string(),
+        port: addr.port(),
         jar: Vec::new(),
     };
     let response = intruder
@@ -1309,8 +1211,8 @@ async fn e2e_auth_projects_boards_blackbox(pool: MySqlPool) {
             .split_once('=')
             .expect("login set a name=value cookie");
         let mut stale = BbClient {
-            host: "127.0.0.1".to_string(),
-            port,
+            host: addr.ip().to_string(),
+            port: addr.port(),
             jar: vec![(old_name.to_string(), old_value.to_string())],
         };
         let response = stale.request("GET", "/api/v1/auth/me", None).await;

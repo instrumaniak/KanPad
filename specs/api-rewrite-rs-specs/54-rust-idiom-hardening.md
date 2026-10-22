@@ -1,20 +1,34 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status: PLAN ONLY — nothing in this file is implemented yet.** *(except
-> T54, see below.)* The tree
-> still has `NODE_ENV` + `connect.sid`, the CI workflow still lives at
-> `backend-rs/.github/workflows/` (so it has still never run), the repo's own
-> `unwrap`/`expect` grep gate still fails on three sites, and `allow_methods`
-> still omits `PUT`. This file + `50-tasks.md` Phase 7 are the **work order**;
-> executors implement T54–T67 and flip each AC as it lands.
+> **Status: PARTIALLY IMPLEMENTED (2026-10-22).** This file + `50-tasks.md`
+> Phase 7 are the **work order**; executors implement T54–T68 and flip each AC
+> as it lands. **Five tasks have landed** (the table below); everything else
+> is still PLAN ONLY.
 >
-> **Progress (2026-10-22): T54 LANDED** — the naming amendments (Part A:
-> `APP_ENV` + the `NODE_ENV`-present boot failure + the `kanpad.sid` /
-> `__Host-kanpad.sid` cookie names) are in the tree. Everything else in this
-> file is still PLAN ONLY: the CI workflow still lives at
-> `backend-rs/.github/workflows/` (so it has still never run), the repo's own
-> `unwrap`/`expect` grep gate still fails on three sites, and `allow_methods`
-> still omits `PUT`.
+> **The tree no longer has** `NODE_ENV` + `connect.sid` (T54), **a workflow
+> that has never run** (T55 moved it to the repo root — and T68 repaired the
+> two steps that were red when it finally became verifiable), **a failing
+> `unwrap`/`expect` grep gate** (T55), **an `allow_methods` list without
+> `PUT`** (T55), **no `[lints]` / `[profile.release]` / toolchain pin /
+> `deny.toml`** (T57), and **three dead direct dependencies** (T63).
+>
+> ### Implementation status (2026-10-22)
+>
+> | Task | Status | Commit | What it landed |
+> |---|---|---|---|
+> | **T54** | **DONE** | `8b0cef64` | `APP_ENV` replaces `NODE_ENV` (boot **fails** when `NODE_ENV` is present); `kanpad.sid` / `__Host-kanpad.sid` replaces `connect.sid`; the `__Host-` invariant is test-locked |
+> | **T55** | **DONE** | `689dc895` | the workflow **moved to the repo root** (it had never run); the 3 lint-gate sites fixed in code (`to_response_one`); a second grep gate (the panic spellings) + the third gate **repaired**; `allow_methods` gained **`PUT`** + the preflight guard |
+> | **T57** | **DONE** | `98fb1ce2` | `edition 2024` + `rust-toolchain.toml` @ **1.99.1** + the Dockerfile base bump; the `[lints]` + `[profile.release]` tables; the committed **`deny.toml`**, derived from its first failing run |
+> | **T63** | **DONE** | `85f433f3` | `axum-valid` / `utoipa-axum` / `zeroize` + 2 dead `tower-http` features removed; **2 advisory ignores deleted** with their crates |
+> | **T68** | **DONE** | `0b03ea58` | the CI **first-run defect repair**: the `cargo audit` step deleted (it contradicted the committed `deny.toml`) + the SHOW CREATE TABLE assert fixed (it queried the pre-2026-10-19 `tower_sessions` schema) + `cargo-deny` pinned |
+> | T65 | pending | — | the in-tree `SessionStore` — **the hinge** of the phase |
+> | T67, T66, T56, T58, T59, T60, T61, T62 | pending | — | see `50-tasks.md` Phase 7 |
+>
+> **The three corrections this file's own text still needs** (recorded in
+> `50-tasks.md` + `AGENTS.md` as the 2026-10-22 (c)/(d)/(e) passes): the
+> verification matrix's clippy command, the "five store files" that are
+> actually **eight**, and the claim that no task touches `openapi.json`
+> (T57 changed its `info` block).
 >
 > **Relationship to the other spec files:** this file records *why* the naming
 > amendments (Part A) and the quality-baseline tasks (Part B) exist. The
@@ -36,7 +50,7 @@
 > `11-rewrite-deltas.md` (rationale record) · `50-tasks.md` (Phase 7) ·
 > `README.md` (index) · `CONTRACT-CHANGES.md` (cookie-name row) · root
 > `AGENTS.md` (lessons) · `docs/data-migration-live.md` (operator runbook) ·
-> `compose.yaml` · `backend-rs/.github/workflows/ci.yml` → **repo root** (B1).
+> `compose.yaml` · `.github/workflows/backend-rs.yml` (B1 — the workflow moved to the repo root in T55).
 
 ---
 
@@ -162,6 +176,19 @@ duplicated 9×, `src/common/ownership.rs` a one-line stub, and
 `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D
 warnings` both exit 0 on the current tree.
 
+**Re-verified after the five landed tasks (2026-10-22 (e)) — the claims above
+are a SNAPSHOT of the tree as it was when this file was written.** Two of them
+have since changed (both **fixed**, which is the point): the 3 lint-gate hits
+are gone (T55) and `allow_methods` now carries `PUT` (T55). The rest still
+hold, re-measured against the tree today: **43** `instrument(skip(state))`
+sites across 8 route files, **`format_timestamp` duplicated 9×**,
+`common/ownership.rs` still a one-line stub, the **`sqlx-cli` pin still
+0.8.6**, and **`deny.toml` still carrying its 4 task-bound advisory
+ignores** (the two T63 owned were deleted with their crates). **One claim
+needs its command updated:** `cargo clippy … -- -D warnings` now **fails**
+(~290 pedantic errors) because T57 made `clippy::pedantic` advisory — the
+canonical form is `-D warnings -A clippy::pedantic`.
+
 ---
 
 ## Part A — Rust-idiom naming amendments
@@ -217,19 +244,19 @@ first change in the series that fails *open*.
 | File | Change |
 |---|---|
 | `backend-rs/src/config.rs` | field `node_env` → `app_env`; whitelist error text; the `SETTINGS_KEYS`/`BASE_VARS` env matrices in the unit tests; **+ the new `NODE_ENV`-present → boot-error rule**; `Settings::default()` sets `app_env: "test"` |
-| `backend-rs/src/state.rs` | `is_production()` reads `app_env` (the method name is already env-agnostic) |
+| `backend-rs/src/config.rs` | `is_production()` reads `app_env` (the method name is already env-agnostic) — it lives in `config`, not `state` |
 | `backend-rs/src/lib.rs` | `state.settings.is_production()` call sites unchanged |
 | `backend-rs/tests/api/helpers.rs` | `test_settings()` sets `app_env: "test"`; doc comment `NODE_ENV=test` → `APP_ENV=test` |
 | `backend-rs/tests/api/*.rs` | any suite that builds `Settings { node_env: … }` |
 | `backend-rs/.env` (untracked) | `NODE_ENV=development` → `APP_ENV=development` |
 | `backend-rs/.env.test` (untracked) | add `APP_ENV=test` |
 | `compose.yaml` | the **rust** service only: `NODE_ENV: ${NODE_ENV:-development}` → `APP_ENV: ${APP_ENV:-development}`. The **nest** service keeps `NODE_ENV` unchanged. |
-| `backend-rs/.github/workflows/ci.yml` | `-e NODE_ENV=test` → `-e APP_ENV=test` |
+| `.github/workflows/backend-rs.yml` | `-e NODE_ENV=test` → `-e APP_ENV=test` (the file was at `backend-rs/.github/workflows/ci.yml` when T54 edited it, and moved to the repo root in T55) |
 | `specs/api-rewrite-rs-specs/54-rust-idiom-hardening.md` | **Part C** (dependency hygiene & modernization) + the D9/D15/D16/D17 corrections + the rewritten B7 Origin decision — this file (T63/T65/T66/T67 land here) |
 | `specs/api-rewrite-rs-specs/10-architecture.md` | **Pinned versions** table rewritten (sqlx 0.9 / tower-http 0.7 / tower-sessions 0.15 / utoipa 6 / the removal of `axum-valid`, `utoipa-axum`, `zeroize`, `time`); **Sessions** section -> the in-tree store; **CORS** section -> the canonicalized allowlist + `CsrfLayer`; **Middleware order** -> the cross-origin layer's position; **Config** -> the `CORS_ORIGINS` canonical-form rules + the `DATABASE_URL` collation pin |
 | `specs/api-rewrite-rs-specs/11-rewrite-deltas.md` | **E4** rewritten around the Go 1.25 `CrossOriginProtection` algorithm; **E5** gains the session-store rationale + the toolchain decision |
 | `specs/api-rewrite-rs-specs/50-tasks.md` | Phase 7 gains **T63 / T65 / T66 / T67**; T56 re-specified around `CsrfLayer`; T57's toolchain pin becomes **1.99.1**; the ordering paragraph rewritten |
-| `specs/api-rewrite-rs-specs/00-overview.md` | **Amendment 12** — the dependency-hygiene decision log |
+| `specs/api-rewrite-rs-specs/00-overview.md` | **Amendment 12** — the dependency-hygiene decision log; **Amendment 13** — the implementation status (2026-10-22 (e)); **Amendment 14** — the (c) verification pass |
 | `specs/api-rewrite-rs-specs/README.md` | reading order + the amendment header |
 | `backend-rs/Cargo.toml` + `backend-rs/Cargo.lock` | T63 (the **three** removals + the two feature removals), T65 (the store swap), T67 (the library majors), T66 (the driver major) — **one owner per task**, never two branches at once |
 | `backend-rs/Dockerfile` | T57 — `rust:1.96-bookworm` -> `rust:1.99-bookworm`, in the **same PR** as the toolchain pin |
@@ -317,7 +344,7 @@ HTTPS**. That is the correct direction to fail.
 
 | File | Change |
 |---|---|
-| `backend-rs/src/config.rs` | `session_cookie_name()` → `__Host-kanpad.sid` / `kanpad.sid`; the base name becomes a named const (`SESSION_COOKIE_NAME`) next to the existing `SESSION_TABLE` |
+| `backend-rs/src/config.rs` | `session_cookie_name()` → `__Host-kanpad.sid` / `kanpad.sid`; the base name becomes the named const `config::SESSION_COOKIE_NAME` and the prefix `config::HOST_COOKIE_PREFIX` (the existing `SESSION_TABLE` const lives in `state.rs`, so the cookie consts sit with the other settings constants in `config`) |
 | `backend-rs/src/lib.rs` | `SessionManagerLayer::…with_name(settings.session_cookie_name())` — unchanged call shape |
 | `backend-rs/tests/api/auth_session.rs` | the cookie-attribute matrix assertions (the T11 env-matrix test) — update expected names + add the `connect.sid` regression guard |
 | `backend-rs/tests/api/*.rs` | the black-box suites' cookie-jar helpers — the **name is opaque to them** (they parse `Set-Cookie` generically), so no change unless a suite hard-codes the name |
@@ -350,7 +377,7 @@ evidence lines are reproducible from `backend-rs/`.
 
 ### B1 — CI has never run (P0)
 
-`backend-rs/.github/workflows/ci.yml` exists, is thorough (fmt → clippy → grep
+A workflow file existed at `backend-rs/.github/workflows/ci.yml` — thorough (fmt → clippy → grep
 gates → migrate → `SHOW CREATE TABLE` assert → `sqlx prepare --check` → test →
 `cargo deny` → openapi diff → docker build → `:3001` smoke →
 vitest/playwright), and **does not execute**: GitHub Actions discovers
@@ -1266,10 +1293,13 @@ to *this* codebase, not generic:
   (the sweeper). The middleware API does not change.
 * **The `sqlx/time` feature disappears.** `tower-sessions-sqlx-store` is the
   *only* thing enabling `sqlx/time`. With both `time` and `chrono` on, sqlx
-  prefers `time` for `DATETIME` — which is why five store files carry
+  prefers `time` for `DATETIME` — which is why **eight** store files carry
   `AS "col: chrono::NaiveDateTime"` on every datetime column. Drop the
   store → sqlx picks `chrono` natively → **those overrides delete**
-  (`src/features/{boards,cards,checklists,columns,notes}/store.rs`).
+  (`src/features/{boards,cards,checklists,columns,labels,notes,projects,tags}/store.rs`
+  — **MEASURED 2026-10-22 (e): eight, not five**; `labels`, `projects` and
+  `tags` were missing from this list, and T65's AC would have failed on
+  them).
 * **The sweeper is already ours.** `src/main.rs:9` imports
   `tower_sessions::session_store::ExpiredDeletion` and spawns the GC; the
   in-tree store implements `delete_expired` and that task keeps working.
@@ -1474,9 +1504,14 @@ gate that proves the rest).
 `openapi.json` and therefore `frontend/src/lib/api/schema.d.ts`. The T52
 rule (*"No standalone openapi/typegen PRs"*) is satisfied because the
 regeneration ships **in the same PR as the spec + code change** — no
-standalone PR is created. T54/T55/T56/T57/T58/T60/T61/T62 do **not** touch
+standalone PR is created. T54/T55/T56/T58/T60/T61/T62 do **not** touch
 `openapi.json` (verified: `grep -c 'connect.sid' backend-rs/openapi.json` →
-0; the cookie name is not in the spec).
+0; the cookie name is not in the spec). **T57 is the one exception
+(2026-10-22 (e)):** utoipa reads `CARGO_PKG_DESCRIPTION` / `CARGO_PKG_LICENSE`,
+so adding the crate metadata changed the OpenAPI **`info` block** (3 lines:
+the description + the licence). **No path, schema or field changed, and the
+typegen artifact `frontend/src/lib/api/schema.d.ts` is byte-identical**
+(verified with the real `openapi-typescript`) — the T52 rule is satisfied.
 
 ---
 
@@ -1486,7 +1521,7 @@ Per `00-overview.md` Constitution + the `50-tasks.md` per-task checklist:
 
 ```
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings -A clippy::pedantic
 cargo test -p backend-rs --test api <filter>
 cargo test -p backend-rs                       # kernel tasks
 cargo sqlx prepare --check --workspace --all -- --all-targets
@@ -1497,16 +1532,16 @@ Task-specific additions:
 | Task | Extra gate |
 |---|---|
 | T54 | `APP_ENV` unset + `NODE_ENV` set → boot error (assert the message names `APP_ENV`); `APP_ENV=production` → `__Host-kanpad.sid` + `Secure` + `Path=/` + `HttpOnly` + `SameSite=Lax` + **no `Domain`**; dev/test → `kanpad.sid` + **no `Secure`**; **no env emits `connect.sid`**; `compose config` shows `APP_ENV` on the rust service and `NODE_ENV` on the nest service |
-| T55 | the relocated workflow is **discovered and runs green on the PR** (a `gh run list` link in the PR body is the evidence — this is the first time CI runs, so expect to fix *its* latent failures too); the two lint-gate greps pass; `cargo test --test api cors` green |
+| T55 | the relocated workflow is **discovered and runs green on the PR** (a `gh run list` link in the PR body is the evidence — this is the first time CI runs, so expect to fix *its* latent failures too); **all three** lint-gate greps pass (the `unwrap`/`expect` gate, the panic-spelling gate, and the `format!`-built-SQL gate — T55 added the second and repaired the third); `cargo test --test api cors` green |
 | T56 | preflight test green for **all five** verbs; the CSP header is asserted on a 200 **and** on a 404, and its `connect-src` **contains the CORS allowlist origins** (so the dev topology's cross-origin fetch is not blocked) and its `script-src` **contains a `sha256-` hash matching the inline script in the served `public/index.html`** (asserted by recomputing the hash — drift fails the test, not the page); the Origin-check test proves a foreign `Origin` on `POST /api/v1/cards` → `403`; the span-redaction test proves a card `title`/`description` never reaches the rendered span; `grep -c 'instrument(skip(state))' src/` == 0 |
-| T57 | `cargo build --release` produces a stripped binary (`file`/`nm` shows no symbols); `cargo deny check advisories licenses` green against the **committed** `deny.toml` — the first run is expected to FAIL and the `skip`/`skip-tree` + license allow-list are derived from its output, not guessed; `cargo clippy` green on edition 2024; the `Cargo.lock` diff from the `resolver = "3"` bump is **reviewed line by line** (a silent dependency downgrade is a supply-chain event); `cargo doc --no-deps` has **zero** warnings |
+| T57 | `cargo build --release` produces a stripped binary (`file`/`nm` shows no symbols); `cargo deny check advisories licenses bans` green against the **committed** `deny.toml` — the first run is expected to FAIL and the `skip`/`skip-tree` + license allow-list are derived from its output, not guessed; `cargo clippy` green on edition 2024; the `Cargo.lock` diff from the `resolver = "3"` bump is **reviewed line by line** (a silent dependency downgrade is a supply-chain event); `cargo doc --no-deps` has **zero** warnings |
 | T58 | `Role` round-trips as `"user"`/`"admin"` on the wire (`auth/me` snapshot unchanged); `AppEnv` rejects an unknown value at boot with the same actionable-message shape as before; `cargo clippy` green |
 | T59 | `cargo test -p backend-rs` green; `grep -rc 'pub fn format_timestamp' src/` == **1**; `common::ownership` owns every user-scoping helper (`grep -c 'fn check_.*_owned' src/features/` == 0); `cargo test --test api openapi_snapshot` green; `npm run gen:api -- --check` + `tsc --noEmit` green |
 | T60 | `/metrics` returns the Prometheus text format with the documented series, on its **own `METRICS_PORT` listener** (and the endpoint does **not** exist when `METRICS_PORT` is unset — fail-closed); the route label is a **pattern** not a raw path (asserted: `/api/v1/cards/999` and `/api/v1/cards/888` share one series); a scrape does **not** record itself (no feedback loop); production logs are JSON (asserted on the rendered `tracing` output); the pool gauges appear (`kanpad_db_pool_size` ← `Pool::size()`, `kanpad_db_pool_idle` ← `Pool::num_idle()`) and the acquire-duration histogram is populated by our own `acquire_timed()` helper (sqlx 0.8.6 has no `PoolMetrics`) |
 | T61 | the deadlock-retry test proves the retry is taken (a fault-injected `1213` is retried and the operation eventually succeeds) and that the matcher keys on the **error number** (a `1205`/`HY000` lock-wait timeout is retried too — a `40001`-only matcher would miss it); the whole transaction is `ROLLBACK` before a retry (a `1205` rolls back only the current statement by default); the move tx runs at `READ COMMITTED` (asserted by a `SELECT @@transaction_isolation` probe inside the tx) **and the `SET TRANSACTION ISOLATION LEVEL` statement is issued BEFORE `BEGIN`** (issued inside a tx it fails with MySQL error 1568); pool sizing honours the env keys |
 | T62 | `cargo llvm-cov --summary-only --fail-under-lines 85` green **and a summary is actually printed** (a bare `--fail-under-lines` prints no summary — `--summary-only` requires `--json`/`--lcov`/`--cobertura`); the workflow's action refs are **commit SHAs** (via `gh actions-lock` + the committed lockfile, or hand-pinned + dependabot); `dependabot.yml` covers cargo + npm + github-actions; `docker build` passes the new `.dockerignore` + `HEALTHCHECK` + digest pins; `docker run` reports `healthy` |
 | T63 | `cargo tree -i axum@0.7.9` → *"did not match any packages"* (the second axum is gone); `cargo tree -i axum-core@0.4.5` → not found; `cargo tree -i garde` → **no ambiguity** (one version); `cargo tree -i validator` → not found; `grep -rn 'axum_valid\|utoipa_axum\|zeroize::' src/ tests/` → **0** hits (**`\btime::` is deliberately NOT in this grep** — `src/lib.rs:155` legitimately uses the `time` crate, which is **required** by `tower_sessions::Expiry::OnInactivity`; the separate bullet below asserts `time` stays); `cargo tree -e features -i tower-http` shows **no** `timeout` and **no** `limit` feature; `secrecy`'s `serde` feature is **still enabled** (it is load-bearing — `SecretString: Deserialize` for `envy`); the lockfile's duplicated-crate count drops; `cargo fmt/clippy/test` green; `cargo sqlx prepare --check` green |
-| T65 | the in-tree store implements `tower_sessions_core::SessionStore` and the **existing** `sessions` table + DDL are unchanged (`SHOW CREATE TABLE` matches the baseline byte-for-byte — the runbook's step 5(d) drift gate stays green); the payload stays **MessagePack** (a store written before the change still reads it); `tower-sessions-sqlx-store` is **gone** from `Cargo.toml` and the lockfile; `cargo tree -i sqlx` shows **one** sqlx version; `cargo tree -i tower-sessions-core` shows **one** core version; the `AS "…chrono::NaiveDateTime"` overrides are gone from all five store files (`grep -rc 'chrono::NaiveDateTime' src/features/*/store.rs` → 0) and sqlx now infers `chrono` natively; `sqlx/time` is no longer enabled (verified via `cargo tree -e features`); the session suite (login / logout / me / cycle_id / expiry / sweeper) is green |
+| T65 | the in-tree store implements `tower_sessions_core::SessionStore` and the **existing** `sessions` table + DDL are unchanged (`SHOW CREATE TABLE` matches the baseline byte-for-byte — the runbook's step 5(d) drift gate stays green); the payload stays **MessagePack** (a store written before the change still reads it); `tower-sessions-sqlx-store` is **gone** from `Cargo.toml` and the lockfile; `cargo tree -i sqlx` shows **one** sqlx version; `cargo tree -i tower-sessions-core` shows **one** core version; the `AS "…chrono::NaiveDateTime"` overrides are gone from **all eight** store files — `{boards,cards,checklists,columns,labels,notes,projects,tags}` (measured 2026-10-22 (e): **eight, not five**) — (`grep -rc 'chrono::NaiveDateTime' src/features/*/store.rs` → 0) and sqlx now infers `chrono` natively; `sqlx/time` is no longer enabled (verified via `cargo tree -e features`); the session suite (login / logout / me / cycle_id / expiry / sweeper) is green |
 | T67 | every target version is in `Cargo.toml` at the version this spec names; `argon2`'s `hash_password_into` is used and the Argon2id PHC format is unchanged (`$argon2id$v=19$m=19456,…` — the existing tests pin it); `tower-http` 0.7.1's compression **406** behavior is either accepted or disabled by an explicit test; the `ServeDir` trailing-slash change is verified against the SPA fallback; `utoipa` 6's OpenAPI output is regenerated (`openapi.json` + `frontend/src/lib/api/schema.d.ts` in the **same PR**) and `openapi_snapshot` is green; `Cargo.lock`'s diff is reviewed line by line (no unintended downgrade); `cargo fmt/clippy/test` green |
 | T66 | the `DATABASE_URL` carries `collation=utf8mb4_unicode_ci` in **all five** places it appears (`.env`, `compose.yaml`, the CI workflow, `docs/data-migration-live.md`, `BACKEND-RS-ORCHESTRATION.md`); `SELECT @@collation_connection` = `utf8mb4_unicode_ci` is asserted by a test (so the pin is load-bearing, not decorative); the `sqlx` feature names are the 0.9 ones (`runtime-tokio` + `tls-rustls-ring-native-roots`, **not** `runtime-tokio-rustls`); `.sqlx/` is regenerated with `cargo sqlx prepare --workspace --all -- --all-targets` and the **diff is reviewed** (the app's own columns are all non-binary `VarString`/`Long`/`Datetime`, so the 0.9 `Vec<u8>`→`String` inference change must produce **no** Rust type change — if it does, stop and re-read the DTOs); `cargo sqlx prepare --check` green; the `Migrate` trait is adopted (no hand-rolled `SELECT version FROM _sqlx_migrations`); the 2 runtime `sqlx::query()` calls still compile as `&'static str` (no `AssertSqlSafe` needed) and the 83 `query!` macros are unaffected |
 
@@ -1525,7 +1560,7 @@ Task-specific additions:
 | `AGENTS.md` (repo root) | the *"session cookie name is env-dependent"* lesson → new names + `APP_ENV`; new lessons: **"a gate that has never executed is not a gate"** + **"a hand-maintained allowlist drifts — assert it with a test"** |
 | `docs/data-migration-live.md` | the operator env block (`APP_ENV=development`), the `set-cookie:` expectation line (`kanpad.sid=`), and the `__Host-` note |
 | `compose.yaml` | the **rust** service: `APP_ENV` instead of `NODE_ENV` (the **nest** service keeps `NODE_ENV`) |
-| `backend-rs/.github/workflows/ci.yml` | `-e APP_ENV=test`; **the file then moves to the repo root** (T55) |
+| `.github/workflows/backend-rs.yml` | `-e APP_ENV=test` (T54 edited the file at its then-path `backend-rs/.github/workflows/ci.yml`); **the file then moved to the repo root** (T55) |
 
 **Which of these are already done.** The **spec** half of the table is applied
 now, because the spec IS the plan: `00-overview.md` (Amendment 11),

@@ -261,10 +261,15 @@ Neither change touches the wire contract (the cookie name is not in
 
 ## E5. Observability, build chain, and the "gate that never ran"
 
-> Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
+> Rationale record. **PARTIALLY IMPLEMENTED (2026-10-22).** The **build
+> chain** landed in T55 (the workflow moved to the repo root — it had never
+> run — and T68 repaired the two steps that were red when it finally became
+> verifiable) and in T57 (`[lints]`, `[profile.release]`, the
+> `rust-toolchain.toml` pin, the committed `deny.toml`); the **dependency
+> hygiene** landed in T63. The **observability** half is still PLANNED: to be
 > folded into `10-architecture.md` (Observability, Config, DB pool) and
-> `54-rust-idiom-hardening.md` (B5, B8, B10, B11) by T55/T57/T60/T61/T62.
-> Do not implement from the MUSTs below.
+> `54-rust-idiom-hardening.md` (B8, B10, B11) by T60/T61/T62. Do not
+> implement the observability MUSTs from this section as if they were done.
 
 * **The CI workflow never executed.** It lived at
   `backend-rs/.github/workflows/ci.yml`, and GitHub discovers workflows

@@ -36,8 +36,14 @@ backend-rs: #[utoipa::path] handlers + ToSchema DTOs, one ApiDoc in src/docs.rs
   → hand frontend/src/lib/api/client.ts (apiFetch) consumed per-feature
 ```
 
-Backend rules: utoipa 5 + utoipa-axum (no Nest `DocumentBuilder`/`SwaggerModule`/`@ApiResponse`
+Backend rules: utoipa 6 + utoipa-swagger-ui 10 (no Nest `DocumentBuilder`/`SwaggerModule`/`@ApiResponse`
 decorators — annotations live in `#[utoipa::path]` + `ToSchema` derives; wiring/gating is T40a).
+**2026-10-22: `utoipa-axum` is REMOVED** (0 references — the spec is built with
+`#[derive(utoipa::OpenApi)]` in `docs.rs`, not `OpenApiRouter::routes(routes!(handler))`), and
+`utoipa` moves 5 → 6 with `utoipa-swagger-ui` 9 → 10 in lockstep (T67). **The emitted OpenAPI
+changes with the utoipa major**, so `openapi.json` + this file's `schema.d.ts` output regenerate
+in the SAME PR (T52 rule) and `openapi_snapshot` must be green — the pipeline itself is
+unchanged.
 Envelopes are part of the spec: `Page<T>` (paginated lists) and the RFC9457 problem+json error
 schemas generate as real components. DTO nullability follows the `20-api-contract.md` Nullability table (absent-vs-null,
 e.g. `checklist_progress` omitted when empty vs `description: null` emitted) — do not re-decide per feature. Paginated endpoints exist, so the frontend DOES take on

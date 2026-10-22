@@ -132,12 +132,255 @@ cap, no memory hardness). Folded into `10-architecture.md` pins and
 * Gate hashing cost via `Settings { hash_cost }`; tests use minimal cost
   (default Argon2 cost × auth suite = minutes otherwise).
 
+## A4. Naming: `APP_ENV` + `kanpad.sid` (no Node artifacts)
+
+> Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
+> folded into `10-architecture.md` (Config + Sessions) by T54. Do not
+> implement from the MUSTs below.
+
+The rewrite's own constitution (`00-overview.md` Amendment 10) forbids
+carrying NestJS-isms into `backend-rs/`. Two survived the first pass because
+they look like "parity" but never were on the wire contract:
+
+* **`NODE_ENV`** — a **Node.js/npm** convention (`npm` sets it,
+  `react-scripts` branches on it). It has no meaning in a Rust binary. The
+  Rust-web convention is `APP_ENV` (`actix-web`/`axum` community templates:
+  `APP_HOST`/`APP_PORT`/`APP_ENV`; `sqlx` uses `DATABASE_URL`; `tracing` uses
+  `RUST_LOG`). Rejected `RUST_ENV` (reads as "the compiler's env", collides
+  conceptually with `RUST_LOG`), `KANPAD_ENV` (the config table is
+  unprefixed-by-design, `DB_*`/`DATABASE_URL` aside) and `PROFILE` (cargo's
+  vocabulary). The **Nest** service keeps `NODE_ENV` — separate container,
+  separate runtime.
+  * **The rename must not fail open.** `APP_ENV` defaults to `development`,
+    so a deployment that still exports `NODE_ENV=production` and has not
+    added `APP_ENV` would silently boot as development — losing `Secure`
+    cookies, the `__Host-` prefix, prod HSTS and the deny-all CORS default.
+    `Settings::load()` therefore **fails** when `NODE_ENV` is present, naming
+    `APP_ENV` explicitly. Same discipline as the DB-name screen, the charset
+    requirement and the `HASH_COST` prod floor: never degrade silently.
+* **`connect.sid`** — **express-session's default**, copied verbatim from the
+  Nest source (`backend/src/main.ts:39`). A Rust service must not name its
+  session cookie after an Express middleware; the name misidentifies the
+  implementation to every operator, browser extension and log scraper. New
+  name: `kanpad.sid` (dev/test) / `__Host-kanpad.sid` (production).
+  * The **`__Host-` prefix is kept** (host-only binding ⇒ no subdomain
+    fixation; mandates `Secure`; mandates `Path=/`) and stays
+    **environment-conditional** because `__Host-` mandates `Secure`, which
+    browsers only transmit over HTTPS — the plain-HTTP staging box in
+    `docs/data-migration-live.md` needs the un-prefixed name.
+  * The `__Host-` invariant (`Secure` + `Path=/` + no `Domain`) becomes
+    **test-locked**: a future `.with_domain(...)` must break a test, not
+    production. A no-`connect.sid` regression guard is added alongside.
+
+Neither change touches the wire contract (the cookie name is not in
+`openapi.json`; `APP_ENV` is not on the wire at all), so neither needs an
+`openapi.json` / `schema.d.ts` regeneration.
+
+## E4. CSRF defence-in-depth + CSP on the SPA-serving origin
+
+> Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
+> folded into `10-architecture.md` (CORS + Middleware order) by T56. Do not
+> implement from the MUSTs below.
+
+* **Cross-origin check on mutating requests — the Go 1.25
+  `CrossOriginProtection` algorithm.** The API authenticates with an ambient
+  cookie, so a browser attaches the session cookie to cross-site requests.
+  `SameSite=Lax` blocks it for cross-site `POST`/`PUT`/`PATCH`/`DELETE` —
+  but that is a **browser** control: it does nothing for a non-browser client
+  and nothing at all if a deployment relaxes `SameSite` to `None`. So a
+  server-side check is required.
+  **Decision (re-decided 2026-10-22): adopt the algorithm, not a bespoke
+  rule.** The reference is Filippo Valsorda's research behind Go 1.25's
+  `net/http.CrossOriginProtection`; `tower-http` 0.7 ships it verbatim as
+  `CsrfLayer` (feature `csrf`): safe methods always allowed;
+  `Sec-Fetch-Site: same-origin|none` allowed; `Sec-Fetch-Site: cross-site|
+  same-site` allowed only if the `Origin` is trusted; with no
+  `Sec-Fetch-Site`, no `Origin` means allowed (non-browser), and an `Origin`
+  whose authority equals the request's effective host means allowed.
+  **Why the algorithm and not the rule this section originally proposed**
+  ("an `Origin` that is present must be in the CORS allowlist"): browsers
+  send `Origin` on **every** mutating request, same-origin included, and the
+  Rust service serves the SPA itself. Under the original rule an operator
+  who forgets `CORS_ORIGINS` in production gets **every write 403'd** — the
+  whole mutating API, silently broken, with a CORS-shaped error that points
+  nowhere near the cause. The algorithm's `Origin`/`Host` fallback removes
+  that cliff: a same-origin SPA works with an **empty** allowlist.
+  **Why not a CORS feature** (verified against `tower-http` 0.6.11 and
+  0.7.x): `CorsLayer` does **not** reject a request from a non-allowlisted
+  origin — for a non-preflight request it forwards the request to the inner
+  service regardless and merely omits the `Access-Control-Allow-Origin`
+  response header (the *browser* then blocks the response client-side), and
+  0.6.11 has **no `enforce_origin` option** at all. Server-side enforcement
+  needs its own layer; 0.7 finally ships one. It must sit **inside**
+  `CorsLayer`: `CorsLayer` short-circuits every `OPTIONS` request
+  (preflight), so a preflight never reaches the check.
+  **Three guardrails** (why this is a task and not a one-line change):
+  (i) **the allowlist is canonicalized at boot** — `CsrfLayer` matches
+  origins byte-for-byte and its own docs warn that a non-canonical entry
+  *"will silently never match"*, so each entry is parsed to canonical form
+  (lowercase scheme+host, the scheme's default port stripped, no trailing
+  slash, no path/query/fragment, no opaque origin) and a non-canonical entry
+  is a **boot error naming the offending entry**; one canonical list feeds
+  `CorsLayer::allow_origin`, `CsrfLayer::add_trusted_origin` and the CSP's
+  `connect-src`; (ii) the rejection is rendered through the shared
+  `problem_response` + the **existing** `AppError::Forbidden` mapping, so
+  **no new problem-type URI** is introduced — the change is contract-neutral;
+  (iii) the `Host`-rewrite proxy caveat is recorded in the runbook.
+  `SameSite=Lax` + the `__Host-` cookie remain the first line of defence.
+* **CSP.** The Nest-era "no CSP (`csp:false`)" decision was correct *for
+  Nest* — the Nest service never served the SPA. The **Rust** service does
+  (`ServeDir public/` + SPA fallback), so it is the origin that loads the
+  frontend's scripts and styles. Shipping the SPA with no CSP would be a
+  regression in the rewrite's security posture. Normative CSP:
+  `default-src 'self'; script-src 'self' 'sha256-<hash>'; style-src 'self'
+  'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;
+  connect-src 'self' <CORS allowlist origins>; frame-ancestors 'none';
+  base-uri 'self'; form-action 'self'`.
+  **Two corrections, verified against the frontend on 2026-10-22:**
+  1. **`connect-src` MUST include the CORS allowlist origins.** The dev
+     topology is cross-origin (SPA on `:5173`, API on `:3001` —
+     `frontend/src/lib/api/client.ts:67`, `frontend/vite.config.ts:27`), so
+     `connect-src 'self'` alone would have the browser block every API call.
+     The allowlist is the right source: it is exactly "the origins allowed
+     to call this API".
+  2. **`script-src` MUST allow the inline theme bootstrap.** `frontend/
+     index.html:12-21` contains an inline `<script>`; `script-src 'self'`
+     alone blocks it (the page renders, but the stored theme is ignored and
+     there is a flash of the wrong theme). It is allowed by **CSP hash**
+     (`'sha256-<base64>'` over the exact inline script bytes) — a hash is
+     appropriate because the inline script is a **fixed literal**, not a
+     per-request value. The hash is **computed at boot from the served
+     `public/index.html`** and covered by a test, so it cannot drift
+     silently. A per-request **nonce** stays out of scope (the static SPA
+     fallback does not template the HTML) — the earlier "no hash" rationale
+     was wrong because it assumed the SPA had no inline script at all.
+  `style-src 'unsafe-inline'` is required (12 inline `style={{…}}` React
+  props); `script-src` keeps neither `unsafe-inline` nor `unsafe-eval`.
+
+## E5. Observability, build chain, and the "gate that never ran"
+
+> Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
+> folded into `10-architecture.md` (Observability, Config, DB pool) and
+> `54-rust-idiom-hardening.md` (B5, B8, B10, B11) by T55/T57/T60/T61/T62.
+> Do not implement from the MUSTs below.
+
+* **The CI workflow never executed.** It lived at
+  `backend-rs/.github/workflows/ci.yml`, and GitHub discovers workflows
+  **only** at the repo root's `.github/workflows/`. Every gate in it (fmt,
+  clippy, the `unwrap` grep gate, `prepare --check`, `cargo audit`/`deny`,
+  the openapi diff, the docker build) was therefore unverified — and when the
+  gate was finally replayed by hand, the repo's own `unwrap`/`expect` grep
+  gate **failed on three sites**. Lesson: *a gate that has never executed is
+  not a gate*; a green pipeline badge is worth more than a perfect gate
+  definition, and the definition must be validated by a red run.
+* **Observability.** `tracing-subscriber` gains `json` (production formatter);
+  a `/metrics` endpoint (Prometheus text) exposes request rate/duration, pool
+  saturation, throttle rejections and process metrics. The `route` label is
+  the **matched pattern**, never the raw path (cardinality) — via axum's
+  `MatchedPath` extension, which needs the `matched-path` feature.
+  **Three corrections (verified 2026-10-22):** (1) sqlx 0.8.6 has **no
+  `PoolMetrics` type and no `metrics` feature** (and sqlx 0.9 adds none
+  either) — the pool gauges come from
+  `Pool::size()` / `Pool::num_idle()`, and the acquire-duration series is
+  **our own** `acquire_timed()` helper; (2) `/metrics` must **not** be on the
+  public API port (axum's own Prometheus example uses a second server for
+  exactly this reason) — it gets its own listener, enabled by an optional
+  `METRICS_PORT` that is **unset = no endpoint at all**; (3) a scrape must
+  not record itself (no feedback loop).
+* **Build chain.** `[lints]` (with `missing_docs = "deny"` — the doc
+  discipline becomes a build gate, not a convention), `[profile.release]`
+  (LTO + `strip`; **no** `panic = "abort"` — axum/tower catch panics per task
+  and aborting would kill the process instead of returning a 500),
+  `rust-toolchain.toml` (local == CI == Docker), a committed `deny.toml`, and
+  **edition 2024** (verified free of blockers: no `unsafe`, no `gen`, no
+  `if let … else` temporaries).
+  **Four corrections (verified 2026-10-22):** (1) `edition = "2024"`
+  implies **`resolver = "3"`** → cargo's Rust-version-aware resolver, so the
+  dependency set can change (crates may be *downgraded* to versions that
+  still support our MSRV) — the `Cargo.lock` diff must be **reviewed line by
+  line**; (2) the `deny.toml` policy is **derived from a first failing run**,
+  not guessed (a naive `multiple-versions = "deny"` trips over the duplicate
+  versions every real tree has, and the license allow-list must enumerate the
+  tree's actual SPDX set); (3) the toolchain pin moves to **`1.99.1`** — the
+  current stable (2026-10-13), **not** the `1.99.0` the first draft named —
+  and it clears the MSRV ceiling of the whole target dependency set (sqlx
+  0.9's `1.94.0` is the highest; everything else is <= 1.88). The Dockerfile
+  base moves to `rust:1.99-bookworm` **in the same PR**: the Dockerfile and
+  the toolchain move together, never one alone. The pin is justified as
+  "match the Dockerfile, and match the dependency set's MSRV ceiling" — not
+  "latest" — and the *reason it changes now* is the window: the toolchain
+  pin gates `edition = "2024"` → `resolver = "3"` → the entire dependency
+  set, which is cheap before the data migration and expensive after it;
+  (4) `secrecy`'s `serde` feature LOOKS removable and is **not** —
+  `Settings` is `Deserialize`d by `envy` and holds two `SecretString`
+  fields, and `SecretString: Deserialize` only exists with the feature.
+* **Dependency hygiene (2026-10-22, `54` Part C).** The manifest carries
+  **three dead direct dependencies** — `axum-valid`, `utoipa-axum`, `zeroize`
+  (a fourth, `time`, was a **false positive** of the audit's first pass:
+  `src/lib.rs:155` uses `Expiry::OnInactivity(time::Duration::hours(24))` and
+  that `time::` is the `time` **crate**, not `std::time` — `cargo tree -i time`
+  lists `backend-rs` as a direct dependent, and `tower_sessions::Expiry`
+  *requires* it) — and **two dead `tower-http` features** (`timeout`, `limit`). The
+  expensive one is `axum-valid`: it is unused (the code hand-rolls
+  `ValidJson`/`ValidQuery` because `axum-valid 0.20` binds garde 0.20 while
+  the DTOs derive garde 0.22) yet it drags a **second, complete axum 0.7.9**
+  into the binary — plus `validator` (a second validation framework, pulled
+  by `axum-valid 0.20`'s default features) and a second `garde`. The
+  decision is **remove, not upgrade**: `axum-valid 0.24+` now supports
+  garde 0.22 + axum 0.8, but its `Garde<E>` extractor still carries the
+  `Context: FromRef<State>` bound with no blanket `FromRef<S> for ()`, so it
+  would not be a drop-in — and the *stale comment* that justifies the
+  dependency is corrected so the next contributor does not re-add it.
+* **Session-store ownership (2026-10-22, `54` Part C).** The session store
+  is the **hinge** of the dependency program.
+  `tower-sessions-sqlx-store 0.15.0` requires `sqlx ^0.8.0` AND
+  `tower-sessions-core ^0.14.0`; `tower-sessions 0.15.0` requires
+  `tower-sessions-core =0.15.0`. So today **neither** dependency major is
+  reachable — a second sqlx or a second `tower-sessions-core` is a compile
+  error — and upstream's dependabot bump of the store to sqlx 0.9 has been
+  open since 2026-05-21 against a crate whose last release was 2025-01-01.
+  **Decision: own the store in-tree** (~200 LOC implementing
+  `tower_sessions_core::SessionStore` over the app pool), keeping the
+  on-disk format IDENTICAL (the existing `sessions` DDL + MessagePack) so
+  the change is a code-ownership change with no data implication and the
+  runbook's schema-drift gate stays green. Every alternative was searched:
+  `tower-sessions-ext` and `tower-sessions-sqlx-store-chrono` both still pin
+  sqlx 0.8; `axum_session` + `axum_session_sqlx` supports sqlx 0.9 but
+  replaces the whole session middleware; a vendored `[patch.crates-io]` fork
+  trades a version pin for permanent supply-chain surface. The in-tree store
+  also removes the *reason* for `sqlx/time` being enabled — which is why
+  every query carries `AS "col: chrono::NaiveDateTime"` — so those
+  overrides delete with it. A precedent exists: `darksailor.dev/kobo-shelf`
+  (2026-07-27) replaced the same crate for the same reason and moved to
+  sqlx 0.9 in the same change.
+* **Concurrency.** The move transaction's bounded retry extends to MySQL
+  **deadlock** (`1213`) and **lock-wait timeout** (`1205`), and the move tx
+  runs at `READ COMMITTED` (gap-lock deadlock reduction — the spec already
+  noted this as a candidate). Pool sizing becomes env-driven.
+  **Three corrections (verified 2026-10-22 against the MySQL 8.4 manual):**
+  (1) match the retry on the error **NUMBER**, not the SQLSTATE — `1213` is
+  `40001` but `1205` is `HY000`, so a `40001`-only matcher misses every
+  lock-wait timeout; (2) `1205` rolls back **only the current statement** by
+  default (the transaction survives half-applied), so the retry must
+  explicitly `ROLLBACK` the whole transaction; (3) `SET TRANSACTION
+  ISOLATION LEVEL READ COMMITTED` must be issued **before** `BEGIN` —
+  unscoped it applies to the next transaction only and MySQL rejects it
+  inside one with `ERROR 1568 (25001)`. And the benefit must not be
+  overstated: `READ COMMITTED` *"greatly reduces the probability of
+  deadlocks, but they can still happen"* — the retry remains required.
+* **Image.** `.dockerignore` (the build context currently ships `target/`),
+  a `HEALTHCHECK` (the app already exposes `/health`), and digest-pinned
+  base images.
+
 ## S2. Sessions, config, throttle, tests
 
-* Sessions: keep `tower-sessions 0.14` + store-owned `sessions` **in the app
+* Sessions: keep `tower-sessions` (**0.15** as of 2026-10-22; the store is now
+  **in-tree** — `src/common/session_store.rs` — see `54` Part C §C4) +
+  store-owned `sessions` **in the app
   database** (`.with_schema_name(<current DB>)` + `.with_table_name("sessions")`),
   `cycle_id()` on login **and** privilege change. Prod cookie uses `__Host-`
-  prefix (`__Host-connect.sid`, `Secure + Path=/`, no `Domain`). Sweeper
+  prefix (`__Host-kanpad.sid` — the Express-derived `connect.sid` name is
+  retired; see A4, `Secure + Path=/`, no `Domain`). Sweeper
   `continuously_delete_expired` spawns **only in `main.rs`**, never in
   `lib::create_app` (tests would leak a task + conn per test). The baseline
   creates the `sessions` table before the app tables' consumers, in the same

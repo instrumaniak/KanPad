@@ -50,14 +50,6 @@ yanked = "deny"
 # WITHOUT the ignore. A stale ignore is a silent hole in the gate.
 # ---------------------------------------------------------------------------
 ignore = [
-    # zip 3.0.0 — three advisories (SUID/SGID bits on extraction, symlink
-    # escape, permissions through symlinks). It is a BUILD-time dependency of
-    # `utoipa-swagger-ui 9` (it vendors the Swagger UI assets into the
-    # binary); it is NOT reachable from the running service.
-    # REMOVED BY: T67 (utoipa-swagger-ui 10 requires `zip ^9.0`).
-    { id = "RUSTSEC-2026-0367", reason = "zip 3.0 is a build-time dep of utoipa-swagger-ui 9; T67 takes swagger-ui 10 (zip ^9)" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 3.0 is a build-time dep of utoipa-swagger-ui 9; T67 takes swagger-ui 10 (zip ^9)" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 3.0 is a build-time dep of utoipa-swagger-ui 9; T67 takes swagger-ui 10 (zip ^9)" },
 
     # rsa 0.9.10 — the Marvin attack, a Bleichenbacher-style timing oracle
     # (RUSTSEC-2023-0071). It is used by `sqlx-mysql` ONLY for the MySQL

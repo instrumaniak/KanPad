@@ -19,8 +19,14 @@ tower = { version = "0.5", features = ["timeout"] }
 # `timeout` and `limit` are NOT enabled: the request timeout is
 # `tower::ServiceBuilder::timeout` (the `tower` crate's feature) and the 2 MiB
 # body cap is axum's `DefaultBodyLimit`. Neither tower-http layer is used.
-tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "compression-full", "set-header", "fs", "sensitive-headers"] }
-tower-sessions = { version = "0.14", features = ["signed"] }
+# tower-http 0.7 splits the compression features, and `compression-full`
+# would pull `zstd-sys`/`libz-sys` (a C build) for a codec **no browser
+# accepts**. The API serves JSON to browsers: `gzip` is universal and `br` is
+# supported by every browser in use — so the pair is the whole practical
+# surface, and it drops the C-toolchain requirement. (The `csrf` feature is
+# NOT enabled here: T56 turns it on when it adopts `CsrfLayer`.)
+tower-http = { version = "0.7", features = ["trace", "cors", "request-id", "compression-gzip", "compression-br", "set-header", "fs", "sensitive-headers"] }
+tower-sessions = { version = "0.15", features = ["signed"] }
 # `tower-sessions-core` is the SAME version `tower-sessions 0.14` pins
 # (`=0.14.0`), so this is NOT a second core in the tree — it is the same one,
 # with one extra feature enabled.
@@ -31,7 +37,7 @@ tower-sessions = { version = "0.14", features = ["signed"] }
 # dependency). Dropping the store dropped the feature with it, so it is now
 # requested explicitly here. Declaring it keeps the sweeper on the upstream
 # implementation instead of a hand-rolled loop in `main.rs`.
-tower-sessions-core = { version = "0.14", features = ["deletion-task"] }
+tower-sessions-core = { version = "0.15", features = ["deletion-task"] }
 # The session store is owned IN-TREE (`src/common/session_store.rs`) — see
 # `54` Part C §C4. `tower-sessions-sqlx-store` required `sqlx ^0.8` AND
 # `tower-sessions-core ^0.14`, so taking either dependency major pulled a
@@ -41,16 +47,16 @@ tower-sessions-core = { version = "0.14", features = ["deletion-task"] }
 rmp-serde = "1"
 # `SessionStore` is an `#[async_trait]` trait — the impl needs the macro.
 async-trait = "0.1"
-tower_governor = "=0.8.0"
-argon2 = "0.5"
-bcrypt = "0.17"
-garde = { version = "0.22", features = ["derive"] }
+tower_governor = "0.8"
+argon2 = "0.6"
+bcrypt = "0.19"
+garde = { version = "0.23", features = ["derive"] }
 secrecy = { version = "0.10", features = ["serde"] }
-utoipa = "5"
-utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+utoipa = "6"
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 chrono = "0.4"
 time = "0.3"
 dotenvy = "0.15"
@@ -60,7 +66,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-dialoguer = "0.11"
+dialoguer = "0.12"
 rpassword = "7"
 
 [[test]]

@@ -8,7 +8,7 @@
 
 use argon2::{
     Algorithm, Argon2, Params, Version,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+    password_hash::{PasswordHasher, PasswordVerifier},
 };
 use sqlx::MySqlExecutor;
 
@@ -77,11 +77,13 @@ where
 /// through to [`verify_bcrypt_truncated` next).
 #[tracing::instrument(skip(password, hash))]
 pub fn verify_argon2(password: &str, hash: &str) -> bool {
-    let Ok(parsed) = PasswordHash::new(hash) else {
-        return false;
-    };
+    // argon2 0.6 / password-hash 0.6: the verifier takes the PHC STRING
+    // directly (`PasswordVerifier<str>`) and parses it internally, so an
+    // unparseable hash (legacy bcrypt, garbage) is an `Err` — i.e. `false`,
+    // exactly as before. The explicit `PasswordHash::new` parse is gone with
+    // the PHC types' move to the `phc` crate.
     Argon2::default()
-        .verify_password(password.as_bytes(), &parsed)
+        .verify_password(password.as_bytes(), hash)
         .is_ok()
 }
 
@@ -152,9 +154,12 @@ pub fn hash_password(password: &str, hash_cost: u32) -> Result<String, AppError>
     let params = Params::new(ARGON2_MEMORY_KIB, hash_cost, ARGON2_LANES, None)
         .map_err(|_| AppError::Internal(Internal))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let salt = SaltString::generate(&mut OsRng);
+    // argon2 0.6 / password-hash 0.6: the salt is generated INTERNALLY by
+    // `PasswordHasher::hash_password` (the `getrandom` feature, on by
+    // default) — `SaltString` is gone with the PHC types' move to the `phc`
+    // crate. The generated salt is 16 bytes, as before.
     argon2
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|hash| hash.to_string())
         .map_err(|_| AppError::Internal(Internal))
 }

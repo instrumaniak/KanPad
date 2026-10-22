@@ -811,8 +811,8 @@ export interface components {
             is_archived: boolean;
             /** @description Board name. */
             name: string;
-            project?: null | components["schemas"]["ProjectRef"];
-            project_id?: null | components["schemas"]["ProjectId"];
+            project?: components["schemas"]["ProjectRef"] | null;
+            project_id?: components["schemas"]["ProjectId"] | null;
             /** @description `updated_at`, same shape. */
             updated_at: string;
             /** @description View mode (`board` | `list`). */
@@ -842,8 +842,8 @@ export interface components {
             is_archived: boolean;
             /** @description Board name. */
             name: string;
-            project?: null | components["schemas"]["ProjectRef"];
-            project_id?: null | components["schemas"]["ProjectId"];
+            project?: components["schemas"]["ProjectRef"] | null;
+            project_id?: components["schemas"]["ProjectId"] | null;
             /** @description `updated_at`, same shape. */
             updated_at: string;
             /** @description View mode (`board` | `list`). */
@@ -864,7 +864,7 @@ export interface components {
          *     when the card owns ≥ 1 checklist, mirroring Nest `toCardResponse`).
          */
         CardDetailResponse: {
-            checklist_progress?: null | components["schemas"]["ChecklistProgress"];
+            checklist_progress?: components["schemas"]["ChecklistProgress"] | null;
             /** @description Nested checklists (`id` order) with items (`position ASC`). */
             checklists: components["schemas"]["ChecklistResponse"][];
             /** @description Owning column id. */
@@ -912,7 +912,7 @@ export interface components {
          *     ISO-8601 string or `null`.
          */
         CardSummary: {
-            checklist_progress?: null | components["schemas"]["ChecklistProgress"];
+            checklist_progress?: components["schemas"]["ChecklistProgress"] | null;
             /** @description Owning column id. */
             column_id: components["schemas"]["ColumnId"];
             /** @description `created_at`, same shape. */
@@ -1289,15 +1289,15 @@ export interface components {
          *     the source entity marks it `select:false`, so only this path reads it).
          */
         NoteDetailResponse: {
-            board_id?: null | components["schemas"]["BoardId"];
-            card_id?: null | components["schemas"]["CardId"];
+            board_id?: components["schemas"]["BoardId"] | null;
+            card_id?: components["schemas"]["CardId"] | null;
             /** @description Note content (`null` when absent — emitted, never omitted). */
             content?: string | null;
             /** @description `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC). */
             created_at: string;
             /** @description `notes.id` (`INT` ↔ `i32` newtype). */
             id: components["schemas"]["NoteId"];
-            project_id?: null | components["schemas"]["ProjectId"];
+            project_id?: components["schemas"]["ProjectId"] | null;
             /** @description Linked tags (`id` order). */
             tags: components["schemas"]["TagRef"][];
             /** @description Note title. */
@@ -1329,8 +1329,8 @@ export interface components {
                 is_archived: boolean;
                 /** @description Board name. */
                 name: string;
-                project?: null | components["schemas"]["ProjectRef"];
-                project_id?: null | components["schemas"]["ProjectId"];
+                project?: components["schemas"]["ProjectRef"] | null;
+                project_id?: components["schemas"]["ProjectId"] | null;
                 /** @description `updated_at`, same shape. */
                 updated_at: string;
                 /** @description View mode (`board` | `list`). */
@@ -1359,7 +1359,7 @@ export interface components {
         Page_CardSummary: {
             /** @description Items on this page. */
             data: {
-                checklist_progress?: null | components["schemas"]["ChecklistProgress"];
+                checklist_progress?: components["schemas"]["ChecklistProgress"] | null;
                 /** @description Owning column id. */
                 column_id: components["schemas"]["ColumnId"];
                 /** @description `created_at`, same shape. */
@@ -1439,13 +1439,13 @@ export interface components {
         Page_NoteSummaryResponse: {
             /** @description Items on this page. */
             data: {
-                board_id?: null | components["schemas"]["BoardId"];
-                card_id?: null | components["schemas"]["CardId"];
+                board_id?: components["schemas"]["BoardId"] | null;
+                card_id?: components["schemas"]["CardId"] | null;
                 /** @description `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC). */
                 created_at: string;
                 /** @description `notes.id` (`INT` ↔ `i32` newtype). */
                 id: components["schemas"]["NoteId"];
-                project_id?: null | components["schemas"]["ProjectId"];
+                project_id?: components["schemas"]["ProjectId"] | null;
                 /** @description Linked tags (`id` order). */
                 tags: components["schemas"]["TagRef"][];
                 /** @description Note title. */

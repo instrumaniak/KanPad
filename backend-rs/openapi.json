@@ -1546,7 +1546,6 @@
         "operationId": "health",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1632,22 +1631,22 @@
           "project": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ProjectRef",
                 "description": "Owning project ref (`null` = standalone)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "project_id": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ProjectId",
                 "description": "Owning project id (`null` = standalone)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1702,22 +1701,22 @@
           "project": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ProjectRef",
                 "description": "Owning project ref (`null` = standalone)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "project_id": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ProjectId",
                 "description": "Owning project id (`null` = standalone)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1761,11 +1760,11 @@
           "checklist_progress": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ChecklistProgress",
                 "description": "Checklist rollup (`None` = the card owns no checklist)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1869,11 +1868,11 @@
           "checklist_progress": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ChecklistProgress",
                 "description": "Checklist rollup (`None` = the card owns no checklist)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -2605,22 +2604,22 @@
           "board_id": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/BoardId",
                 "description": "Owning board id (`null` = unlinked)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "card_id": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CardId",
                 "description": "Owning card id (`null` = unlinked)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -2642,11 +2641,11 @@
           "project_id": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ProjectId",
                 "description": "Owning project id (`null` = unlinked)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -2724,22 +2723,22 @@
                 "project": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/ProjectRef",
                       "description": "Owning project ref (`null` = standalone)."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "project_id": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/ProjectId",
                       "description": "Owning project id (`null` = standalone)."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -2804,11 +2803,11 @@
                 "checklist_progress": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/ChecklistProgress",
                       "description": "Checklist rollup (`None` = the card owns no checklist)."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -2973,22 +2972,22 @@
                 "board_id": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/BoardId",
                       "description": "Owning board id (`null` = unlinked)."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "card_id": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/CardId",
                       "description": "Owning card id (`null` = unlinked)."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -3003,11 +3002,11 @@
                 "project_id": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/ProjectId",
                       "description": "Owning project id (`null` = unlinked)."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },

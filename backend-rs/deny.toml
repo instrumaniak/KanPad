@@ -50,19 +50,6 @@ yanked = "deny"
 # WITHOUT the ignore. A stale ignore is a silent hole in the gate.
 # ---------------------------------------------------------------------------
 ignore = [
-    # idna 0.5.0 — Punycode labels that decode to no non-ASCII
-    # (RUSTSEC-2024-0421). Pulled ONLY by `validator 0.18` <- `axum-valid
-    # 0.20` — the dependency T63 REMOVES (0 references in the tree).
-    # REMOVED BY: T63 (drop `axum-valid` -> `validator` -> `idna 0.5`).
-    { id = "RUSTSEC-2024-0421", reason = "idna 0.5 arrives only via the dead axum-valid -> validator chain; T63 removes it" },
-
-    # paste 1.0.15 — unmaintained (RUSTSEC-2024-0436). Pulled ONLY by
-    # `utoipa-axum 0.2` — the dependency T63 REMOVES (0 references: the
-    # spec is built with `#[derive(utoipa::OpenApi)]`, not `OpenApiRouter`).
-    # It is a proc-macro helper used at COMPILE time only.
-    # REMOVED BY: T63 (drop `utoipa-axum` -> `paste`).
-    { id = "RUSTSEC-2024-0436", reason = "paste arrives only via the dead utoipa-axum dependency; T63 removes it" },
-
     # zip 3.0.0 — three advisories (SUID/SGID bits on extraction, symlink
     # escape, permissions through symlinks). It is a BUILD-time dependency of
     # `utoipa-swagger-ui 9` (it vendors the Swagger UI assets into the

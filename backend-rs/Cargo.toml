@@ -16,18 +16,18 @@ axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
 tower = { version = "0.5", features = ["timeout"] }
-tower-http = { version = "0.6", features = ["trace", "cors", "timeout", "request-id", "compression-full", "set-header", "limit", "fs", "sensitive-headers"] }
+# `timeout` and `limit` are NOT enabled: the request timeout is
+# `tower::ServiceBuilder::timeout` (the `tower` crate's feature) and the 2 MiB
+# body cap is axum's `DefaultBodyLimit`. Neither tower-http layer is used.
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "compression-full", "set-header", "fs", "sensitive-headers"] }
 tower-sessions = { version = "0.14", features = ["signed"] }
 tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }
 tower_governor = "=0.8.0"
 argon2 = "0.5"
 bcrypt = "0.17"
 garde = { version = "0.22", features = ["derive"] }
-axum-valid = { version = "0.20", features = ["garde"] }
 secrecy = { version = "0.10", features = ["serde"] }
-zeroize = "1"
 utoipa = "5"
-utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

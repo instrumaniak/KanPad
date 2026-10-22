@@ -9,14 +9,15 @@
 //! then `garde::Validate::validate` with the unit context (failures map to
 //! `AppError::Validation` → 400 problem+json with `errors[]`).
 //!
-//! Note on `axum-valid`: its `Garde<E>` extractor does exactly this
-//! extract-then-validate sequence, but the pinned `axum-valid 0.20`
-//! validates against `garde 0.20` while this crate's DTOs derive
-//! `garde 0.22` — the types do not unify, so `Garde` cannot wrap them
-//! (its `Context: FromRef<State>` bound additionally has no blanket
-//! `FromRef<S> for ()`). Validating directly with the unit context is
-//! behavior-identical and state-generic; upgrade `axum-valid` past the
-//! garde-0.22 line before switching wrappers to `Garde` (T52 candidate).
+//! Note on `axum-valid`: **the dependency was REMOVED (T63)** — it had ZERO
+//! references in this crate, and it dragged a *second, complete* axum 0.7.9
+//! (plus `axum-core 0.4.5`, `matchit 0.7.3`, the `validator` 0.18 framework
+//! and a second `garde` 0.20) into the tree beside the real axum 0.8.9.
+//! These hand-rolled extractors stay: they are behavior-identical AND
+//! state-generic (`Garde<E>`'s `Context: FromRef<State>` bound has no blanket
+//! `FromRef<S> for ()`, so it is not a drop-in even at a newer version).
+//! Do NOT re-add the crate: the extract-then-validate sequence it provided
+//! is 30 lines above, and `garde` is already a direct dependency.
 
 use axum::{
     extract::{FromRequest, FromRequestParts, Json, Query, Request},

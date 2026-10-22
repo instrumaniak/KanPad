@@ -1097,7 +1097,7 @@ consumers see. Current gaps:
 > 4. **MSRV ceiling** — `cargo info <crate>@<version>` for `rust-version`, to
 >    confirm that one toolchain satisfies every target version.
 
-### C1 — Three dead direct dependencies (not four — see the `time` correction)
+### C1 — Three dead direct dependencies (not four — see the `time` correction) — **LANDED IN T63 (2026-10-22)**
 
 | Crate | Refs in `src/`+`tests/` | Evidence |
 |---|:--:|---|

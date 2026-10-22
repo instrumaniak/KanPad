@@ -380,7 +380,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 |------|--------|----------|---------|--------|
 | T54 naming (`APP_ENV` + `kanpad.sid`) | (merged, branch deleted) | — | none | **DONE `8b0cef64`** |
 | T55 CI activation + lint-gate repair | (merged, branch deleted) | — | T54 | **DONE `689dc895`** |
-| T57 build & supply chain | `rs-t57-build` | — | T55 | pending |
+| T57 build & supply chain | (merged, branch deleted) | — | T55 | **DONE `98fb1ce2`** |
 | T63 dead deps | `rs-t63-deps` | — | T57 | pending |
 | T65 in-tree session store | `rs-t65-store` | — | T63 | pending |
 | T67 library majors | `rs-t67-libs` | — | T65 | pending |
@@ -435,3 +435,37 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **Next**: T57 (build & supply chain: `[lints]`, `[profile.release]`, `rust-toolchain.toml`
   @ 1.99.1 + the CI toolchain-override fix, `deny.toml`, edition 2024) → T63 → T65 → T67 →
   {T56, T66} → T58 → T59 → T60 → T61 → T62.
+
+## Resume 2026-10-22 (T57 done — edition 2024 + toolchain 1.99.1 + deny.toml)
+
+- **T57 MERGED `98fb1ce2`** (ff into `dev-rs-local`; worktree + branch deleted).
+- **THE TOOLCHAIN MOVED: `rustc 1.99.1`** is now the default for every cargo command in
+  `backend-rs/` (the `rust-toolchain.toml` pin). The Dockerfile base moved to
+  `rust:1.99-bookworm` in the same commit. **The CI's `dtolnay/rust-toolchain@stable` step
+  OVERRODE the pin** (it exports `RUSTUP_TOOLCHAIN`) — it now names the pinned channel.
+- **`edition = "2024"`** landed with two REAL blockers the spec's "no blockers" claim missed:
+  - `std::env::set_var`/`remove_var` became **UNSAFE** → the config tests now load from an
+    explicit map (`Settings::from_pairs`) instead of mutating the process env → no `unsafe`
+    (the crate forbids it) and the tests are parallel-safe (the `ENV_LOCK` mutex is gone).
+  - clippy 1.99 adds 8 `collapsible_if` errors → fixed with edition-2024 let-chains.
+  - rustfmt's style edition follows the crate edition → the WHOLE tree was re-ordered by
+    `cargo fmt`. That is mandatory (the fmt gate runs the pinned toolchain), not drift.
+- **`deny.toml` is committed and DERIVED** (the CI's `cargo deny init` fallback is gone — a
+  missing policy now fails the build). The first run reported **6 real advisories**, and every
+  one is removed by a LATER task in this phase, so each is a **task-bound ignore**:
+  `idna 0.5` + `paste` (via the dead `axum-valid`/`utoipa-axum`) → **T63**; `zip 3.0` ×3
+  (build-time, utoipa-swagger-ui 9) → **T67**; `rsa 0.9` Marvin (sqlx-mysql's
+  `caching_sha2_password` auth) → **T66**. **Those tasks MUST delete their ignore entries.**
+- **`Cargo.lock`**: the `resolver = "3"` bump changed NOTHING (MSRV 1.99 is newer than every
+  dependency's floor → no downgrades). The only movement is the advisory fix: **25 crates, all
+  UPWARD** (incl. `rustls 0.23.45 → 0.23.46`).
+- **`openapi.json`**: utoipa reads `CARGO_PKG_*`, so the crate description + licence now appear
+  in the `info` block (3 lines). **The typegen artifact is unchanged** (verified with the real
+  `openapi-typescript`).
+- **Gates**: fmt 0 | clippy -D warnings -A pedantic 0 | `cargo doc --no-deps` **0 warnings**
+  (8 pre-existing broken intra-doc links fixed) | lib 60/60 | **api 86/86** | prepare --check 0 |
+  `.sqlx/` unchanged | `cargo deny advisories licenses bans` **ok** | release binary **stripped**
+  (`file` → stripped, `nm` → no symbols).
+- **NEXT**: T63 (drop `axum-valid` / `utoipa-axum` / `zeroize` + the 2 dead tower-http features
+  — **and delete the 2 advisory ignores it owns**) → T65 (in-tree session store) → T67 (library
+  majors — **delete the 3 `zip` ignores**) → {T56, T66 (**delete the `rsa` ignore**)} → …

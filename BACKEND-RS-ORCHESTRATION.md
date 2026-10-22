@@ -383,7 +383,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T57 build & supply chain | (merged, branch deleted) | — | T55 | **DONE `98fb1ce2`** |
 | T63 dead deps | (merged, branch deleted) | — | T57 | **DONE `85f433f3`** |
 | T65 in-tree session store | (merged, branch deleted) | — | T63 | **DONE `55071642`** |
-| T67 library majors | `rs-t67-libs` | — | T65 | pending |
+| T67 library majors | (merged, branch deleted) | — | T65 | **DONE `a0b25543`** |
 | T66 sqlx 0.9 | `rs-t66-sqlx` | — | T67 | pending |
 | T56 CSRF + CSP + CORS `PUT` + span redaction | `rs-t56-security` | — | T67 | pending |
 | T58 public-API ergonomics | `rs-t58-ergonomics` | — | T66 | pending |
@@ -572,3 +572,34 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **NEXT: T67** (library majors: tower-http 0.7, tower-sessions 0.15, utoipa 6 + swagger-ui 10, argon2 0.6,
   bcrypt 0.19, sha2 0.11, garde 0.23 — **and delete the 3 `zip` advisory ignores**) → then {T56, T66
   (**delete the `rsa` ignore**)}.
+
+## Resume 2026-10-22 (T67 done — the library majors are taken; a third pipeline red surfaced)
+
+- **T67 MERGED `a0b25543`** (ff into `dev-rs-local`; worktree + branch deleted).
+- **tower-http 0.7.1** (both behaviour changes TEST-LOCKED: the compression **406** and the `ServeDir`
+  **trailing slash** — `tests/api/tower_http_07.rs`, 4 tests) · **tower-sessions 0.15 + core 0.15** (one
+  core) · **utoipa 6 + swagger-ui 10** (the OpenAPI union ordering changed → `openapi.json` **and**
+  `schema.d.ts` regenerated **in this PR**; the typegen diff is 98 lines, all union re-ordering) ·
+  **argon2 0.6 + bcrypt 0.19** (the PHC types moved to the `phc` crate; the salt is generated internally
+  and the verifier takes the PHC string — **the PHC OUTPUT is unchanged**, the existing test still pins
+  `$argon2id$v=19$m=19456,t=1,p=1$`) · **sha2 0.11, garde 0.23, dialoguer 0.12, tower_governor `0.8`**.
+- **THE COMPRESSION DECISION**: `compression-gzip` + `compression-br` (no browser accepts zstd) — the lock
+  loses `zstd`/`zstd-safe`/`zstd-sys` **and their C-build tails**: the C-toolchain requirement is gone.
+- **THE 3 `zip` ADVISORY IGNORES ARE DELETED** (the lock moves `zip 3.0.0 → 9.0.5`). **The ignore list now
+  holds ONE entry** — the `rsa` Marvin advisory, which **T66 owns**.
+- **`sha2` did NOT deduplicate** — `sqlx-core` pins `sha2 ^0.10.0` in both 0.8 and 0.9. The spec's
+  "the lock now carries ONE sha2 version" was impossible; corrected.
+- **NEW TASK T69 — the THIRD latent pipeline red, and it is in the FRONTEND:** the frontend does not
+  type-check against the generated `schema.d.ts` (**15 `tsc` errors**; `npm run build` = `tsc -b && vite
+  build` **FAILS**), so the CI's `web` job and the `docker-e2e` job are red for a reason that has nothing
+  to do with the backend. The errors are **pre-existing** (the committed schema.d.ts produces the same 15)
+  and **not caused by utoipa 6** (identical count before/after). Root causes: Nest-era **camelCase**
+  leftovers (`boardCount` against a snake_case API) and hand-written type surgery that drops a field's
+  nullability. **The generated types are the contract — the frontend is the wrong side.** T69 touches
+  `frontend/src/**` only.
+- **Gates**: fmt 0 | clippy 0 | lib 69/69 | api 90/90 | prepare --check 0 | **.sqlx/ UNCHANGED** (no query
+  changed) | cargo deny ×3 ok | the three grep gates green.
+- **NEXT**: **{T56, T66}** — T66 is the driver major (sqlx 0.9 + the pinned collation + the `sqlx-cli` bump
+  + **delete the `rsa` advisory ignore**) and it BLOCKS T58/T59; T56 is the security hardening (the
+  `CsrfLayer` Origin check + the CSP + the span redaction) and it can run in parallel. **T69 (the frontend
+  types) is needed before the pipeline can be green.** Then T58 → T59 → T60 → T61 → T62.

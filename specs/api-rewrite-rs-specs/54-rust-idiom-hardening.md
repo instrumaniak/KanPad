@@ -352,7 +352,7 @@ evidence lines are reproducible from `backend-rs/`.
 
 `backend-rs/.github/workflows/ci.yml` exists, is thorough (fmt → clippy → grep
 gates → migrate → `SHOW CREATE TABLE` assert → `sqlx prepare --check` → test →
-`cargo audit` → `cargo deny` → openapi diff → docker build → `:3001` smoke →
+`cargo deny` → openapi diff → docker build → `:3001` smoke →
 vitest/playwright), and **does not execute**: GitHub Actions discovers
 workflows **only** at the repository root's `.github/workflows/`. The file's
 own header says so:
@@ -382,6 +382,38 @@ has never executed, so T55 must budget for fixing whatever it finds (the
 log records *"docker build substituted w/ review — disk infeasible"*). T55's
 AC therefore includes *"the workflow runs green on the PR"*, not *"the
 workflow file is correct"*.
+
+**What the first run actually surfaced (T68, 2026-10-22).** Moving the
+workflow to the root made it **discoverable** — and therefore **verifiable**
+— for the first time. Replaying every step by hand (no `gh` on the dev box,
+so the run itself still needs a push) found **two steps that were RED on
+every run**, both latent since the workflow was authored:
+
+1. **The `cargo audit` step contradicted the committed `deny.toml`.** The
+   workflow ran **two** advisory gates with **different** policies:
+   `cargo-deny` reads `deny.toml` (the four task-bound ignores), while
+   `cargo-audit` reads `.cargo/audit.toml` — which does not exist — so it
+   never saw the ignores and failed on exactly the advisories the project had
+   deliberately, and with a reason, accepted (`error: 4 vulnerabilities
+   found!`, exit 1). **Two advisory gates with two policies guarantee one is
+   red.** The step is removed: `cargo deny check advisories` reads the same
+   RustSec DB, additionally checks yanked crates, honours the task-bound
+   ignores, and *is* the committed policy.
+2. **The SHOW CREATE TABLE assert queried a schema that no longer exists.**
+   It asserted the store-owned session table at `TABLE_SCHEMA =
+   'tower_sessions' AND TABLE_NAME = 'session'`, but the 2026-10-19 store
+   change moved the store into the **app database** (`sessions`, created by
+   the baseline migration). The query returned an empty row and the `case`
+   treated that as a failure → the step was red on every run. The special
+   case is deleted: the baseline creates `sessions` with the same explicit
+   `ENGINE=InnoDB … COLLATE=utf8mb4_unicode_ci` as every other app table, so
+   the general query already covers it.
+
+**The lesson generalises past this workflow:** *a pipeline that has never run
+is not a pipeline.* Moving it to a discoverable location is what made the
+defects visible — and the first thing it revealed was that two of its own
+steps had been broken since the day they were written. **Replay every step,
+not just the ones you changed.**
 
 ### B2 — The repo's own lint gate fails on the current tree (P0)
 
@@ -633,8 +665,8 @@ resource handlers look like an oversight rather than a decision.
 | `edition = "2021"` on a 1.96 toolchain | Bump to **`2024`**. Verified blockers are absent: **0** `unsafe`, **0** `gen` identifiers, **0** `if let … else` scrutinee temporaries, no `extern`/`static mut`. Watch the new 2024 lints on the first build: `tail_expr_drop_order`, `if_let_rescope`, `rust_2024_incompatible_pat`. **CORRECTED 2026-10-22 (d) — the "no blockers" claim was INCOMPLETE (T57 hit two real ones):** (a) **edition 2024 makes `std::env::set_var` / `remove_var` UNSAFE** (they race with any concurrent environment access) — and the config tests mutated the process env to drive `Settings::load_from_env()`. With `unsafe_code = "forbid"` the honest fix is to **stop mutating the env**: `Settings::from_pairs(&[(k, v)])` is a test seam that loads from an explicit map (same deserialize + validate path, different source), so the tests no longer need `unsafe` **or** the `ENV_LOCK` mutex (they become parallel-safe). (b) **clippy 1.99 adds 8 `collapsible_if` errors** that clippy 1.96 did not report (the `if let … { if … }` → let-chain collapse, which edition 2024 makes expressible) — fixed with let-chains in `boards/cards/notes/projects/types.rs` + `lib.rs` + one e2e test. **Side effect that must be in the plan (2026-10-22):** `edition = "2024"` implies **`resolver = "3"`**, which enables cargo's Rust-version-aware dependency resolver (`incompatible-rust-versions = "fallback"`). The **dependency set can therefore change** — some crates may be *downgraded* to a version that still supports our MSRV. `Cargo.lock` must be regenerated and the diff **reviewed line by line**; a silent dependency downgrade is a supply-chain event, not a chore. |
 | `zeroize = "1"` is a direct dependency but is never used directly (only `secrecy` uses it) | Drop it from `[dependencies]` (it stays a transitive dep of `secrecy`). `cargo udeps` / `cargo machete` would flag it. |
 | **`clippy::pedantic` is not on, and the tree is far from pedantic-clean** | **MEASURED 2026-10-22 (c):** `cargo clippy --workspace --all-targets -- -W clippy::pedantic` reports **~370 warnings** (296 lib + 75 test, minus duplicates) — 173 `missing_errors_doc`, 45 `must_use_candidate` (27 fn + 18 method), 22 `doc_markdown`, ~40 `cast_possible_truncation`/`cast_sign_loss`/`cast_possible_wrap`, 10 `ref_option`, 8 `match_single_binding`, 7 `option_option`, 5 `let_else`, 4 `string_add`, 3 `redundant_closure`, 2 `unused_async` + the tail. **Consequence:** `pedantic = "warn"` in the lints table + CI's `cargo clippy -- -D warnings` would make **all ~370 an error** — T57 would silently become a 370-warning refactor, and the `cast_*` family in particular cannot be "fixed" without changing runtime semantics. **Decision: `pedantic` is ADVISORY.** The lints table sets `pedantic = { level = "warn", priority = -1 }` (so a local `cargo clippy` shows the debt as a to-do list) and the **CI clippy step adds `-A clippy::pedantic`** after `-D warnings` (the more specific + later flag wins), keeping pedantic **non-blocking** until a follow-up task drains it. The measured debt (~370) is recorded so the follow-up has a number to work down, not a guess. |
-| **CI's `dtolnay/rust-toolchain@stable` OVERRIDES `rust-toolchain.toml`** | The workflow's toolchain step is `uses: dtolnay/rust-toolchain@stable` (`backend-rs/.github/workflows/ci.yml:69`). That action installs `stable` and exports `RUSTUP_TOOLCHAIN`, and **`RUSTUP_TOOLCHAIN` takes precedence over `rust-toolchain.toml`** — so a `rust-toolchain.toml` pinning 1.99.1 would be **silently ignored by CI**, and the "local == CI == Docker" claim would be false. **Decision:** T57 must **edit the workflow** (replace the floating `@stable` action with the pinned channel, or delete the step and let rustup honour `rust-toolchain.toml`), and `.github/workflows/backend-rs.yml` is added to T57's **Touch only**. A pinned `rust-toolchain.toml` that CI ignores is worse than no pin — it looks enforced and is not. |
-| **`sqlx-cli` is pinned to `0.8.6`** — the offline-cache tool must match the driver major | The CI installs `cargo install sqlx-cli --version 0.8.6` (`.github/workflows/ci.yml:142`) and `30-db-schema.md:24` records the same pin. **A 0.8.6 CLI cannot regenerate a 0.9 `.sqlx/` cache**, so T66 (sqlx 0.9) must bump the CLI in the workflow **and** in `30-db-schema.md`. The CLI version and the driver version move **together** — a mismatched pair produces a confusing "cache is out of date" failure instead of a clear one. |
+| **CI's `dtolnay/rust-toolchain@stable` OVERRIDES `rust-toolchain.toml`** | The workflow's toolchain step was `uses: dtolnay/rust-toolchain@stable` (in the pre-T55 file at `backend-rs/.github/workflows/ci.yml:69`; the file now lives at the repo root). That action installs `stable` and exports `RUSTUP_TOOLCHAIN`, and **`RUSTUP_TOOLCHAIN` takes precedence over `rust-toolchain.toml`** — so a `rust-toolchain.toml` pinning 1.99.1 would be **silently ignored by CI**, and the "local == CI == Docker" claim would be false. **Decision:** T57 must **edit the workflow** (replace the floating `@stable` action with the pinned channel, or delete the step and let rustup honour `rust-toolchain.toml`), and `.github/workflows/backend-rs.yml` is added to T57's **Touch only**. A pinned `rust-toolchain.toml` that CI ignores is worse than no pin — it looks enforced and is not. |
+| **`sqlx-cli` is pinned to `0.8.6`** — the offline-cache tool must match the driver major | The CI installs `cargo install sqlx-cli --version 0.8.6` (`.github/workflows/backend-rs.yml`) and `30-db-schema.md:24` records the same pin. **A 0.8.6 CLI cannot regenerate a 0.9 `.sqlx/` cache**, so T66 (sqlx 0.9) must bump the CLI in the workflow **and** in `30-db-schema.md`. The CLI version and the driver version move **together** — a mismatched pair produces a confusing "cache is out of date" failure instead of a clear one. |
 
 ### B6 — Shared-kernel DRY (P2)
 

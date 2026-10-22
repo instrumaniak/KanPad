@@ -5,7 +5,7 @@
 # Actions discovers workflows ONLY there. It used to live at
 # `backend-rs/.github/workflows/ci.yml`, one directory deep, which means it had
 # **NEVER RUN**: every gate in it (fmt, clippy, the `unwrap` grep gate, the
-# `prepare --check`, `cargo audit`/`deny`, the openapi diff, the docker build,
+# `prepare --check`, `cargo deny`, the openapi diff, the docker build,
 # the e2e suites) was unverified. T55 moved it here (a pure path rename — the
 # body already used repo-root-relative paths and `working-directory: backend-rs`).
 #
@@ -257,13 +257,28 @@ jobs:
       # -- 4. SHOW CREATE TABLE assert (T02 gate enforcement) --------------
       # Baseline rule (30-db-schema.md): app tables are explicit
       # ENGINE=InnoDB + utf8mb4/utf8mb4_unicode_ci (fail fast, no IF NOT EXISTS).
-      # Documented exceptions, asserted below exactly as T02 proved them:
-      #   * _sqlx_migrations is sqlx-owned tooling, not app DDL (excluded).
-      #   * tower_sessions.session is store-owned DDL VERBATIM (keeps the
-      #     store's IF NOT EXISTS, no explicit ENGINE/CHARSET/COLLATE), so it
-      #     inherits server defaults: assert ENGINE=InnoDB + charset utf8mb4
-      #     (prefix — guards the prod latin1 regression) and LOG the actual
-      #     collation instead of pinning it (T02 deviation 11).
+      #
+      # T68: the store-owned session table used to get a SPECIAL CASE here,
+      # because it lived in a separate `tower_sessions` schema and kept the
+      # store's own DDL verbatim (no explicit ENGINE/CHARSET/COLLATE). BOTH
+      # premises are gone since the 2026-10-19 store change:
+      #   * the session table now lives in the APP database (`sessions`, named
+      #     by the baseline migration — `migrations/0001_baseline.sql`), and
+      #   * the baseline creates it with the SAME explicit
+      #     `ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+      #     as every other app table.
+      # The special case therefore queried a schema that no longer exists
+      # (`tower_sessions`), returned an empty row, and the `case` treated that
+      # as a FAILURE — the step was RED on every run (T68 red-proof).
+      # The general query below now covers `sessions` with no exception.
+      #
+      # Excluded from the general query:
+      #   * `_sqlx_migrations` — sqlx-owned tooling, not app DDL.
+      #   * `_sqlx_test_databases` — sqlx's `#[sqlx::test]` harness tracking
+      #     table. It lives in the BASE database and inherits the SERVER
+      #     default collation (utf8mb4_0900_ai_ci on MySQL 8), so it would
+      #     violate the rule. It is created when the tests run, so excluding
+      #     it keeps this assert correct regardless of the step order.
       - name: SHOW CREATE TABLE engine/charset/collation assert
         run: |
           set -euo pipefail
@@ -272,7 +287,7 @@ jobs:
              FROM information_schema.TABLES
              WHERE TABLE_SCHEMA = '$CI_DB_NAME'
                AND TABLE_TYPE = 'BASE TABLE'
-               AND TABLE_NAME <> '_sqlx_migrations'
+               AND TABLE_NAME NOT IN ('_sqlx_migrations', '_sqlx_test_databases')
                AND (ENGINE <> 'InnoDB' OR TABLE_COLLATION <> 'utf8mb4_unicode_ci');")"
           if [ -n "$app_bad" ]; then
             echo 'FAIL: app tables violating InnoDB/utf8mb4_unicode_ci:'
@@ -280,14 +295,17 @@ jobs:
             exit 1
           fi
           echo 'OK: all app tables are InnoDB/utf8mb4_unicode_ci'
+          # The store-owned session table is an APP table now (`sessions`), so
+          # the query above already asserted it. Print it for the log so a
+          # regression that moves it out of the app DB is visible.
           session_row="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e \
             "SELECT CONCAT(TABLE_NAME, ' ', ENGINE, ' ', TABLE_COLLATION)
              FROM information_schema.TABLES
-             WHERE TABLE_SCHEMA = 'tower_sessions' AND TABLE_NAME = 'session';")"
-          echo "store-owned session table: $session_row"
+             WHERE TABLE_SCHEMA = '$CI_DB_NAME' AND TABLE_NAME = 'sessions';")"
+          echo "store-owned session table (app DB): $session_row"
           case "$session_row" in
-            'session InnoDB utf8mb4'*) echo 'OK: session table InnoDB + utf8mb4 charset' ;;
-            *) echo 'FAIL: session table must be InnoDB with a utf8mb4 collation'; exit 1 ;;
+            'sessions InnoDB utf8mb4_unicode_ci') echo 'OK: session table InnoDB + utf8mb4_unicode_ci' ;;
+            *) echo 'FAIL: the session table must live in the app DB as InnoDB/utf8mb4_unicode_ci'; exit 1 ;;
           esac
 
       # -- 5. sqlx prepare --check (canonical exact form) ------------------
@@ -301,14 +319,16 @@ jobs:
         run: cargo test --workspace --all-targets
 
       # -- supply-chain ----------------------------------------------------
-      - name: cargo audit
-        working-directory: backend-rs
-        run: |
-          set -euo pipefail
-          if ! command -v cargo-audit >/dev/null 2>&1; then
-            cargo install --locked cargo-audit
-          fi
-          cargo audit
+      # T68: the separate `cargo audit` step is REMOVED. It was a SECOND
+      # advisory gate with a DIFFERENT policy: `cargo-audit` reads
+      # `.cargo/audit.toml` (absent) and therefore never saw the four
+      # task-bound ignores in `deny.toml` — so it failed on exactly the
+      # advisories the project had deliberately, and with a reason, accepted
+      # (red-proof: `error: 4 vulnerabilities found!`, exit 1).
+      # `cargo deny check advisories` reads the SAME RustSec advisory DB and
+      # additionally checks yanked crates, honours the task-bound ignores,
+      # and its policy is the committed artefact. One policy, one gate, one
+      # source of truth — a second ignore list can only drift.
 
       # T57: the supply-chain policy is a COMMITTED artefact
       # (backend-rs/deny.toml), derived from a real `cargo deny` run — not a
@@ -320,7 +340,12 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v cargo-deny >/dev/null 2>&1; then
-            cargo install --locked cargo-deny
+            # T68: PINNED. A `deny.toml` is schema-version-sensitive: an
+            # unpinned cargo-deny release can reject a valid policy with
+            # `unexpected-keys`, turning a dependency bump into a red build
+            # for a reason that has nothing to do with the dependency. The
+            # version is the one the policy was DERIVED against.
+            cargo install --locked cargo-deny --version 0.20.2
           fi
           if [ ! -f deny.toml ]; then
             echo 'FAIL: backend-rs/deny.toml is missing — the supply-chain policy must be committed'

@@ -31,6 +31,23 @@ pub const MIN_SESSION_SECRET_BYTES: usize = 32;
 /// `DATABASE_URL` is validated to contain it.
 pub const REQUIRED_DB_CHARSET: &str = "charset=utf8mb4";
 
+/// `DATABASE_URL` must also carry this **collation** pin.
+///
+/// sqlx 0.8 always sent `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci`;
+/// **sqlx 0.9 sends only `SET NAMES utf8mb4`** and lets the *server* pick
+/// the collation — which on MySQL 8 is `utf8mb4_0900_ai_ci`, a **different
+/// collation with different comparison rules** from this project's schema
+/// (`utf8mb4_unicode_ci`). Without the pin the driver version would silently
+/// change the connection's collation, so the pin makes the two versions
+/// byte-identical on this axis and pins the value regardless of the
+/// server's default.
+///
+/// The **database's** own collation still matters for the `UNIQUE` indexes
+/// (an index uses its COLUMN's collation, not the session's) — that is why
+/// every Rust database is created with an explicit
+/// `COLLATE utf8mb4_unicode_ci` (see `docs/data-migration-live.md`).
+pub const REQUIRED_DB_COLLATION: &str = "collation=utf8mb4_unicode_ci";
+
 /// Dev-only default CORS allowlist (config-driven for prod).
 pub const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 
@@ -300,13 +317,14 @@ impl Settings {
             return explicit.to_string();
         }
         format!(
-            "mysql://{}:{}@{}:{}/{}?charset={}",
+            "mysql://{}:{}@{}:{}/{}?charset={}&collation={}",
             self.db_username,
             self.db_password.expose_secret(),
             self.db_host,
             self.db_port,
             self.db_name,
-            "utf8mb4"
+            "utf8mb4",
+            "utf8mb4_unicode_ci"
         )
     }
 
@@ -383,6 +401,18 @@ impl Settings {
                 "DATABASE_URL must include ?charset=utf8mb4".to_string(),
             ));
         }
+        // The collation pin is REQUIRED, not decorative: sqlx 0.9 sends only
+        // `SET NAMES utf8mb4` and lets the server pick (MySQL 8's default is
+        // `utf8mb4_0900_ai_ci` — a different collation from this schema's
+        // `utf8mb4_unicode_ci`). Pinning it makes the driver version
+        // irrelevant on this axis.
+        if !self.database_url().contains(REQUIRED_DB_COLLATION) {
+            return Err(ConfigError::Invalid(format!(
+                "DATABASE_URL must include &{REQUIRED_DB_COLLATION} — sqlx 0.9 lets the server \
+                 pick the collation otherwise (MySQL 8 defaults to utf8mb4_0900_ai_ci, not this \
+                 schema's utf8mb4_unicode_ci)"
+            )));
+        }
         // Screen the database name against `db::is_valid_db_name`: it must
         // be usable as a plain identifier (a leading digit, or `-`/`.`/space,
         // is a legal MySQL name that operator tooling does not quote). A bad
@@ -448,7 +478,7 @@ mod tests {
         ),
         (
             "DATABASE_URL",
-            "mysql://kanpad:pw@127.0.0.1:3306/kanpad?charset=utf8mb4",
+            "mysql://kanpad:pw@127.0.0.1:3306/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci",
         ),
         ("REGISTRATION_ENABLED", "true"),
         ("THROTTLE_GLOBAL_PER_MIN", "120"),
@@ -653,6 +683,19 @@ mod tests {
                 "unexpected error: {err}"
             );
         }
+        // Explicit URL with the charset but WITHOUT the collation pin is
+        // rejected too: sqlx 0.9 lets the server pick the collation, and
+        // MySQL 8's default (`utf8mb4_0900_ai_ci`) is NOT this schema's
+        // (`utf8mb4_unicode_ci`).
+        {
+            let vars = with_overrides(&[("DATABASE_URL", "mysql://u:p@h:3306/db?charset=utf8mb4")]);
+            let err = Settings::from_pairs(&vars)
+                .expect_err("a collation-less DATABASE_URL must fail boot");
+            assert!(
+                err.to_string().contains("collation=utf8mb4_unicode_ci"),
+                "unexpected error: {err}"
+            );
+        }
         // Without DATABASE_URL the URL is derived from parts (charset always).
         {
             let mut vars = base_vars();
@@ -667,17 +710,24 @@ mod tests {
             let settings = Settings::from_pairs(&vars).expect("parts-derived config must load");
             assert_eq!(
                 settings.database_url(),
-                "mysql://app:s3cret@db.internal:3307/kanpad?charset=utf8mb4"
+                "mysql://app:s3cret@db.internal:3307/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+                "the DERIVED url carries the collation pin — compose passes only the DB_* parts"
             );
         }
         // Explicit DATABASE_URL wins over parts.
         {
             let vars = with_overrides(&[
-                ("DATABASE_URL", "mysql://x:y@h:1/z?charset=utf8mb4"),
+                (
+                    "DATABASE_URL",
+                    "mysql://x:y@h:1/z?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+                ),
                 ("DB_HOST", "ignored"),
             ]);
             let settings = Settings::from_pairs(&vars).expect("explicit DATABASE_URL must load");
-            assert_eq!(settings.database_url(), "mysql://x:y@h:1/z?charset=utf8mb4");
+            assert_eq!(
+                settings.database_url(),
+                "mysql://x:y@h:1/z?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+            );
         }
     }
 
@@ -751,7 +801,10 @@ mod tests {
     fn debug_redacts_secrets() {
         let settings = Settings {
             session_secret: SecretString::new("super-secret-value-that-is-long".into()),
-            database_url: Some("mysql://u:exposed-pw@h:1/d?charset=utf8mb4".to_string()),
+            database_url: Some(
+                "mysql://u:exposed-pw@h:1/d?charset=utf8mb4&collation=utf8mb4_unicode_ci"
+                    .to_string(),
+            ),
             db_password: SecretString::new("db-password-value".into()),
             ..Default::default()
         };

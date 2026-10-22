@@ -1227,7 +1227,7 @@ anyhow 1.0.104 · tracing-subscriber 0.3.23 · serde/serde_json.
 |---|---|
 | **tower-http 0.6.11 → 0.7.1** | `compression`: `*` / `identity;q=0` now → **406 Not Acceptable** (RFC 9110 §12.5.3) — a wire-contract change. `services`: trailing slash on a file path → **404** (touches `ServeDir::new("public/")` + the SPA fallback). `set_header` refactor (#672) — `SetResponseHeaderLayer::overriding` is still at `tower_http::set_header::`, so all call sites are fine. `fs` (0.7.1, #718): `ServeDir::try_call` propagates expected I/O errors — the repo has a fallback, so fine. **Adds the `csrf` feature** (`CsrfLayer`) — see B7. |
 | **tower-sessions 0.14.0 → 0.15.0** | only two changes: rand 0.9 + **"Fix memory ordering race. #254"** — a concurrency fix in the session layer. The reported "0.14→0.15 all requests 500" is a **user misconfiguration** (the session layer installed twice), not a library bug; the repo installs it once. Verified: `tower-sessions-core` resolves to a **single** 0.14.0 shared by `tower-sessions 0.14.0` and `tower-sessions-sqlx-store 0.15.0` — no duplicate, no trait mismatch. **But 0.15 is unreachable until C4 is resolved.** |
-| **sqlx 0.8.6 → 0.9.0** | **`runtime-tokio-rustls` is removed** → `runtime-tokio` + `tls-rustls-ring-native-roots`. `offline` becomes optional (the repo depends on `SQLX_OFFLINE=true` + a committed 76-entry `.sqlx/` cache). MySQL text columns now infer as `String` where 0.8 inferred `Vec<u8>` — **verified not to apply here**: every app column is a non-binary `VarString`/`Long`/`Datetime`, and the only `Blob` columns are the session store's (never queried by the app). `Migrate` trait significantly changed; `resolve_blocking()` is now `#[doc(hidden)]`. `query*()` takes `impl SqlSafeStr` — **not a problem here**: 83 `query!` macros + 2 runtime `sqlx::query()` calls, both with `&'static str` literals. `sqlx.toml` support (`sqlx-toml` feature, opt-in). |
+| **sqlx 0.8.6 → 0.9.0** | **`runtime-tokio-rustls` is removed** → `runtime-tokio` + `tls-rustls-ring-native-roots`; `offline` becomes optional (the repo depends on `SQLX_OFFLINE=true` + a committed `.sqlx/` cache). MySQL text columns now infer as `String` where 0.8 inferred `Vec<u8>` — **verified not to apply here**: every app column is a non-binary `VarString`/`Long`/`Datetime`. `Migrate` trait significantly changed; `resolve_blocking()` is now `#[doc(hidden)]`. `query*()` takes `impl SqlSafeStr` — **not a problem for the app's `query!` macros** (all literals) but it IS for the **2 runtime `sqlx::query()` calls in the test harness**: a runtime `String` no longer compiles. `sqlx.toml` support (`sqlx-toml` feature, opt-in) — and a `sqlx.toml` present WITHOUT the feature is a **hard error** (see §C6). **T66's four real breakages (measured):** (a) **`mysql-rsa` is now OPT-IN** — and the app NEEDS it: the MySQL `caching_sha2_password` handshake needs the server's RSA public key on a **plaintext** connection (the dev/test database); without it sqlx cannot complete the auth handshake. (b) **`QueryBuilder` lost its lifetime parameter** (`QueryBuilder<'_, MySql>` → `QueryBuilder<MySql>`) — 9 sites. (c) **`SqlSafeStr`**: the test harness's runtime SQL strings must become literals or binds (the interpolated ids became **binds**, which is strictly better). (d) **a `sqlx.toml` without the `sqlx-toml` feature is a hard compile error** (§C6). |
 | **utoipa 5 → 6 + swagger-ui 9 → 10** | lockstep (swagger-ui 10 requires utoipa 6). utoipa 6 removes *expression ignore* in `ToSchema`/`IntoParams` — **verified: the repo uses no `ignore` expressions** ✅; drops `serde_norway` for `yaml_serde` — the repo does not enable `yaml` ✅; MSRV 1.88 ✅. But the **emitted OpenAPI changes** → `openapi.json` + the `openapi_snapshot` test must be regenerated together (the T52 rule). |
 | **argon2 0.5.3 → 0.6.0** | RustCrypto 2024 wave. **`hash_password` → `hash_password_into`** — a direct hit on `src/features/auth/store.rs:158`. `std` feature removed; `simple` renamed `password-hash`; `password-hash` 0.6 moves the PHC types to the `phc` crate. |
 | **bcrypt 0.17.1 → 0.19.3** | cascades the same `password-hash` 0.6 wave → **move it together with argon2**. bcrypt now *errors* on > 72 bytes instead of truncating — the repo already truncates explicitly (`verify_bcrypt_truncated`), so it is compatible. |
@@ -1680,12 +1680,14 @@ Rust service as `development`). Each runtime file is listed in its task's
   was no legacy-format constraint to preserve — but keeping the format means
   the change is a **code-ownership** change with **no** data implication,
   and the runbook's schema-drift gate stays green.
-* **`sqlx.toml` is not adopted** (Part C, C6). sqlx 0.9 offers a per-crate
-  `sqlx.toml` with a "force `chrono` when `time` is enabled" setting, which
-  would *also* remove the `AS "…chrono::NaiveDateTime"` overrides — but
-  T65 removes the cause (`sqlx/time` is no longer enabled) rather than the
-  symptom, and `sqlx-toml` also brings migration-journal renaming into
-  scope. Not needed.
+* **`sqlx.toml` is not adopted — and the file is DELETED** (Part C, C6, T66).
+  sqlx 0.9 offers a per-crate `sqlx.toml`, but (a) a `sqlx.toml` present
+  without the `sqlx-toml` feature is a **hard compile error**, and (b) the
+  repo's file asked for `database-url-var = "DATABASE_URL"`, which **is**
+  sqlx 0.9's default — so deleting it changes nothing functionally. T65
+  already removed the cause of the `AS "…chrono::NaiveDateTime"` overrides
+  (`sqlx/time` is no longer enabled), so the feature's other selling point
+  is moot.
 * **The `bcrypt` dependency is not removed now** (Part C, C7). It is
   legacy-verification-only and it has a **measurable** end date
   (`SELECT COUNT(*) FROM users WHERE password_hash NOT LIKE '$argon2id$%'`

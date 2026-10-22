@@ -55,6 +55,10 @@ DB_USERNAME=user
 DB_PASSWORD=<staging password>
 DB_NAME=kanpad_rs_dev
 APP_ENV=development
+# The connection's collation is PINNED (`54` Part C §C6): sqlx 0.9 sends
+# only `SET NAMES utf8mb4` and lets the server pick the collation — MySQL 8's
+# default is `utf8mb4_0900_ai_ci`, not this schema's `utf8mb4_unicode_ci`.
+# The DATABASE_URL below must therefore carry it too.
 SESSION_SECRET=<32+ hex chars — set a FRESH value at cutover>
 ```
 

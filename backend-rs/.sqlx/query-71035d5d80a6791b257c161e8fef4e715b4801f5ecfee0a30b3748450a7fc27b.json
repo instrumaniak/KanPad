@@ -9,7 +9,14 @@
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "id"
+          }
         }
       },
       {
@@ -18,7 +25,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
           "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "name"
+          }
         }
       },
       {
@@ -27,7 +41,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 224,
           "max_size": 28
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "background_color"
+          }
         }
       },
       {
@@ -36,7 +57,14 @@
         "type_info": {
           "type": "Long",
           "flags": "MULTIPLE_KEY",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "project_id"
+          }
         }
       },
       {
@@ -45,7 +73,14 @@
         "type_info": {
           "type": "Tiny",
           "flags": "NOT_NULL",
+          "collation": 63,
           "max_size": 1
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "is_archived"
+          }
         }
       },
       {
@@ -54,7 +89,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 224,
           "max_size": 40
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "view_mode"
+          }
         }
       },
       {
@@ -63,7 +105,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "created_at"
+          }
         }
       },
       {
@@ -72,7 +121,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.boards",
+            "name": "updated_at"
+          }
         }
       },
       {
@@ -81,7 +137,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NO_DEFAULT_VALUE",
+          "collation": 224,
           "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.projects",
+            "name": "name"
+          }
         }
       }
     ],

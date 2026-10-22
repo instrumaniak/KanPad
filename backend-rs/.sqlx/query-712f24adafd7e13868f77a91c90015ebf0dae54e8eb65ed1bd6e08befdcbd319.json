@@ -9,7 +9,14 @@
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.users",
+            "name": "id"
+          }
         }
       }
     ],

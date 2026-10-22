@@ -25,6 +25,8 @@ mod cards_move;
 mod checklist_items;
 #[path = "api/checklists.rs"]
 mod checklists;
+#[path = "api/collation.rs"]
+mod collation;
 #[path = "api/columns_crud.rs"]
 mod columns_crud;
 #[path = "api/columns_move_cards.rs"]

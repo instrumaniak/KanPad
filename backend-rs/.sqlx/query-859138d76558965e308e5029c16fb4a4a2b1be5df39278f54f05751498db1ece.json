@@ -9,7 +9,14 @@
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "id"
+          }
         }
       },
       {
@@ -18,7 +25,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
           "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "title"
+          }
         }
       },
       {
@@ -27,7 +41,14 @@
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "column_id"
+          }
         }
       },
       {
@@ -36,7 +57,14 @@
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "position"
+          }
         }
       },
       {
@@ -45,8 +73,10 @@
         "type_info": {
           "type": "LongLong",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 2
-        }
+        },
+        "origin": "Expression"
       },
       {
         "ordinal": 5,
@@ -54,7 +84,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "MULTIPLE_KEY | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "due_date"
+          }
         }
       },
       {
@@ -63,7 +100,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "created_at"
+          }
         }
       },
       {
@@ -72,7 +116,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "updated_at"
+          }
         }
       }
     ],

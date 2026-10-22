@@ -57,7 +57,7 @@ fn escape_like(raw: &str) -> String {
 
 /// Shared list `WHERE` builder (one owner for the count + page selects, so
 /// the two can never drift apart per `30-db-schema.md`).
-fn push_project_filter(builder: &mut QueryBuilder<'_, MySql>, user_id: i32, q: Option<&str>) {
+fn push_project_filter(builder: &mut QueryBuilder<MySql>, user_id: i32, q: Option<&str>) {
     builder.push(" WHERE p.`user_id` = ");
     builder.push_bind(user_id);
     if let Some(term) = q {

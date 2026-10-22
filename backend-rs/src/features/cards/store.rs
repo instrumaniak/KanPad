@@ -887,7 +887,7 @@ where
     if card_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut builder: QueryBuilder<'_, MySql> = QueryBuilder::new(
+    let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
         "SELECT cl.`card_id`, COUNT(ci.`id`), \
           COUNT(CASE WHEN ci.`is_completed` <> 0 THEN 1 END) \
           FROM `checklists` cl \

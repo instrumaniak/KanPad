@@ -14,7 +14,12 @@ rust-version = "1.99"
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
-sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls", "chrono", "migrate", "macros"] }
+# sqlx 0.9 (T66): `runtime-tokio-rustls` was REMOVED -> `runtime-tokio` +
+# `tls-rustls-ring-native-roots`. `mysql-rsa` is now OPT-IN and is required
+# here: the MySQL `caching_sha2_password` handshake needs the server's RSA
+# public key on a PLAINTEXT connection (which is what the dev/test database
+# is) — without it, sqlx cannot complete the auth handshake.
+sqlx = { version = "0.9", features = ["mysql", "mysql-rsa", "runtime-tokio", "tls-rustls-ring-native-roots", "chrono", "migrate", "macros"] }
 tower = { version = "0.5", features = ["timeout"] }
 # `timeout` and `limit` are NOT enabled: the request timeout is
 # `tower::ServiceBuilder::timeout` (the `tower` crate's feature) and the 2 MiB

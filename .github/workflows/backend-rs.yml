@@ -46,8 +46,11 @@ permissions:
 env:
   CI_DB_NAME: kanpad_ci
   MYSQL_ROOT_PASSWORD: ci_root_pw
-  # 10-architecture.md: DATABASE_URL always carries ?charset=utf8mb4.
-  DATABASE_URL: mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4
+  # 10-architecture.md: DATABASE_URL always carries ?charset=utf8mb4 AND the
+  # collation pin (`54` Part C §C6): sqlx 0.9 sends only `SET NAMES utf8mb4`
+  # and lets the server pick the collation — MySQL 8's default is
+  # `utf8mb4_0900_ai_ci`, NOT this schema's `utf8mb4_unicode_ci`.
+  DATABASE_URL: mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4&collation=utf8mb4_unicode_ci
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -220,13 +223,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/sqlx
-          key: sqlx-cli-0.8.6-${{ runner.os }}
+          key: sqlx-cli-0.9.0-${{ runner.os }}
 
-      - name: Install sqlx-cli 0.8.6
+      - name: Install sqlx-cli 0.9.0
         run: |
           set -euo pipefail
           if ! command -v sqlx >/dev/null 2>&1; then
-            cargo install sqlx-cli --version 0.8.6 --no-default-features --features mysql,rustls
+            # T66: the CLI moves with the driver — a 0.8.6 CLI cannot
+            # regenerate or validate a 0.9 `.sqlx/` cache.
+            cargo install sqlx-cli --version 0.9.0 --no-default-features --features mysql,rustls
           fi
           cargo sqlx --version
 
@@ -488,7 +493,7 @@ jobs:
             -e PORT=3001 \
             -e APP_ENV=test \
             -e SESSION_SECRET=ci-test-secret-that-is-longer-than-32-bytes \
-            -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4' \
+            -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4&collation=utf8mb4_unicode_ci' \
             kanpad-rust:ci
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:3001/health >/dev/null 2>&1; then break; fi

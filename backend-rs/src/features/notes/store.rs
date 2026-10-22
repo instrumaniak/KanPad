@@ -271,7 +271,7 @@ where
     if tag_ids.is_empty() {
         return Ok(());
     }
-    let mut builder: QueryBuilder<'_, MySql> =
+    let mut builder: QueryBuilder<MySql> =
         QueryBuilder::new("INSERT INTO `note_tags` (`note_id`, `tag_id`) ");
     builder.push_values(tag_ids, |mut row, tag_id| {
         row.push_bind(note_id);
@@ -381,7 +381,7 @@ where
     if note_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut builder: QueryBuilder<'_, MySql> = QueryBuilder::new(
+    let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
         "SELECT nt.`note_id`, t.`id`, t.`name`, t.`color` \
           FROM `note_tags` nt JOIN `tags` t ON t.`id` = nt.`tag_id` \
           WHERE nt.`note_id` IN (",
@@ -445,7 +445,7 @@ pub struct NoteFilter {
 /// bare `COUNT(*)` (which would overcount multi-tag notes). `sort`/`order`
 /// are fixed (`updated_at DESC, id DESC` — the `id` tiebreak keeps pagination
 /// stable under equal timestamps); no user text is ever `push`ed.
-fn push_note_filter(builder: &mut QueryBuilder<'_, MySql>, user_id: i32, filter: &NoteFilter) {
+fn push_note_filter(builder: &mut QueryBuilder<MySql>, user_id: i32, filter: &NoteFilter) {
     builder.push(" WHERE n.`user_id` = ");
     builder.push_bind(user_id);
     if let Some(search) = filter.search.as_deref() {
@@ -522,7 +522,7 @@ pub async fn fetch_note_ids<'e, E>(
 where
     E: MySqlExecutor<'e>,
 {
-    let mut builder: QueryBuilder<'_, MySql> =
+    let mut builder: QueryBuilder<MySql> =
         QueryBuilder::new("SELECT DISTINCT n.`id`, n.`updated_at` ");
     builder.push(note_list_from());
     push_note_filter(&mut builder, user_id, filter);
@@ -577,7 +577,7 @@ where
     if note_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut builder: QueryBuilder<'_, MySql> = QueryBuilder::new(
+    let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
         "SELECT n.`id`, n.`title`, n.`board_id`, n.`project_id`, n.`card_id`, \
           n.`user_id`, n.`created_at`, n.`updated_at` \
           FROM `notes` n WHERE n.`id` IN (",

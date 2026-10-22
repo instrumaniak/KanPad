@@ -402,7 +402,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
   compile time **unless** `SQLX_OFFLINE=true` — use it for the migrate step itself
   (chicken-and-egg: the lib will not compile without a schema *or* the offline cache).
 - Every cargo command needs `CARGO_TARGET_DIR=/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-target-kanpad`
-  (+ `CARGO_HOME=…/.cargo-home`), `DATABASE_URL=mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4`,
+  (+ `CARGO_HOME=…/.cargo-home`), `DATABASE_URL=mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci` (**the collation pin is REQUIRED since T66** — sqlx 0.9 lets the server pick the collation, and MySQL 8's default is `utf8mb4_0900_ai_ci`, not this schema's `utf8mb4_unicode_ci`; `Settings::validate` rejects a URL without it),
   and `SESSION_SECRET` (32+ bytes) — the worktrees have **no `.env`** (gitignored), so
   `Settings::load()` fails with *"missing value for field session_secret"* without it.
 - **`gh` is NOT installed** → T55's AC *"the workflow runs green on the PR (a `gh run

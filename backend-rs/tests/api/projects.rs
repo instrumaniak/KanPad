@@ -41,8 +41,23 @@ use super::helpers::{
 use axum::http::{StatusCode, header};
 use sqlx::MySqlPool;
 
-async fn direct_count(pool: &MySqlPool, sql: &str) -> i64 {
+/// Count rows for a **literal** statement (no bind).
+///
+/// sqlx 0.9 requires every dynamic SQL string to implement `SqlSafeStr`; a
+/// `&'static str` literal does, so it needs no audit.
+async fn direct_count(pool: &MySqlPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql)
+        .fetch_one(pool)
+        .await
+        .expect("count re-reads")
+}
+
+/// Count rows with a **bind parameter** — the answer to a dynamic VALUE is a
+/// bind, never an interpolation (and it is what sqlx 0.9's `SqlSafeStr`
+/// wants: the SQL is a literal, the id is bound).
+async fn direct_count_by(pool: &MySqlPool, sql: &'static str, id: i64) -> i64 {
+    sqlx::query_scalar(sql)
+        .bind(id)
         .fetch_one(pool)
         .await
         .expect("count re-reads")
@@ -724,36 +739,40 @@ async fn projects_crud_full_flow(pool: MySqlPool) {
         "204 sets no Content-Type"
     );
     assert_eq!(
-        direct_count(
+        direct_count_by(
             &pool,
-            &format!("SELECT COUNT(*) FROM `projects` WHERE `id` = {alpha_id}")
+            "SELECT COUNT(*) FROM `projects` WHERE `id` = ?",
+            alpha_id
         )
         .await,
         0,
         "project row gone"
     );
     assert_eq!(
-        direct_count(
+        direct_count_by(
             &pool,
-            &format!("SELECT COUNT(*) FROM `boards` WHERE `project_id` = {alpha_id}")
+            "SELECT COUNT(*) FROM `boards` WHERE `project_id` = ?",
+            alpha_id
         )
         .await,
         0,
         "project boards cascade-deleted"
     );
     assert_eq!(
-        direct_count(
+        direct_count_by(
             &pool,
-            &format!("SELECT COUNT(*) FROM `columns` WHERE `board_id` = {alpha_board_id}")
+            "SELECT COUNT(*) FROM `columns` WHERE `board_id` = ?",
+            alpha_board_id
         )
         .await,
         0,
         "board columns cascade-deleted"
     );
     assert_eq!(
-        direct_count(
+        direct_count_by(
             &pool,
-            &format!("SELECT COUNT(*) FROM `cards` WHERE `column_id` = {alpha_column_id}")
+            "SELECT COUNT(*) FROM `cards` WHERE `column_id` = ?",
+            alpha_column_id
         )
         .await,
         0,
@@ -769,9 +788,10 @@ async fn projects_crud_full_flow(pool: MySqlPool) {
         "standalone board survives"
     );
     assert_eq!(
-        direct_count(
+        direct_count_by(
             &pool,
-            &format!("SELECT COUNT(*) FROM `boards` WHERE `project_id` = {foreign_id}")
+            "SELECT COUNT(*) FROM `boards` WHERE `project_id` = ?",
+            foreign_id
         )
         .await,
         1,
@@ -812,9 +832,10 @@ async fn projects_crud_full_flow(pool: MySqlPool) {
         "404 delete keeps problem+json Content-Type"
     );
     assert_eq!(
-        direct_count(
+        direct_count_by(
             &pool,
-            &format!("SELECT COUNT(*) FROM `projects` WHERE `id` = {foreign_id}")
+            "SELECT COUNT(*) FROM `projects` WHERE `id` = ?",
+            foreign_id
         )
         .await,
         1,

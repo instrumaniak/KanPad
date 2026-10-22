@@ -50,16 +50,27 @@ yanked = "deny"
 # WITHOUT the ignore. A stale ignore is a silent hole in the gate.
 # ---------------------------------------------------------------------------
 ignore = [
+    # rsa — the Marvin attack, a Bleichenbacher-style timing oracle
+    # (RUSTSEC-2023-0071). **There is NO patched version** ("No safe upgrade
+    # is available!") — the advisory covers every `rsa` release, including
+    # the `0.10.0-rc` line sqlx 0.9 moved to. (T66 checked this: the plan
+    # assumed 0.10-rc would be outside the advisory's range. It is NOT.)
+    #
+    # WHY IT IS ACCEPTABLE HERE: `rsa` reaches the tree through `sqlx-mysql`
+    # ONLY, and only for the MySQL `caching_sha2_password` handshake — where
+    # the SERVER encrypts the password with OUR public key and WE decrypt.
+    # The Marvin attack is a timing oracle against a server that DECRYPTS
+    # client-supplied ciphertext; our direction is inverted, and the attacker
+    # would have to observe our decryption timing on a ciphertext the
+    # DATABASE server produced. On a TLS connection (production: the app
+    # connects with `tls-rustls-ring-native-roots`) the `caching_sha2_password`
+    # fast path is used and the RSA exchange never happens at all — so the
+    # RSA path is reachable only on the PLAINTEXT dev/test database.
+    #
+    # REMOVED BY: — there is no version to move to. Re-check on the next
+    # `rsa` release (a patched 0.10 final would close it).
+    { id = "RUSTSEC-2023-0071", reason = "rsa has NO patched release (the advisory covers every version); it reaches the tree only via sqlx-mysql's caching_sha2_password handshake, whose RSA exchange happens only on a PLAINTEXT connection (production is TLS)" },
 
-    # rsa 0.9.10 — the Marvin attack, a Bleichenbacher-style timing oracle
-    # (RUSTSEC-2023-0071). It is used by `sqlx-mysql` ONLY for the MySQL
-    # `caching_sha2_password` handshake, where the SERVER encrypts with OUR
-    # public key and WE decrypt — the attack targets a server decrypting
-    # client-supplied ciphertext, so the exposure is inverted. There is no
-    # patched `rsa` 0.9 release.
-    # REMOVED BY: T66 (sqlx 0.9 depends on `rsa ^0.10.0-rc.18`, which is
-    # outside the advisory's affected range).
-    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9 arrives only via sqlx-mysql 0.8's caching_sha2_password auth; T66 takes sqlx 0.9 (rsa 0.10-rc)" },
 ]
 
 # ---------------------------------------------------------------------------

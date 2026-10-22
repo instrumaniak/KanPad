@@ -274,7 +274,7 @@ struct BoardPageRow {
 /// never a 403/404 oracle). Archived boards are hidden unless the caller
 /// passes `archived=true`.
 fn push_board_filter(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut QueryBuilder<MySql>,
     user_id: i32,
     project_id: Option<i32>,
     include_archived: bool,

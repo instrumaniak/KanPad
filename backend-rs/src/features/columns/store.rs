@@ -282,7 +282,7 @@ where
     if ordered_ids.is_empty() {
         return Ok(());
     }
-    let mut builder: QueryBuilder<'_, MySql> =
+    let mut builder: QueryBuilder<MySql> =
         QueryBuilder::new("UPDATE `cards` SET `position` = CASE `id` ");
     for (position, id) in ordered_ids.iter().enumerate() {
         let slot = i32::try_from(position).map_err(|_| AppError::Internal(Internal))?;

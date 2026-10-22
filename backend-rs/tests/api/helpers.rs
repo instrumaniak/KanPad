@@ -471,27 +471,30 @@ async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
     // database (see NOTE above) — global wipes are retired entirely, and
     // this suite holds no session jars anyway.
 
+    // The count query per fixture table is a **LITERAL** (not a `format!`):
+    // sqlx 0.9 requires every dynamic SQL string to implement `SqlSafeStr`,
+    // and a literal needs no injection audit. The table name and the expected
+    // count live in ONE match, so they cannot drift apart.
     let expected_counts = FIXTURE_ORDER.map(|table| {
-        let expected = match table {
-            "users" => 2,
-            "projects" => 3,
-            "boards" => 4,
-            "columns" => 4,
-            "cards" => 3,
-            "labels" => 7,
-            "card_labels" => 2,
-            "checklists" => 2,
-            "checklist_items" => 2,
-            "notes" => 2,
-            "tags" => 2,
-            "note_tags" => 1,
+        let (sql, expected) = match table {
+            "users" => ("SELECT COUNT(*) FROM `users`", 2),
+            "projects" => ("SELECT COUNT(*) FROM `projects`", 3),
+            "boards" => ("SELECT COUNT(*) FROM `boards`", 4),
+            "columns" => ("SELECT COUNT(*) FROM `columns`", 4),
+            "cards" => ("SELECT COUNT(*) FROM `cards`", 3),
+            "labels" => ("SELECT COUNT(*) FROM `labels`", 7),
+            "card_labels" => ("SELECT COUNT(*) FROM `card_labels`", 2),
+            "checklists" => ("SELECT COUNT(*) FROM `checklists`", 2),
+            "checklist_items" => ("SELECT COUNT(*) FROM `checklist_items`", 2),
+            "notes" => ("SELECT COUNT(*) FROM `notes`", 2),
+            "tags" => ("SELECT COUNT(*) FROM `tags`", 2),
+            "note_tags" => ("SELECT COUNT(*) FROM `note_tags`", 1),
             other => panic!("FIXTURE_ORDER lists unknown fixture: {other}"),
         };
-        (table, expected)
+        (table, sql, expected)
     });
-    for (table, expected) in expected_counts {
-        let sql = format!("SELECT COUNT(*) FROM `{table}`");
-        let count: i64 = sqlx::query_scalar(&sql).fetch_one(&pool).await.unwrap();
+    for (table, sql, expected) in expected_counts {
+        let count: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
         assert_eq!(count, expected, "fixture row count for {table}");
     }
 

@@ -9,7 +9,14 @@
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
           "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.projects",
+            "name": "id"
+          }
         }
       },
       {
@@ -18,7 +25,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
           "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.projects",
+            "name": "name"
+          }
         }
       },
       {
@@ -27,8 +41,10 @@
         "type_info": {
           "type": "LongLong",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 21
-        }
+        },
+        "origin": "Expression"
       },
       {
         "ordinal": 3,
@@ -36,7 +52,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.projects",
+            "name": "created_at"
+          }
         }
       },
       {
@@ -45,7 +68,14 @@
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
+          "collation": 63,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.projects",
+            "name": "updated_at"
+          }
         }
       }
     ],

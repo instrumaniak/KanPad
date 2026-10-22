@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use sqlx::{MySqlPool, Row};
+use sqlx::{MySqlPool, migrate::Migrate};
 use tower_sessions::session_store::ExpiredDeletion;
 
 use backend_rs::{build_state, config::Settings, create_app};
@@ -144,15 +144,29 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     Ok(())
 }
 
-/// Applied migration versions (ascending) from the sqlx journal.
-async fn applied_versions(pool: &MySqlPool) -> Result<Vec<i64>> {
-    let rows = sqlx::query("SELECT version FROM _sqlx_migrations ORDER BY version ASC")
-        .fetch_all(pool)
+/// Applied migration versions (ascending) — from **sqlx's own API**, not
+/// from a hand-rolled query against `_sqlx_migrations`.
+///
+/// The journal table name is a sqlx implementation detail (sqlx 0.9 even
+/// makes it configurable), so querying it directly was reaching into another
+/// crate's internals. `Migrate::list_applied_migrations` is the supported
+/// way — and it means `migrate info` and `migrate run` can never disagree
+/// about what is applied.
+async fn applied_versions(
+    pool: &MySqlPool,
+    migrator: &sqlx::migrate::Migrator,
+) -> Result<Vec<i64>> {
+    let mut conn = pool
+        .acquire()
         .await
-        .context("failed to read migration journal")?;
-    Ok(rows
-        .iter()
-        .map(|row| row.get::<i64, _>("version"))
+        .context("failed to acquire a connection for the migration journal")?;
+    let applied = conn
+        .list_applied_migrations(&migrator.table_name)
+        .await
+        .context("failed to read the migration journal")?;
+    Ok(applied
+        .into_iter()
+        .map(|migration| migration.version)
         .collect())
 }
 
@@ -167,12 +181,12 @@ async fn migrate(op: MigrateOp) -> Result<()> {
                 .run(&state.pool)
                 .await
                 .context("failed to apply migrations")?;
-            let applied = applied_versions(&state.pool).await?;
+            let applied = applied_versions(&state.pool, &migrator).await?;
             println!("migrations applied: {}", applied.len());
             Ok(())
         }
         MigrateOp::Info => {
-            let applied = match applied_versions(&state.pool).await {
+            let applied = match applied_versions(&state.pool, &migrator).await {
                 Ok(versions) => versions,
                 Err(_) => {
                     println!("journal: no _sqlx_migrations table yet (fresh database)");
@@ -196,7 +210,7 @@ async fn migrate(op: MigrateOp) -> Result<()> {
             if state.settings.is_production() {
                 bail!("migrate revert is dev-only; production rollback = restore backup");
             }
-            let applied = applied_versions(&state.pool).await?;
+            let applied = applied_versions(&state.pool, &migrator).await?;
             let Some(last) = applied.last().copied() else {
                 println!("nothing to revert");
                 return Ok(());

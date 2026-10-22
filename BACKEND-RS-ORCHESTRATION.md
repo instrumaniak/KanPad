@@ -391,6 +391,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T60 observability (`/metrics` + JSON logs) | `rs-t60-obs` | — | T59 | pending |
 | T61 concurrency + pool tuning | `rs-t61-concurrency` | — | T59 | pending |
 | T62 coverage gate + CI pins + Docker hardening | `rs-t62-gates` | — | T60 | pending |
+| T68 CI first-run defect repair | (merged, branch deleted) | — | T63 | **DONE `0b03ea58`** |
 
 ### Environment notes (2026-10-22)
 
@@ -488,3 +489,29 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **NEXT**: T65 (the hinge — the in-tree `SessionStore`; it replaces `tower-sessions-sqlx-store`
   and is what makes `tower-sessions 0.15` + `sqlx 0.9` reachable) → T67 (library majors —
   **delete the 3 `zip` advisory ignores**) → {T56, T66 (**delete the `rsa` ignore**)} → …
+
+## Resume 2026-10-22 (T68 done — the pipeline is green-able for the first time)
+
+- **T68 MERGED `0b03ea58`** (ff into `dev-rs-local`; worktree + branch deleted).
+- **T55's "the workflow runs green on the PR" AC is RE-OPENED** — the pipeline had never run,
+  and when every step was REPLAYED by hand it was **RED in two places**:
+  1. **`cargo audit` contradicted the committed `deny.toml`** — two advisory gates, two
+     policies (`cargo-audit` reads `.cargo/audit.toml`, absent; `cargo-deny` reads
+     `deny.toml`). Red-proof: `error: 4 vulnerabilities found!` (exit 1). **The audit step is
+     DELETED** — `cargo deny check advisories` reads the same RustSec DB, checks yanked
+     crates, honours the task-bound ignores, and IS the committed policy.
+  2. **The SHOW CREATE TABLE assert queried the pre-2026-10-19 `tower_sessions` schema**,
+     which the app-database store change made non-existent → empty row → `exit 1`. The
+     special case is **deleted** (the baseline creates `sessions` with the same explicit
+     `ENGINE=InnoDB … COLLATE=utf8mb4_unicode_ci` as every other app table, so the general
+     query covers it). The general query now also excludes `_sqlx_test_databases` (sqlx's
+     `#[sqlx::test]` harness table — server-default collation), so the assert is correct
+     regardless of the step order.
+- **`cargo-deny` is now PINNED** (`--version 0.20.2`) — a `deny.toml` is schema-version-sensitive
+  (the first run of the T57 policy failed with `unexpected-keys … deny-multiple-versions`).
+- **Still open:** the pipeline has never actually RUN (no `gh` on the dev box) — that AC needs a
+  push to GitHub.
+- **NEXT:** P2 — the spec reconciliation (the `54`/`50-tasks`/`11-rewrite-deltas` drift found by
+  the 2026-10-22 (e) review: the status banner, the stale `ci.yml` paths, the A1/A2 blast-radius
+  file names, **T65's "five store files" → EIGHT**, the `openapi.json` claim, the matrix's clippy
+  command, and "two lint-gate greps" → three) — then **T65** (the hinge).

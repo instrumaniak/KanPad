@@ -427,6 +427,13 @@ fn cors_layer(settings: &config::Settings) -> CorsLayer {
         .allow_methods([
             Method::GET,
             Method::POST,
+            // `PUT /api/v1/cards/{id}/labels/{label_id}` is a served route and
+            // `PUT` is NOT a CORS-safelisted method, so the browser sends a
+            // preflight. Without `PUT` here the preflight is answered without
+            // it and the browser BLOCKS the request — while every other verb
+            // worked (a maximally confusing partial failure). Guarded by the
+            // preflight test in `tests/api/cors.rs`.
+            Method::PUT,
             Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,

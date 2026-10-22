@@ -23,7 +23,7 @@ use super::{
         check_board_owned, close_column_gap, delete_column_row, fetch_card_ids_for_sort,
         fetch_column_owned, fetch_columns, fetch_source_card_ids_for_update, insert_column,
         max_card_position_for_update, max_position_for_update, move_cards_into, rename_column,
-        rewrite_card_positions, to_response,
+        rewrite_card_positions, to_response, to_response_one,
     },
     types::{
         ColumnBody, ColumnListBody, CreateColumnInput, MoveCardsBody, MoveCardsData,
@@ -132,9 +132,7 @@ pub async fn create_column(
         StatusCode::CREATED,
         [(header::LOCATION, location)],
         Json(ColumnBody {
-            data: to_response(Vec::from([row]), &summaries)
-                .pop()
-                .expect("created column renders"),
+            data: to_response_one(row, &summaries),
         }),
     ))
 }
@@ -186,9 +184,7 @@ pub async fn rename_column_handler(
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
     let summaries = load_summaries(&state.pool, owned.board_id.get()).await?;
     Ok(Json(ColumnBody {
-        data: to_response(Vec::from([row]), &summaries)
-            .pop()
-            .expect("updated column renders"),
+        data: to_response_one(row, &summaries),
     }))
 }
 

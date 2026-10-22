@@ -110,7 +110,12 @@ fn session_store(pool: &MySqlPool, db_name: &str) -> MySqlStore {
             )
         })
         .with_table_name(SESSION_TABLE)
-        .expect("SESSION_TABLE is a valid identifier")
+        .unwrap_or_else(|_| {
+            panic!(
+                "session store rejected table name {SESSION_TABLE:?}: it must satisfy the \
+                 store's identifier rule (see db::is_valid_db_name)."
+            )
+        })
 }
 
 /// Lazy-pool fallback for an unparseable URL: valid options pointing at an

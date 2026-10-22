@@ -1,11 +1,13 @@
-# KanPad backend-rs CI (T06 docker/CI contract).
+# KanPad backend-rs CI (T06 docker/CI contract; RELOCATED to the repo root by
+# T55).
 #
-# NOTE on location: this file lives at backend-rs/.github/workflows/ci.yml per
-# specs/api-rewrite-rs-specs/50-tasks.md T06 ("Touch only"). GitHub Actions
-# discovers workflows ONLY at the repo-root .github/workflows/, so this
-# workflow does NOT auto-run until a root-level caller exists (orchestrator /
-# T52 decision: move it, or add a root workflow that reuses it). Authored so
-# the move is a pure path rename (all paths below are repo-root-relative).
+# LOCATION: this file now lives at the REPO ROOT `.github/workflows/` — GitHub
+# Actions discovers workflows ONLY there. It used to live at
+# `backend-rs/.github/workflows/ci.yml`, one directory deep, which means it had
+# **NEVER RUN**: every gate in it (fmt, clippy, the `unwrap` grep gate, the
+# `prepare --check`, `cargo audit`/`deny`, the openapi diff, the docker build,
+# the e2e suites) was unverified. T55 moved it here (a pure path rename — the
+# body already used repo-root-relative paths and `working-directory: backend-rs`).
 #
 # Step order is normative (T06 AC): fmt -> clippy -D warnings -> migrate run +
 # migrate info (pending=0) -> SHOW CREATE TABLE assert (T02 gate) ->
@@ -25,10 +27,14 @@ on:
     paths:
       - 'backend-rs/**'
       - 'frontend/**'
+      # A change to THIS workflow must trigger it (T55) — otherwise the gate
+      # file can drift without anything noticing.
+      - '.github/workflows/backend-rs.yml'
   pull_request:
     paths:
       - 'backend-rs/**'
       - 'frontend/**'
+      - '.github/workflows/backend-rs.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -114,17 +120,91 @@ jobs:
           fi
           echo 'OK: no unwrap()/expect() outside src/main.rs and #[cfg(test)]'
 
-      # format!-interpolated SQL values are banned in store.rs (SQL must be
-      # fully parameterized `?` bindings; see 00-overview.md constitution).
+      # The OTHER panic spellings in a request path (54 B2, 3rd decision).
+      # NOTE: `unwrap_or_else` is deliberately NOT matched — it is not a panic
+      # spelling (it is used benignly 6x on the tree) and the ONE documented
+      # fail-fast IS `unwrap_or_else(|_| panic!(...))`. The single allow-listed
+      # site below is a BOOT-time invariant (it runs while the router is
+      # built, never per request), so it cannot be triggered by a request.
+      #
+      # ALLOWLIST: src/state.rs — the session-store identifier guards (see the
+      # `# Panics` contract on AppState::with_pool). Both are BOOT-time
+      # invariants (they run while the router is built, never per request), so
+      # they cannot be triggered by a request. T65 replaces the store in-tree
+      # and MUST then drop this allow-list entry.
+      - name: grep gate — no panic!/todo!/unimplemented! outside main.rs and #[cfg(test)]
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(find src -name '*.rs' ! -name 'main.rs' ! -name 'state.rs' | while read -r f; do
+            awk '
+              /^[[:space:]]*#\[cfg\(test\)\]/ { skip=1; depth=0; seen=0; next }
+              skip {
+                line=$0
+                opens = gsub(/\{/, "&", line)
+                closes = gsub(/\}/, "&", line)
+                if (opens > 0) { seen=1 }
+                depth += opens - closes
+                if (seen && depth <= 0) { skip=0 }
+                next
+              }
+              { print FILENAME ":" FNR ":" $0 }
+            ' "$f"
+          done | grep -E '\b(panic!|todo!|unimplemented!)\(' || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: panic!/todo!/unimplemented! outside src/main.rs, #[cfg(test)] and the state.rs allow-list:'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: no panic!/todo!/unimplemented! outside src/main.rs, #[cfg(test)] and the state.rs allow-list'
+
+      # format!-interpolated SQL is banned in store.rs (SQL must be fully
+      # parameterized `?` bindings; see 00-overview.md constitution).
+      #
+      # T55: this gate had NEVER RUN (the workflow was undiscoverable), and
+      # it failed on the current tree for two reasons — both of them the
+      # gate's fault, not the code's:
+      #   1. a DOC COMMENT mentioning "never `format!` of input" was matched
+      #      as if it were code;
+      #   2. `notes::escape_like_pattern` builds a BOUND VALUE
+      #      (`format!("%{escaped}%")`, passed to `push_bind`) — that is the
+      #      sanctioned LIKE-escape pattern (30-db-schema.md: "LIKE patterns
+      #      built in Rust + push_bind only"), NOT SQL text.
+      # The gate's real intent is "no `format!` may BUILD SQL". So it now
+      # (a) skips comment lines and (b) accumulates each `format!(...)` call
+      # and flags it only when the built text carries a SQL keyword.
       - name: grep gate — no format! in store.rs
         working-directory: backend-rs
         run: |
           set -euo pipefail
-          if grep -rn --include='store.rs' 'format!' src/; then
-            echo 'FAIL: format! found in store.rs (SQL must use ? bindings)'
+          hits="$(find src -name 'store.rs' | while read -r f; do
+            awk '
+              # skip comment lines (a doc comment mentioning format! is not code)
+              { line = $0 }
+              line ~ /^[[:space:]]*(\/\/|\/\*|\*)/ { next }
+              {
+                if (!in_fmt && line ~ /format!\(/) { in_fmt=1; buf=line; depth=0 }
+                else if (in_fmt) { buf = buf " " line }
+                if (in_fmt) {
+                  opens = gsub(/\(/, "&", line)
+                  closes = gsub(/\)/, "&", line)
+                  depth += opens - closes
+                  if (depth <= 0) {
+                    if (buf ~ /SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|VALUES|JOIN|ORDER BY|LIMIT/) {
+                      print FILENAME ":" FNR ":" buf
+                    }
+                    in_fmt=0; buf=""
+                  }
+                }
+              }
+            ' "$f"
+          done || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: format! builds SQL in store.rs (SQL must use ? bindings):'
+            echo "$hits"
             exit 1
           fi
-          echo 'OK: no format! in store.rs'
+          echo 'OK: no format!-built SQL in store.rs'
 
       # -- 3. migrate run + migrate info (pending=0) -----------------------
       # sqlx-cli pinned exactly as T02 specifies (NOT the backend-rs binary:

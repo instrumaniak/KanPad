@@ -31,6 +31,8 @@ mod columns_crud;
 mod columns_move_cards;
 #[path = "api/columns_sort.rs"]
 mod columns_sort;
+#[path = "api/cors.rs"]
+mod cors;
 #[path = "api/create_admin.rs"]
 mod create_admin;
 #[path = "api/e2e_auth_projects_boards.rs"]

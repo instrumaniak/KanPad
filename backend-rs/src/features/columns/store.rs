@@ -392,17 +392,29 @@ pub fn to_response(
     summaries: &std::collections::HashMap<i32, Vec<crate::common::card_summary::CardSummary>>,
 ) -> Vec<ColumnResponse> {
     rows.into_iter()
-        .map(|row| {
-            let cards = summaries.get(&row.id.get()).cloned().unwrap_or_default();
-            ColumnResponse {
-                id: row.id,
-                name: row.name,
-                position: row.position,
-                board_id: row.board_id,
-                cards,
-                created_at: format_timestamp(&row.created_at),
-                updated_at: format_timestamp(&row.updated_at),
-            }
-        })
+        .map(|row| to_response_one(row, summaries))
         .collect()
+}
+
+/// Render ONE column for the wire.
+///
+/// The caller knows there is exactly one row (a create/update returns a
+/// single column), so the cardinality is a **compile-time** fact and must not
+/// be a runtime assertion: the list case used to build a one-element `Vec`,
+/// pop it, and `expect(...)` that it was there — a runtime check of something
+/// the compiler already knew.
+pub fn to_response_one(
+    row: ColumnRow,
+    summaries: &std::collections::HashMap<i32, Vec<crate::common::card_summary::CardSummary>>,
+) -> ColumnResponse {
+    let cards = summaries.get(&row.id.get()).cloned().unwrap_or_default();
+    ColumnResponse {
+        id: row.id,
+        name: row.name,
+        position: row.position,
+        board_id: row.board_id,
+        cards,
+        created_at: format_timestamp(&row.created_at),
+        updated_at: format_timestamp(&row.updated_at),
+    }
 }

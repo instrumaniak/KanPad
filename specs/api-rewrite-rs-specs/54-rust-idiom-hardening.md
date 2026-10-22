@@ -397,6 +397,18 @@ src/features/columns/routes.rs:191: .expect("updated column renders"),
 This is why B1 matters: **the gate has never been able to fail**, because the
 gate has never run.
 
+**Third gate — REPAIRED in T55 (2026-10-22 (c)).** The `no format! in
+store.rs` gate had also never run, and it failed on the current tree for two
+reasons that are the GATE's fault, not the code's: (a) a **doc comment** in
+`columns/store.rs` merely mentioning `format!` was matched as code; (b)
+`notes::escape_like_pattern` builds a **bound value** (`format!("%{escaped}%")`
+→ `push_bind`) — the sanctioned LIKE-escape pattern (`30-db-schema.md`), not
+SQL text. The gate now skips comment lines and accumulates each `format!(...)`
+call, flagging it only when the built text carries a SQL keyword — i.e. it
+enforces the gate's real intent ("no `format!` may BUILD SQL"). **Lesson: a
+gate that has never executed fails on false positives first — fix the GATE
+when its intent is right and its matcher is wrong.**
+
 **Decision — fix the code, not the gate.** The gate's intent is right
 (`00-overview.md` Constitution: *"No `unwrap()/expect()` in request paths"*).
 Both sites have a strictly better form:
@@ -527,7 +539,10 @@ with a browser-console CORS error instead of an application error.
 
 **Decision.**
 
-1. Add `Method::PUT` to `allow_methods`.
+1. Add `Method::PUT` to `allow_methods`. **LANDED IN T55** (2026-10-22 (c)) —
+   the fix moved here from T56, because the preflight guard below has to be
+   GREEN when it arrives: with `PUT` missing, the guard fails, and a guard
+   that lands red in the freshly-activated CI blocks every later task.
 2. Fix the same omission in `10-architecture.md` (CORS section lists the same
    five methods).
 3. **Add a preflight test** so the route surface and the CORS policy cannot
@@ -535,8 +550,12 @@ with a browser-console CORS error instead of an application error.
    drifts", so the guard must be automated:
 
    ```rust
-   // tests/api/cors.rs — new suite
+   // tests/api/cors.rs — new suite (LANDED IN T55, 2026-10-22 (c))
    // Every verb the API actually serves must survive a CORS preflight.
+   // NOTE: the PRE-EXISTING `health::cors_preflight_matrix` asserted the CORS
+   // *mechanism* (ACAO + credentials) for POST only — it never enumerated the
+   // verbs, which is exactly why the PUT drift survived. The new suite
+   // enumerates all five served verbs.
    #[sqlx::test(migrations = "./migrations")]
    async fn preflight_allows_every_registered_verb(pool: MySqlPool) {
        let app = app_on_pool(&pool);

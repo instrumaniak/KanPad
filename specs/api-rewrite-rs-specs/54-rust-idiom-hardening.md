@@ -68,7 +68,7 @@ lift **every axis to ≥ 9.5/10**. Each row names the tasks that move it.
 
 | # | Axis | Now | Target | Closed by |
 |---|---|:--:|:--:|---|
-| 1 | **Idiomatic Rust** | 8.5 | **9.6** | T57 (edition 2024, `[lints]`), T58 (`Role`/`AppEnv` enums, `AppResult`, `#[non_exhaustive]`, `impl Into<String>`), T59 (delete `db::with_executor`, collapse the duplicate `JsonRejection` arm), **T63** (drop 4 dead direct deps + 2 dead features), **T65** (drop the `sqlx/time` feature unification) |
+| 1 | **Idiomatic Rust** | 8.5 | **9.6** | T57 (edition 2024, `[lints]`), T58 (`Role`/`AppEnv` enums, `AppResult`, `#[non_exhaustive]`, `impl Into<String>`), T59 (delete `db::with_executor`, collapse the duplicate `JsonRejection` arm), **T63** (drop **3** dead direct deps + 2 dead features), **T65** (drop the `sqlx/time` feature unification) |
 | 2 | **Architecture / layering** | 9.0 | **9.6** | T59 (`common::time` single owner for `format_timestamp`; implement `common::ownership` as the real cross-feature owner; delete `db::with_executor`) |
 | 3 | **Error handling & API contract** | 9.5 | **9.8** | T59 (`/ready` into `ApiDoc`; collapse the byte-identical `JsonRejection` arms; `detail: impl Into<String>`) |
 | 4 | **Concurrency & data correctness** | 9.5 | **9.7** | T61 (bounded **deadlock/lock-wait retry** on the move tx; `READ COMMITTED` for the move tx; env-driven pool sizing) |
@@ -114,11 +114,35 @@ a plan that does not work:
 | D10 | `tower-http`'s own `Any`+credentials guard is a **panic on the first request** (`ensure_usable_cors_rules` runs in `poll_ready`), not a boot error — so the app-level boot check is load-bearing | low |
 | D11 | `tower-sessions`' own default cookie name is `"id"` (and its docs say "OWASP recommends not using the default name") — the rename steps away from **both** framework defaults | low |
 | D12 | `/metrics` must not be on the public API port (axum's own example uses a second server) and a scrape must not record itself | low |
-| D13 | axum's `MatchedPath` is feature-gated (`matched-path`) | low |
+| D13 | axum's `MatchedPath` is feature-gated (`matched-path`) — **but it is in axum 0.8's DEFAULT features** (verified in the vendored `axum-0.8.9/Cargo.toml`: `default = ["form", "http1", "json", "matched-path", …]`), so T60 needs **no** feature change | low |
 | D14 | GitHub now ships workflow dependency **lockfiles** (`gh actions-lock`) + policy-enforced SHA pinning; dependabot does not raise alerts for SHA-pinned actions | low |
 | D15 | **The session store is the blocker for both dependency majors.** `tower-sessions-sqlx-store 0.15.0` requires `sqlx ^0.8.0` (its dependabot bump to 0.9 is **open since 2026-05-21**, and the crate's last release was 2025-01-01) and `tower-sessions-core ^0.14.0` — while `tower-sessions 0.15.0` requires `tower-sessions-core = 0.15.0`. Taking either major today pulls a **second** sqlx / a **second** `tower-sessions-core` and does not compile | **critical** |
 | D16 | The sqlx 0.9 collation change is **smaller than the changelog implies**: `sqlx-mysql-0.8.6/src/collation.rs:139` maps `CharSet::utf8mb4 => Collation::utf8mb4_unicode_ci`, so 0.8.6 already sends `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci` — **matching this project's schema**. 0.9 sends only `SET NAMES utf8mb4` and lets the server pick. Pin `collation=utf8mb4_unicode_ci` in the connection URL (0.8.6's URL parser accepts `collation=` — `sqlx-mysql-0.8.6/src/options/parse.rs:52`) and the two versions become **byte-identical** on this axis | medium |
 | D17 | The spec'd hand-rolled Origin check has a **production cliff**: browsers send `Origin` on *every* POST/PUT/PATCH/DELETE (same-origin included), so with an empty prod `CORS_ORIGINS` every mutating request would 403. The Go 1.25 `CrossOriginProtection` algorithm (ported to tower-http 0.7 as `CsrfLayer`) has an `Origin`/`Host` fallback that makes a same-origin SPA work with **zero** origin configuration | **critical** |
+
+### Second verification pass (2026-10-22 (c)) — a reviewer replayed the plan against the tree
+
+A **third** review pass (this one) re-executed the plan's gates against the
+live tree instead of reading them. It produced **6 further corrections**,
+none of which change a decision — they fix *self-contradictions* and *hidden
+scope* that would have surfaced as failures mid-execution:
+
+| # | Correction | Severity |
+|---|---|:--:|
+| **E1** | **B2's new "second grep gate" contradicted B2's own prescribed fix.** The draft gate matched `panic!`/`unwrap_or_else`/`todo!`/`unimplemented!` — but (a) `unwrap_or_else` is used **benignly 6×** on the tree (`state.rs:76`, `notes/routes.rs:225/228/231`, `error.rs:162`, `config.rs:315`) and is **not** a panic spelling, and (b) `state.rs`'s documented fail-fast **is** `unwrap_or_else(\|_\| panic!(…))` — the exact line B2 tells the executor to write. The gate is now `panic!`/`todo!`/`unimplemented!` with the **one boot-time** `state.rs` fail-fast explicitly allow-listed (see B2's third decision) | **blocking** |
+| **E2** | **T63's AC contradicted itself and failed on the current tree.** The AC's grep `axum_valid\|utoipa_axum\|zeroize::\|\btime::` → 0 hits cannot pass: `src/lib.rs:155` uses `time::Duration::hours(24)`, which is the **`time` crate** and is **required** by `tower_sessions::Expiry::OnInactivity` (and T65 removes the *store*, not the `Expiry` call). The same task's later bullet correctly says `time` stays. → `\btime::` removed from that grep | **blocking** |
+| **E3** | **T57 would not actually pin the toolchain in CI.** `dtolnay/rust-toolchain@stable` exports `RUSTUP_TOOLCHAIN`, which **overrides `rust-toolchain.toml`** — so a 1.99.1 pin is silently ignored by CI and "local == CI == Docker" is false. T57 must now edit the workflow (and the workflow is added to its Touch-only) | high |
+| **E4** | **`clippy::pedantic` is ~370 warnings, not 0.** Measured `cargo clippy --workspace --all-targets -- -W clippy::pedantic` → **~370** (173 `missing_errors_doc`, 45 `must_use_candidate`, 22 `doc_markdown`, ~40 `cast_*`, …). `pedantic = "warn"` + CI's `-D warnings` would make T57 a 370-warning refactor whose `cast_*` fixes change runtime semantics. → `pedantic` is **advisory** (CI adds `-A clippy::pedantic`), the debt is recorded, a follow-up drains it | high |
+| **E5** | **`missing_docs = "deny"` is free.** Measured `cargo rustc --lib -- -W missing_docs -W unreachable_pub` → **0 warnings each** (and the gate was proved live by appending an undocumented `pub fn` and watching it fire). The spec's "currently produce 0 warnings" was true but vacuous; the tree is genuinely documented | low |
+| **E6** | **T66 must bump `sqlx-cli`.** CI installs `sqlx-cli --version 0.8.6` and `30-db-schema.md:24` pins 0.8.6 — a 0.8.6 CLI cannot regenerate a 0.9 `.sqlx/` cache. The CLI and the driver move together | high |
+
+Additionally: the "**4 dead direct deps**" wording in this file's scorecard,
+A1 blast-radius table and task table was corrected to **3** (the count
+`time` was **not** dead — see C1); `11-rewrite-deltas.md` had **two**
+`## A4.` headings (the new "Naming" section collided with the existing
+"Ownership in SQL" section → renumbered **A5**); and `D13`'s `matched-path`
+note was corrected (`matched-path` **is** in axum 0.8's default features → no
+feature change is needed in T60).
 
 The **repo-side** claims were re-verified against the tree and are exact:
 3 lint-gate hits (`src/state.rs:113`, `src/features/columns/routes.rs:137`
@@ -198,7 +222,7 @@ first change in the series that fails *open*.
 | `specs/api-rewrite-rs-specs/50-tasks.md` | Phase 7 gains **T63 / T65 / T66 / T67**; T56 re-specified around `CsrfLayer`; T57's toolchain pin becomes **1.99.1**; the ordering paragraph rewritten |
 | `specs/api-rewrite-rs-specs/00-overview.md` | **Amendment 12** — the dependency-hygiene decision log |
 | `specs/api-rewrite-rs-specs/README.md` | reading order + the amendment header |
-| `backend-rs/Cargo.toml` + `backend-rs/Cargo.lock` | T63 (the four removals + the two feature removals), T65 (the store swap), T67 (the library majors), T66 (the driver major) — **one owner per task**, never two branches at once |
+| `backend-rs/Cargo.toml` + `backend-rs/Cargo.lock` | T63 (the **three** removals + the two feature removals), T65 (the store swap), T67 (the library majors), T66 (the driver major) — **one owner per task**, never two branches at once |
 | `backend-rs/Dockerfile` | T57 — `rust:1.96-bookworm` -> `rust:1.99-bookworm`, in the **same PR** as the toolchain pin |
 | `backend-rs/.env` (untracked) | T66 — `collation=utf8mb4_unicode_ci` added to the `DATABASE_URL` |
 | `compose.yaml` | T66 — the same `DATABASE_URL` pin; T54 — the `APP_ENV` rename (the **nest** service keeps `NODE_ENV`) |
@@ -429,13 +453,44 @@ Both sites have a strictly better form:
 **Third decision — close the gate's blind spot.** The gate greps only
 `src/`; `tests/` is unconstrained (correct — tests may unwrap). But the gate
 also **cannot see a future `unwrap` added inside a `#[cfg(test)]` module's
-brace range**, and it cannot see `panic!`/`unwrap_or_else` at all. Add a
-**second** gate to the CI that matches the *other* panic spellings in request
+brace range**, and it cannot see `panic!`/`todo!`/`unimplemented!` at all. Add
+a **second** gate to the CI that matches the *other* panic spellings in request
 paths, so the class is covered rather than the three known instances:
 
 ```bash
-# no panic!/unwrap_or_else/todo!/unimplemented! in src/ outside main.rs + #[cfg(test)]
+# no panic!/todo!/unimplemented! in src/ outside main.rs + #[cfg(test)]
 ```
+
+**CORRECTED 2026-10-22 (c) — the first draft of this gate also matched
+`unwrap_or_else`, which was wrong twice over.** (1) **`unwrap_or_else` is not
+a panic spelling.** It is used **benignly 6×** on the current tree
+(`state.rs:76`, `features/notes/routes.rs:225/228/231`, `error.rs:162`,
+`config.rs:315`) — e.g. `.unwrap_or_else(|| self.db_name.clone())` — so
+matching it would fail the gate on code that cannot panic at all. (2) **The
+gate would have failed on the fix B2 itself prescribes**: `state.rs`'s
+documented fail-fast is *precisely* `unwrap_or_else(|_| panic!(…))`, so a
+gate matching either `unwrap_or_else` or `panic!` flags the very line B2
+tells the executor to write.
+
+**The gate therefore matches `panic!`/`todo!`/`unimplemented!` — and the ONE
+documented fail-fast is allow-listed explicitly** (an allow-list, not a
+silent exemption, so the exemption is visible in the workflow):
+
+```bash
+# no panic!/todo!/unimplemented! in src/ outside main.rs + #[cfg(test)]
+# ALLOWLIST (documented fail-fast, not a request-path panic):
+#   src/state.rs  — the session-store identifier guard (see the # Panics
+#   contract on AppState::with_pool). It runs at BOOT, never per request.
+```
+
+**Why the allow-list is a single boot-time site, not a request path.**
+`state.rs`'s panic is in `session_store()`, called once while building the
+router — it cannot be triggered by a request. The gate's purpose is
+"no panic in a request path", and boot-time invariants are a different
+category. **Note (sequencing):** T65 replaces the store in-tree, so
+`state.rs`'s `with_schema_name`/`with_table_name` chain disappears entirely —
+this allow-list entry becomes obsolete in T65. T65 must then drop the
+allow-list entry (or the gate fails for a reason that no longer exists).
 
 ### B3 — CORS `allow_methods` is missing `PUT` (P0)
 
@@ -542,13 +597,16 @@ resource handlers look like an oversight rather than a decision.
 
 | Gap | Fix |
 |---|---|
-| No `[lints]` table and no crate-level lint attributes (`lib.rs`/`main.rs` have **zero** `#![warn]`/`#![deny]`) | Add the `Cargo.toml` `[lints]` table (Rust 1.74+). `missing_docs` / `unreachable_pub` currently produce **0 warnings** — the lint locks in a discipline that is today only convention. `unsafe_code = "forbid"` makes the (currently true) zero-`unsafe` property enforced. `missing_docs = "deny"` promotes axis 7's 10.0 from convention to a build gate. |
+| No `[lints]` table and no crate-level lint attributes (`lib.rs`/`main.rs` have **zero** `#![warn]`/`#![deny]`) | Add the `Cargo.toml` `[lints]` table (Rust 1.74+). `unsafe_code = "forbid"` makes the (currently true) zero-`unsafe` property enforced. `missing_docs = "deny"` promotes axis 7's 10.0 from convention to a build gate. **MEASURED 2026-10-22 (c):** the tree is **already `missing_docs`-clean and `unreachable_pub`-clean — 0 warnings each** (verified by `cargo rustc --lib -- -W missing_docs -W unreachable_pub`, and the gate was proved live by appending an undocumented `pub fn` and watching it fire). So `missing_docs = "deny"` costs **zero** doc-writing today — it only forbids NEW gaps. |
 | No `[profile.release]` — the Docker image ships a stock release build (no LTO, no `codegen-units = 1`, **debug symbols shipped**) | `lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`. **`panic = "abort"` is deliberately NOT set** — axum/tower catch panics per task; aborting would kill the process instead of returning a 500. Say so in a comment. |
-| No `rust-toolchain.toml` — the Dockerfile pins `rust:1.96-bookworm` while CI uses `dtolnay/rust-toolchain@stable` (floating) | Add `rust-toolchain.toml` pinning **`1.99.1`** + `components = ["clippy", "rustfmt"]`, and bump the Dockerfile base to `rust:1.99-bookworm` **in the same PR** (the Dockerfile and the toolchain move together, never one alone). `rust-version = "1.99"` in `Cargo.toml` documents the MSRV floor. **Corrected 2026-10-22 (b):** the current stable is **`1.99.1`** (2026-10-13) — the first draft of this spec named the superseded `1.99.0`. `1.99.1` clears the MSRV ceiling of the whole target dependency set (sqlx 0.9's `1.94.0` is the highest; everything else is <= 1.88) — see `54` Part C §C5. The pin is justified as *"match the Dockerfile, and match the dependency set's MSRV ceiling"* — not "latest". |
+| No `rust-toolchain.toml` — the Dockerfile pins `rust:1.96-bookworm` while CI uses `dtolnay/rust-toolchain@stable` (floating) | Add `rust-toolchain.toml` pinning **`1.99.1`** + `components = ["clippy", "rustfmt"]`, and bump the Dockerfile base to `rust:1.99-bookworm` **in the same PR** (the Dockerfile and the toolchain move together, never one alone). `rust-version = "1.99"` in `Cargo.toml` documents the MSRV floor. **Corrected 2026-10-22 (b):** the current stable is **`1.99.1`** (released **2026-10-15** — the channel manifest's `date`; the first draft of this spec named the superseded `1.99.0` and mis-dated the release). `1.99.1` clears the MSRV ceiling of the whole target dependency set (sqlx 0.9's `1.94.0` is the highest; everything else is <= 1.88) — see `54` Part C §C5. The pin is justified as *"match the Dockerfile, and match the dependency set's MSRV ceiling"* — not "latest". |
 | No `deny.toml` — the CI runs `cargo deny init` and checks against a **generated default** | Commit a real `deny.toml` (advisories + licenses + bans). Supply-chain policy must be a committed artifact, not a generated one. **Expect the FIRST run to fail** (2026-10-22): a naive `[bans] multiple-versions = "deny"` + `wildcards = "deny"` trips over the duplicate crate versions every real tree has, and `[licenses] allow` must enumerate the SPDX set the tree actually uses. The task must therefore *derive* the policy from a first failing run (add the `skip`/`skip-tree` entries the output names, and paste the license set cargo-deny reports) — not ship a guessed allow-list. |
 | `Cargo.toml` has no `license` / `repository` / `description` / `rust-version` | Add them (`cargo deny check licenses` flags the crate itself without a `license`; `rust-version` documents the MSRV for `cargo` consumers and pins the toolchain floor). |
 | `edition = "2021"` on a 1.96 toolchain | Bump to **`2024`**. Verified blockers are absent: **0** `unsafe`, **0** `gen` identifiers, **0** `if let … else` scrutinee temporaries, no `extern`/`static mut`. Watch the new 2024 lints on the first build: `tail_expr_drop_order`, `if_let_rescope`, `rust_2024_incompatible_pat`. **Side effect that must be in the plan (2026-10-22):** `edition = "2024"` implies **`resolver = "3"`**, which enables cargo's Rust-version-aware dependency resolver (`incompatible-rust-versions = "fallback"`). The **dependency set can therefore change** — some crates may be *downgraded* to a version that still supports our MSRV. `Cargo.lock` must be regenerated and the diff **reviewed line by line**; a silent dependency downgrade is a supply-chain event, not a chore. |
 | `zeroize = "1"` is a direct dependency but is never used directly (only `secrecy` uses it) | Drop it from `[dependencies]` (it stays a transitive dep of `secrecy`). `cargo udeps` / `cargo machete` would flag it. |
+| **`clippy::pedantic` is not on, and the tree is far from pedantic-clean** | **MEASURED 2026-10-22 (c):** `cargo clippy --workspace --all-targets -- -W clippy::pedantic` reports **~370 warnings** (296 lib + 75 test, minus duplicates) — 173 `missing_errors_doc`, 45 `must_use_candidate` (27 fn + 18 method), 22 `doc_markdown`, ~40 `cast_possible_truncation`/`cast_sign_loss`/`cast_possible_wrap`, 10 `ref_option`, 8 `match_single_binding`, 7 `option_option`, 5 `let_else`, 4 `string_add`, 3 `redundant_closure`, 2 `unused_async` + the tail. **Consequence:** `pedantic = "warn"` in the lints table + CI's `cargo clippy -- -D warnings` would make **all ~370 an error** — T57 would silently become a 370-warning refactor, and the `cast_*` family in particular cannot be "fixed" without changing runtime semantics. **Decision: `pedantic` is ADVISORY.** The lints table sets `pedantic = { level = "warn", priority = -1 }` (so a local `cargo clippy` shows the debt as a to-do list) and the **CI clippy step adds `-A clippy::pedantic`** after `-D warnings` (the more specific + later flag wins), keeping pedantic **non-blocking** until a follow-up task drains it. The measured debt (~370) is recorded so the follow-up has a number to work down, not a guess. |
+| **CI's `dtolnay/rust-toolchain@stable` OVERRIDES `rust-toolchain.toml`** | The workflow's toolchain step is `uses: dtolnay/rust-toolchain@stable` (`backend-rs/.github/workflows/ci.yml:69`). That action installs `stable` and exports `RUSTUP_TOOLCHAIN`, and **`RUSTUP_TOOLCHAIN` takes precedence over `rust-toolchain.toml`** — so a `rust-toolchain.toml` pinning 1.99.1 would be **silently ignored by CI**, and the "local == CI == Docker" claim would be false. **Decision:** T57 must **edit the workflow** (replace the floating `@stable` action with the pinned channel, or delete the step and let rustup honour `rust-toolchain.toml`), and `.github/workflows/backend-rs.yml` is added to T57's **Touch only**. A pinned `rust-toolchain.toml` that CI ignores is worse than no pin — it looks enforced and is not. |
+| **`sqlx-cli` is pinned to `0.8.6`** — the offline-cache tool must match the driver major | The CI installs `cargo install sqlx-cli --version 0.8.6` (`.github/workflows/ci.yml:142`) and `30-db-schema.md:24` records the same pin. **A 0.8.6 CLI cannot regenerate a 0.9 `.sqlx/` cache**, so T66 (sqlx 0.9) must bump the CLI in the workflow **and** in `30-db-schema.md`. The CLI version and the driver version move **together** — a mismatched pair produces a confusing "cache is out of date" failure instead of a clear one. |
 
 ### B6 — Shared-kernel DRY (P2)
 
@@ -1316,7 +1374,7 @@ T54 → T55 → T57 (toolchain 1.99.1 + edition 2024 + resolver 3)
 | **T54** | Rust-idiom naming: `APP_ENV` + `kanpad.sid` | 1, 5, 9 | P0 | — |
 | **T55** | CI activation + lint-gate repair | 6, 8 | P0 | T54 |
 | **T57** | Build & supply-chain hardening (lints, release profile, toolchain **1.99.1**, deny.toml, edition 2024) | 1, 8, 9 | P1 | T55 |
-| **T63** | Dependency hygiene: 4 dead direct deps + 2 dead features removed | 1, 8 | P0 | T57 |
+| **T63** | Dependency hygiene: **3** dead direct deps + 2 dead features removed | 1, 8 | P0 | T57 |
 | **T65** | Session-store ownership: implement `SessionStore` in-tree, drop `tower-sessions-sqlx-store` | 1, 8, 9 | P0 | T63 |
 | **T67** | Library modernization: tower-http 0.7, tower-sessions 0.15, utoipa 6 + swagger-ui 10, argon2 0.6, bcrypt 0.19, sha2 0.11, garde 0.23 | 1, 8, 9 | P1 | T65 |
 | **T66** | sqlx 0.9 (driver major) + the pinned collation + `.sqlx` regeneration | 8, 9 | P1 | T67 |
@@ -1387,7 +1445,7 @@ Task-specific additions:
 | T60 | `/metrics` returns the Prometheus text format with the documented series, on its **own `METRICS_PORT` listener** (and the endpoint does **not** exist when `METRICS_PORT` is unset — fail-closed); the route label is a **pattern** not a raw path (asserted: `/api/v1/cards/999` and `/api/v1/cards/888` share one series); a scrape does **not** record itself (no feedback loop); production logs are JSON (asserted on the rendered `tracing` output); the pool gauges appear (`kanpad_db_pool_size` ← `Pool::size()`, `kanpad_db_pool_idle` ← `Pool::num_idle()`) and the acquire-duration histogram is populated by our own `acquire_timed()` helper (sqlx 0.8.6 has no `PoolMetrics`) |
 | T61 | the deadlock-retry test proves the retry is taken (a fault-injected `1213` is retried and the operation eventually succeeds) and that the matcher keys on the **error number** (a `1205`/`HY000` lock-wait timeout is retried too — a `40001`-only matcher would miss it); the whole transaction is `ROLLBACK` before a retry (a `1205` rolls back only the current statement by default); the move tx runs at `READ COMMITTED` (asserted by a `SELECT @@transaction_isolation` probe inside the tx) **and the `SET TRANSACTION ISOLATION LEVEL` statement is issued BEFORE `BEGIN`** (issued inside a tx it fails with MySQL error 1568); pool sizing honours the env keys |
 | T62 | `cargo llvm-cov --summary-only --fail-under-lines 85` green **and a summary is actually printed** (a bare `--fail-under-lines` prints no summary — `--summary-only` requires `--json`/`--lcov`/`--cobertura`); the workflow's action refs are **commit SHAs** (via `gh actions-lock` + the committed lockfile, or hand-pinned + dependabot); `dependabot.yml` covers cargo + npm + github-actions; `docker build` passes the new `.dockerignore` + `HEALTHCHECK` + digest pins; `docker run` reports `healthy` |
-| T63 | `cargo tree -i axum@0.7.9` → *"did not match any packages"* (the second axum is gone); `cargo tree -i axum-core@0.4.5` → not found; `cargo tree -i garde` → **no ambiguity** (one version); `cargo tree -i validator` → not found; `grep -rn 'axum_valid\|utoipa_axum\|zeroize::\|\btime::' src/ tests/` → **0** hits; `cargo tree -e features -i tower-http` shows **no** `timeout` and **no** `limit` feature; `secrecy`'s `serde` feature is **still enabled** (it is load-bearing — `SecretString: Deserialize` for `envy`); the lockfile's duplicated-crate count drops; `cargo fmt/clippy/test` green; `cargo sqlx prepare --check` green |
+| T63 | `cargo tree -i axum@0.7.9` → *"did not match any packages"* (the second axum is gone); `cargo tree -i axum-core@0.4.5` → not found; `cargo tree -i garde` → **no ambiguity** (one version); `cargo tree -i validator` → not found; `grep -rn 'axum_valid\|utoipa_axum\|zeroize::' src/ tests/` → **0** hits (**`\btime::` is deliberately NOT in this grep** — `src/lib.rs:155` legitimately uses the `time` crate, which is **required** by `tower_sessions::Expiry::OnInactivity`; the separate bullet below asserts `time` stays); `cargo tree -e features -i tower-http` shows **no** `timeout` and **no** `limit` feature; `secrecy`'s `serde` feature is **still enabled** (it is load-bearing — `SecretString: Deserialize` for `envy`); the lockfile's duplicated-crate count drops; `cargo fmt/clippy/test` green; `cargo sqlx prepare --check` green |
 | T65 | the in-tree store implements `tower_sessions_core::SessionStore` and the **existing** `sessions` table + DDL are unchanged (`SHOW CREATE TABLE` matches the baseline byte-for-byte — the runbook's step 5(d) drift gate stays green); the payload stays **MessagePack** (a store written before the change still reads it); `tower-sessions-sqlx-store` is **gone** from `Cargo.toml` and the lockfile; `cargo tree -i sqlx` shows **one** sqlx version; `cargo tree -i tower-sessions-core` shows **one** core version; the `AS "…chrono::NaiveDateTime"` overrides are gone from all five store files (`grep -rc 'chrono::NaiveDateTime' src/features/*/store.rs` → 0) and sqlx now infers `chrono` natively; `sqlx/time` is no longer enabled (verified via `cargo tree -e features`); the session suite (login / logout / me / cycle_id / expiry / sweeper) is green |
 | T67 | every target version is in `Cargo.toml` at the version this spec names; `argon2`'s `hash_password_into` is used and the Argon2id PHC format is unchanged (`$argon2id$v=19$m=19456,…` — the existing tests pin it); `tower-http` 0.7.1's compression **406** behavior is either accepted or disabled by an explicit test; the `ServeDir` trailing-slash change is verified against the SPA fallback; `utoipa` 6's OpenAPI output is regenerated (`openapi.json` + `frontend/src/lib/api/schema.d.ts` in the **same PR**) and `openapi_snapshot` is green; `Cargo.lock`'s diff is reviewed line by line (no unintended downgrade); `cargo fmt/clippy/test` green |
 | T66 | the `DATABASE_URL` carries `collation=utf8mb4_unicode_ci` in **all five** places it appears (`.env`, `compose.yaml`, the CI workflow, `docs/data-migration-live.md`, `BACKEND-RS-ORCHESTRATION.md`); `SELECT @@collation_connection` = `utf8mb4_unicode_ci` is asserted by a test (so the pin is load-bearing, not decorative); the `sqlx` feature names are the 0.9 ones (`runtime-tokio` + `tls-rustls-ring-native-roots`, **not** `runtime-tokio-rustls`); `.sqlx/` is regenerated with `cargo sqlx prepare --workspace --all -- --all-targets` and the **diff is reviewed** (the app's own columns are all non-binary `VarString`/`Long`/`Datetime`, so the 0.9 `Vec<u8>`→`String` inference change must produce **no** Rust type change — if it does, stop and re-read the DTOs); `cargo sqlx prepare --check` green; the `Migrate` trait is adopted (no hand-rolled `SELECT version FROM _sqlx_migrations`); the 2 runtime `sqlx::query()` calls still compile as `&'static str` (no `AssertSqlSafe` needed) and the 83 `query!` macros are unaffected |
@@ -1400,7 +1458,7 @@ Task-specific additions:
 |---|---|
 | `specs/api-rewrite-rs-specs/00-overview.md` | new Amendment entry (2026-10-22): `APP_ENV` replaces `NODE_ENV`; cookie base name `kanpad.sid`; CI relocated to the repo root; `PUT` added to the CORS method set; the quality-baseline program (B1–B12) |
 | `specs/api-rewrite-rs-specs/10-architecture.md` | Config table: `NODE_ENV` row → `APP_ENV` (add the `NODE_ENV`-present → boot-error rule) + `DB_MAX_CONNECTIONS`/`DB_MIN_CONNECTIONS`; Sessions: cookie name + the `__Host-` invariant; CORS: allowed methods gain `PUT` + the Origin check; Middleware order: the CSP + Origin-check layers; a new Observability section (`/metrics` + JSON logs) |
-| `specs/api-rewrite-rs-specs/11-rewrite-deltas.md` | new sections **A4** (naming deltas) + **E4** (CSRF/Origin + CSP) + **E5** (observability) — rationale record only, per this file's header |
+| `specs/api-rewrite-rs-specs/11-rewrite-deltas.md` | new sections **A5** (naming deltas — **renumbered from A4 on 2026-10-22 (c)**: A4 was already taken by "Ownership in SQL") + **E4** (CSRF/Origin + CSP) + **E5** (observability) — rationale record only, per this file's header |
 | `specs/api-rewrite-rs-specs/50-tasks.md` | **Phase 7** with the T54–T67 entries (Touch only / Depends / Blocks / AC) — the executor source of truth |
 | `specs/api-rewrite-rs-specs/README.md` | reading order: add step 10 → `54-rust-idiom-hardening.md`; the "decisions locked" header line gains the 2026-10-22 amendment |
 | `CONTRACT-CHANGES.md` | §1 Transport row + §10 Auth notes (cookie name); **no** §2 rename-table entry (the cookie name is not a JSON field) |
@@ -1412,7 +1470,7 @@ Task-specific additions:
 **Which of these are already done.** The **spec** half of the table is applied
 now, because the spec IS the plan: `00-overview.md` (Amendment 11),
 `10-architecture.md` (Config + Sessions + CORS + Middleware + Observability,
-each marked *2026-10-22*), `11-rewrite-deltas.md` (A4/E4/E5), `50-tasks.md`
+each marked *2026-10-22*), `11-rewrite-deltas.md` (A5/E4/E5), `50-tasks.md`
 (Phase 7), `README.md` (index), `AGENTS.md` (lessons) and this file. The
 **runtime** half is deliberately **NOT** applied yet — `CONTRACT-CHANGES.md`,
 `docs/data-migration-live.md`, `compose.yaml` and the CI workflow describe

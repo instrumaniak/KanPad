@@ -132,7 +132,7 @@ cap, no memory hardness). Folded into `10-architecture.md` pins and
 * Gate hashing cost via `Settings { hash_cost }`; tests use minimal cost
   (default Argon2 cost × auth suite = minutes otherwise).
 
-## A4. Naming: `APP_ENV` + `kanpad.sid` (no Node artifacts)
+## A5. Naming: `APP_ENV` + `kanpad.sid` (no Node artifacts)
 
 > Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
 > folded into `10-architecture.md` (Config + Sessions) by T54. Do not
@@ -380,7 +380,7 @@ Neither change touches the wire contract (the cookie name is not in
   database** (`.with_schema_name(<current DB>)` + `.with_table_name("sessions")`),
   `cycle_id()` on login **and** privilege change. Prod cookie uses `__Host-`
   prefix (`__Host-kanpad.sid` — the Express-derived `connect.sid` name is
-  retired; see A4, `Secure + Path=/`, no `Domain`). Sweeper
+  retired; see A5, `Secure + Path=/`, no `Domain`). Sweeper
   `continuously_delete_expired` spawns **only in `main.rs`**, never in
   `lib::create_app` (tests would leak a task + conn per test). The baseline
   creates the `sessions` table before the app tables' consumers, in the same

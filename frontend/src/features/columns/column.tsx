@@ -40,7 +40,7 @@ export function Column({ column, allColumns = [], onDeleted }: ColumnProps) {
               isOver ? 'bg-teal-500/10' : ''
             }`}
           >
-            <ColumnCardList cards={column.cards as unknown as CardType2[]} newCardId={newCardId} />
+            <ColumnCardList cards={column.cards} newCardId={newCardId} />
           </div>
         )}
       </ColumnDroppable>

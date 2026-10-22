@@ -1,4 +1,5 @@
 import type { components } from '@/lib/api/schema';
+import type { Card as BoardCard } from '../cards/cards.api';
 import { apiFetch, apiFetchVoid, type ApiResponse } from '@/lib/api/client';
 
 /**
@@ -13,21 +14,25 @@ import { apiFetch, apiFetchVoid, type ApiResponse } from '@/lib/api/client';
  * - `Column` is the generated `ColumnResponse` with `cards` narrowed to the
  *   board-cache `Card` below.
  *
- * `Card` narrows two generated markers back to what the wire always emits
- * (and what `boards/board-view/filter-columns-by-filters.ts` — owned by T41c,
- * out of scope here — reads as non-optional): `due_date` is always rendered
- * as an ISO-8601 string or `null`, and `checklist_progress` is omitted (never
- * `null`) when the card owns no checklists. The narrowing is runtime-safe and
- * keeps `tsc` green without touching T41c's files.
+ * `Card` is NOT narrowed here (T69): the columns embed carries card
+ * SUMMARIES — exactly the generated `CardSummary` — so the type is the
+ * generated one, byte for byte. The old
+ * `Omit<CardSummary, 'due_date' | 'checklist_progress'> & {…}` narrowed
+ * `due_date` to a always-present `string | null` and `checklist_progress` to a
+ * never-`null` optional, but the fetch path returns the GENERATED type
+ * (`ColumnListBody`), so the narrowed type never described the data that
+ * actually flowed through it — that mismatch was 7 of the 15 `tsc` errors.
+ * The board card now lives in ONE place: `cards/cards.api.ts`.
  */
 export type Label = components['schemas']['CardLabelRef'];
 
 export type CardSummary = components['schemas']['CardSummary'];
 
-export type Card = Omit<CardSummary, 'due_date' | 'checklist_progress'> & {
-  due_date: string | null;
-  checklist_progress?: components['schemas']['ChecklistProgress'];
-};
+/**
+ * The board card (owned by the cards feature — the columns embed carries
+ * card summaries, the same wire shape the board renders).
+ */
+export type Card = BoardCard;
 
 export type Column = Omit<components['schemas']['ColumnResponse'], 'cards'> & {
   cards: Card[];

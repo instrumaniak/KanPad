@@ -74,7 +74,10 @@ export function useMoveCard() {
       const previousCards: Record<number, Card[] | undefined> = {};
       const targetColumnId = data.column_id;
 
-      if (targetColumnId === undefined) return { previousCards };
+      // The generated `UpdateCardInput.column_id` is `number | null | undefined`
+      // (an explicit `null` clears it server-side). A move needs a real
+      // target column, so both "absent" and "null" mean "no move" here.
+      if (targetColumnId === undefined || targetColumnId === null) return { previousCards };
 
       // Find source column and card
       const allCardsQueries = queryClient.getQueriesData<Card[]>({ queryKey: ['cards'] });

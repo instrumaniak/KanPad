@@ -13,8 +13,8 @@ import { apiFetch, apiFetchVoid, type ApiResponse, type Page } from '@/lib/api/c
  *   schemas: lists nest summaries (`has_description`, no TEXT), detail routes
  *   return the full shape (`description`, `checklists`).
  * - `Card` is the shared component-level type (drag-drop caches, previews,
- *   panels all thread it through): the detail shape plus the summary's
- *   `has_description` flag, both sourced from generated schemas.
+ *   panels all thread it through): the SUMMARY shape (what the board cache
+ *   really holds) plus the detail-only fields as optional — see below.
  */
 export type LabelColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
 
@@ -24,11 +24,34 @@ export type CardSummary = components['schemas']['CardSummary'];
 
 export type CardDetail = components['schemas']['CardDetailResponse'];
 
-export type Card = CardDetail & Pick<CardSummary, 'has_description'>;
-
 export type ChecklistItemData = components['schemas']['ChecklistItemResponse'];
 
 export type ChecklistData = components['schemas']['ChecklistResponse'];
+
+/**
+ * The card the BOARD renders — ONE type, sourced from the generated
+ * contract (T69).
+ *
+ * The wire has TWO card shapes and they are NOT interchangeable:
+ * - `CardSummary` — what the card list and the columns embed return:
+ *   `has_description` (a boolean flag), no TEXT, no checklists.
+ * - `CardDetailResponse` — what the detail route returns: `description`
+ *   (TEXT) + `checklists`, and NO `has_description` flag.
+ *
+ * The board path (columns cache → card tile → drag/drop → detail panel)
+ * threads the SUMMARY; the panel hydrates it with the detail route. So the
+ * board card is the summary plus the two detail-only fields as OPTIONAL
+ * (absent on the wire summary, present once the card has been hydrated).
+ *
+ * The previous `CardDetail & Pick<CardSummary, 'has_description'>` was a
+ * shape the backend NEVER emits — it claimed the summary's flag AND the
+ * detail's fields at once. That phantom shape is what made the columns
+ * cache (summaries) and the drag/drop payload mutually unassignable.
+ */
+export type Card = CardSummary & {
+  description?: string | null;
+  checklists?: ChecklistData[];
+};
 
 export type CardBody = components['schemas']['CardBody'];
 

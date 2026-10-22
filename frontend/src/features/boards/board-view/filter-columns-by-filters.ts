@@ -21,14 +21,20 @@ function matchesLabels(cardLabels: { name: string }[] | undefined, selectedLabel
   return selectedLabels.every((label) => names.has(label));
 }
 
-function matchesDueDate(dueDate: string | null, filter: DueDateFilter | null): boolean {
+function matchesDueDate(
+  dueDate: string | null | undefined,
+  filter: DueDateFilter | null,
+): boolean {
   if (!filter) return true;
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   switch (filter) {
     case 'No Date':
-      return dueDate === null;
+      // The generated contract types `due_date` as optional-and-nullable
+      // (`string | null | undefined`); both "absent" and "null" mean no due
+      // date on the wire.
+      return dueDate === null || dueDate === undefined;
     case 'Overdue': {
       if (!dueDate) return false;
       return new Date(dueDate) < today;
@@ -55,7 +61,7 @@ function matchesDueDate(dueDate: string | null, filter: DueDateFilter | null): b
 }
 
 function matchesChecklist(
-  checklistProgress: { completed: number; total: number } | undefined,
+  checklistProgress: { completed: number; total: number } | null | undefined,
   filter: ChecklistFilter,
 ): boolean {
   if (filter === 'All') return true;

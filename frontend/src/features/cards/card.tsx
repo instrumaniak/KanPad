@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { useDeleteCard, useCreateCard, type Card as CardType, type CardDetail } from './use-cards';
+import { useDeleteCard, useCreateCard, type Card as CardType } from './use-cards';
 import { CardDraggable } from './card-draggable';
 import { CardDetailPanel } from './card-detail-panel';
 import { CardPreview } from './card-preview';
@@ -74,9 +74,9 @@ export function Card({ card, index, isNew }: CardProps) {
 
   const handleDelete = () => {
     // Board-cache cards are summaries (no TEXT); the snapshot keeps the
-    // detail-typed read for the undo payload (`description` is undefined at
+    // board-card read for the undo payload (`description` is undefined at
     // runtime here, so the restore omits it exactly as before).
-    const deletedCard = { ...card } as CardDetail;
+    const deletedCard = { ...card };
     setShowDeleteDialog(false);
     setIsPanelOpen(false);
     deleteCard.mutate(card.id, {

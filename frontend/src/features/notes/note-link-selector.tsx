@@ -188,7 +188,7 @@ export function NoteLinkSelector({
                       >
                         <span className="flex-1 truncate">{project.name}</span>
                         <span className="text-xs text-muted-foreground">
-                          {project.boardCount} board{project.boardCount !== 1 ? 's' : ''}
+                          {project.board_count} board{project.board_count !== 1 ? 's' : ''}
                         </span>
                       </button>
                     ))}

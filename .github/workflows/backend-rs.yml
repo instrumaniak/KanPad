@@ -168,6 +168,27 @@ jobs:
           fi
           echo 'OK: no panic!/todo!/unimplemented! outside src/main.rs and #[cfg(test)]'
 
+      # Handlers must skip the request body + the session from their span
+      # (54 B4, T56). `#[tracing::instrument(skip(state))]` records EVERY
+      # argument it is not told to skip, via that argument's `Debug` impl —
+      # so `auth: AuthSession` records the session's EMAIL (PII) and
+      # `input: ValidJson<CreateCardInput>` records the card TITLE and
+      # DESCRIPTION (up to 10 000 chars) into the span, which lands in the
+      # log sink. The auth handlers already skip correctly
+      # (`skip(state, session, input)`) — the resource handlers were the
+      # oversight.
+      - name: grep gate — no instrument(skip(state)) in src/
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(grep -rn 'instrument(skip(state))' src/ || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: handlers must skip the session and the request body — the span would log the body:'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: every handler skips its session + request body from the span'
+
       # format!-interpolated SQL is banned in store.rs (SQL must be fully
       # parameterized `?` bindings; see 00-overview.md constitution).
       #

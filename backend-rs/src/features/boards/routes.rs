@@ -59,7 +59,7 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         (status = 404, description = "Project not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_board(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -114,7 +114,10 @@ pub async fn create_board(
         (status = 401, description = "Not authenticated")
     )
 )]
-#[tracing::instrument(skip(state))]
+// `filters` carries the user's SEARCH TEXT (`q` / `search`) — the
+// same redaction rule as a request body (`54` B4). `pagination` holds
+// two integers and is fine to record.
+#[tracing::instrument(skip(state, auth, filters))]
 pub async fn list_boards(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -156,7 +159,7 @@ pub async fn list_boards(
         (status = 404, description = "Board not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn get_board(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -189,7 +192,7 @@ pub async fn get_board(
         (status = 404, description = "Board or project not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn patch_board(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -242,7 +245,7 @@ pub async fn patch_board(
         (status = 409, description = "Board is not archived")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_board(
     State(state): State<AppState>,
     auth: AuthSession,

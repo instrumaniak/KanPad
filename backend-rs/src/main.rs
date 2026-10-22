@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use sqlx::{MySqlPool, migrate::Migrate};
 use tower_sessions::session_store::ExpiredDeletion;
 
-use backend_rs::{build_state, config::Settings, create_app};
+use backend_rs::{build_state, config::Settings, create_app_with_csp};
 
 /// KanPad Rust API server.
 #[derive(Debug, Parser)]
@@ -117,7 +117,21 @@ async fn serve(auto_migrate: bool) -> Result<()> {
             .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
     );
     let sweeper_handle = sweeper.abort_handle();
-    let app = create_app(state.clone());
+    // CSP inline-script hashes: computed AT BOOT from the `public/index.html`
+    // the server actually serves (never a hand-maintained constant — a stale
+    // hash breaks the SPA's inline theme bootstrap SILENTLY).
+    //
+    // DEGRADE PATH: `backend-rs/public/` is not in git (the Dockerfile copies
+    // `frontend/dist/` into it before the image build), so in a dev tree the
+    // file does not exist and the list is empty — the CSP is still emitted,
+    // without a hash. The hashes are logged so an operator can see whether
+    // the served SPA is covered.
+    let script_hashes = backend_rs::boot_inline_script_hashes();
+    tracing::info!(
+        script_hashes = ?script_hashes,
+        "CSP inline-script hashes computed from the served SPA index"
+    );
+    let app = create_app_with_csp(state.clone(), script_hashes);
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .await
         .with_context(|| format!("failed to bind port {port}"))?;

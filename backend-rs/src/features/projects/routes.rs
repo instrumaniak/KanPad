@@ -61,7 +61,10 @@ fn to_response(row: super::store::ProjectRow) -> ProjectResponse {
         (status = 401, description = "Not authenticated")
     )
 )]
-#[tracing::instrument(skip(state))]
+// `filters` carries the user's SEARCH TEXT (`q` / `search`) — the
+// same redaction rule as a request body (`54` B4). `pagination` holds
+// two integers and is fine to record.
+#[tracing::instrument(skip(state, auth, filters))]
 pub async fn list_projects(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -101,7 +104,7 @@ pub async fn list_projects(
         (status = 401, description = "Not authenticated")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_project(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -134,7 +137,7 @@ pub async fn create_project(
         (status = 404, description = "Project not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn update_project(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -167,7 +170,7 @@ pub async fn update_project(
         (status = 404, description = "Project not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_project(
     State(state): State<AppState>,
     auth: AuthSession,

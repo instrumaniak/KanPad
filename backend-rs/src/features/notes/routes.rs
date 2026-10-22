@@ -70,7 +70,7 @@ async fn load_detail(
         (status = 404, description = "Linked target or tag not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_note(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -131,7 +131,10 @@ pub async fn create_note(
         (status = 401, description = "Not authenticated")
     )
 )]
-#[tracing::instrument(skip(state))]
+// `filters` carries the user's SEARCH TEXT (`q` / `search`) — the
+// same redaction rule as a request body (`54` B4). `pagination` holds
+// two integers and is fine to record.
+#[tracing::instrument(skip(state, auth, filters))]
 pub async fn list_notes(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -178,7 +181,7 @@ pub async fn list_notes(
         (status = 404, description = "Note not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn get_note(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -206,7 +209,7 @@ pub async fn get_note(
         (status = 404, description = "Note, linked target, or tag not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn patch_note(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -276,7 +279,7 @@ pub async fn patch_note(
         (status = 404, description = "Note not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_note(
     State(state): State<AppState>,
     auth: AuthSession,

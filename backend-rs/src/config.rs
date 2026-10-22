@@ -340,6 +340,28 @@ impl Settings {
             .collect()
     }
 
+    /// The **canonical** CORS allowlist — the SINGLE source of truth for
+    /// `CorsLayer::allow_origin`, `CsrfLayer::add_trusted_origin` AND the
+    /// CSP's `connect-src` (three consumers, one list).
+    ///
+    /// Every entry is rendered in the exact form a **browser** sends in an
+    /// `Origin` header, because both `CorsLayer` and `CsrfLayer` match
+    /// origins **byte-for-byte** (`tower-http`'s own docs: an entry that is
+    /// not in canonical browser form *"will silently never match"*).
+    /// [`Settings::validate`] rejects a non-canonical entry at boot, so in a
+    /// real deployment this list is already canonical; the normalization here
+    /// keeps a hand-built [`Settings`] (tests) from silently degrading.
+    ///
+    /// An entry that cannot be parsed as an origin at all is **dropped** —
+    /// dropping is fail-CLOSED (the origin is then not trusted and not
+    /// allowed), never fail-open.
+    pub fn canonical_cors_origins(&self) -> Vec<String> {
+        self.cors_origin_list()
+            .iter()
+            .filter_map(|entry| canonical_origin(entry).ok())
+            .collect()
+    }
+
     /// Parsed trusted-proxy list. Empty default = never trust
     /// `X-Forwarded-For` (direct-to-`:3001` spoof defense).
     pub fn trusted_proxy_list(&self) -> Vec<String> {
@@ -437,14 +459,33 @@ impl Settings {
             ));
         }
         for origin in &origins {
-            // Strict shape so `cors_layer` stays infallible: an `Origin` is
-            // `scheme://host[:port]` and must parse as a header value.
-            let shape_ok = (origin.starts_with("http://") || origin.starts_with("https://"))
-                && axum::http::HeaderValue::from_str(origin).is_ok();
-            if !shape_ok {
-                return Err(ConfigError::Invalid(format!(
-                    "CORS_ORIGINS entry {origin:?} must be http(s)://host[:port]"
-                )));
+            // CANONICAL FORM (T56). Both `CorsLayer` and `CsrfLayer` match an
+            // origin BYTE-FOR-BYTE, and `tower-http`'s own docs warn that an
+            // entry which is not in canonical browser form "will silently
+            // never match" — `http://localhost:5173/` (trailing slash),
+            // `HTTP://LOCALHOST:5173` (uppercase) and
+            // `http://example.com:443` (explicit default port) would each
+            // be accepted by the layer and then never match a browser's
+            // `Origin` header ⇒ every write 403s with no clue why.
+            //
+            // So the entry is parsed into canonical form and the RAW entry is
+            // compared against it: a difference is a BOOT ERROR naming the
+            // offending entry (never a silent non-match).
+            match canonical_origin(origin) {
+                Ok(canonical) if canonical == *origin => {}
+                Ok(canonical) => {
+                    return Err(ConfigError::Invalid(format!(
+                        "CORS_ORIGINS entry {origin:?} is not in canonical form (a browser sends \
+                         {canonical:?}) — write it exactly as a browser sends it: lowercase scheme \
+                         and host, no trailing slash, no explicit default port, no \
+                         path/query/fragment"
+                    )));
+                }
+                Err(reason) => {
+                    return Err(ConfigError::Invalid(format!(
+                        "CORS_ORIGINS entry {origin:?} is not a valid origin: {reason}"
+                    )));
+                }
             }
         }
         if self.is_production() && origins.is_empty() {
@@ -454,6 +495,108 @@ impl Settings {
         }
         Ok(())
     }
+}
+
+/// Canonical form of a browser `Origin` header value.
+///
+/// A browser sends an origin as `scheme://host[:port]` with
+///
+/// * a **lowercase** scheme and host (IDN hosts in punycode),
+/// * the scheme's **default port omitted** (`:80` for http, `:443` for
+///   https — a browser never sends them),
+/// * **no** trailing slash, path, query or fragment.
+///
+/// This function returns exactly that rendering for a well-formed entry, or
+/// an actionable reason why the entry cannot be one. It is the single
+/// definition of "canonical" for the whole service: the CORS allowlist, the
+/// CSRF trusted-origin set and the CSP's `connect-src` are all derived from
+/// it, so they can never disagree.
+///
+/// The scheme's default port is **stripped** rather than rejected here: the
+/// caller ([`Settings::validate`]) compares the canonical rendering with the
+/// raw entry and fails the boot when they differ — that is what turns a
+/// silent non-match into an actionable boot error.
+pub fn canonical_origin(entry: &str) -> Result<String, String> {
+    let Some((scheme, rest)) = entry.split_once("://") else {
+        return Err("it must be scheme://host[:port]".to_string());
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if !matches!(scheme.as_str(), "http" | "https") {
+        return Err("the scheme must be http or https".to_string());
+    }
+    if rest.is_empty() {
+        return Err("the host is missing".to_string());
+    }
+    if rest.contains('/') {
+        return Err("a path (or a trailing slash) is not allowed".to_string());
+    }
+    if rest.contains('?') {
+        return Err("a query string is not allowed".to_string());
+    }
+    if rest.contains('#') {
+        return Err("a fragment is not allowed".to_string());
+    }
+    let (host, port) = split_host_port(rest)?;
+    if host.is_empty() {
+        return Err("the host is missing".to_string());
+    }
+    if !host.is_ascii() {
+        return Err(
+            "a non-ASCII host must be supplied in punycode (e.g. xn--exmple-cua.com)".to_string(),
+        );
+    }
+    // A browser lowercases the host; the canonical rendering does too (the
+    // caller then sees a difference and fails the boot).
+    let host = host.to_ascii_lowercase();
+    // A default port is never sent by a browser → strip it (the caller then
+    // sees a difference and fails the boot).
+    let default_port = match scheme.as_str() {
+        "http" => 80,
+        _ => 443,
+    };
+    let port = match port {
+        Some(port) if port == default_port => None,
+        other => other,
+    };
+    Ok(match port {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
+/// Split `host[:port]` (also handling an IPv6 literal `[::1]:8080`).
+fn split_host_port(rest: &str) -> Result<(String, Option<u16>), String> {
+    if let Some(close) = rest.find(']') {
+        let host = &rest[..=close];
+        let after = &rest[close + 1..];
+        let port = match after.strip_prefix(':') {
+            Some(port) => Some(parse_port(port)?),
+            None if after.is_empty() => None,
+            None => return Err("the port must be separated by a colon".to_string()),
+        };
+        return Ok((host.to_string(), port));
+    }
+    match rest.split_once(':') {
+        Some((host, port)) => Ok((host.to_string(), Some(parse_port(port)?))),
+        None => Ok((rest.to_string(), None)),
+    }
+}
+
+/// Parse a port: decimal digits only, no leading zeros, `1..=65535`.
+fn parse_port(raw: &str) -> Result<u16, String> {
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("the port must be a number".to_string());
+    }
+    let port: u16 = raw
+        .parse()
+        .map_err(|_| "the port must be between 1 and 65535".to_string())?;
+    if port == 0 {
+        return Err("the port must be between 1 and 65535".to_string());
+    }
+    if port.to_string() != raw {
+        return Err("the port must not have leading zeros".to_string());
+    }
+    Ok(port)
 }
 
 #[cfg(test)]
@@ -785,6 +928,111 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// AC (T56): a **non-canonical** `CORS_ORIGINS` entry must fail the boot
+    /// with a message naming the offending entry — never a silent non-match.
+    /// `CorsLayer`/`CsrfLayer` match origins byte-for-byte, so
+    /// `http://localhost:5173/`, `HTTP://LOCALHOST:5173` and
+    /// `http://example.com:443` would be accepted and then never match a
+    /// browser's `Origin` header ⇒ every write 403s for no visible reason.
+    #[test]
+    fn non_canonical_cors_origins_fail_boot_naming_the_entry() {
+        for entry in [
+            "http://localhost:5173/",
+            "HTTP://LOCALHOST:5173",
+            "https://example.com:443",
+            "http://example.com:80",
+            "http://localhost:5173/app",
+            "http://localhost:5173?x=1",
+            "http://localhost:5173#f",
+            "ftp://files.example.com",
+            "localhost:5173",
+        ] {
+            let vars = with_overrides(&[("CORS_ORIGINS", entry)]);
+            let err = Settings::from_pairs(&vars)
+                .expect_err("a non-canonical CORS origin must fail the boot");
+            let message = err.to_string();
+            assert!(
+                message.contains("CORS_ORIGINS"),
+                "the error must name the key: {message}"
+            );
+            assert!(
+                message.contains(entry),
+                "the error must name the offending entry {entry:?}: {message}"
+            );
+        }
+    }
+
+    /// The canonicalizer itself: a canonical entry is returned unchanged, and
+    /// the non-canonical variants render the form a browser actually sends.
+    #[test]
+    fn canonical_origin_renders_the_browser_form() {
+        for (entry, canonical) in [
+            ("http://localhost:5173", "http://localhost:5173"),
+            ("https://app.example.com", "https://app.example.com"),
+            (
+                "https://app.example.com:8443",
+                "https://app.example.com:8443",
+            ),
+            ("HTTP://LOCALHOST:5173", "http://localhost:5173"),
+            ("https://example.com:443", "https://example.com"),
+            ("http://example.com:80", "http://example.com"),
+            ("http://example.com:443", "http://example.com:443"),
+            ("http://[::1]:3001", "http://[::1]:3001"),
+        ] {
+            assert_eq!(
+                canonical_origin(entry).expect("entry must parse"),
+                canonical,
+                "entry: {entry}"
+            );
+        }
+        for entry in [
+            "",
+            "not-a-url",
+            "http://",
+            "https://example.com/",
+            "https://example.com/path",
+            "https://example.com?a=b",
+            "https://example.com#frag",
+            "file:///tmp/x",
+            "https://ümlaut.de",
+            "https://example.com:0080",
+            "https://example.com:0",
+            "https://example.com:70000",
+        ] {
+            assert!(
+                canonical_origin(entry).is_err(),
+                "entry must be rejected: {entry:?}"
+            );
+        }
+    }
+
+    /// The canonical list is the SINGLE source of truth for the CORS layer,
+    /// the CSRF trusted set and the CSP's `connect-src`.
+    #[test]
+    fn canonical_cors_origins_is_the_normalized_list() {
+        let vars = with_overrides(&[(
+            "CORS_ORIGINS",
+            "https://app.example.com, http://localhost:5173",
+        )]);
+        let settings = Settings::from_pairs(&vars).expect("canonical origins must load");
+        assert_eq!(
+            settings.canonical_cors_origins(),
+            vec![
+                "https://app.example.com".to_string(),
+                "http://localhost:5173".to_string()
+            ]
+        );
+        // The raw list keeps the operator's spelling (the boot error names
+        // the offending entry verbatim).
+        assert_eq!(
+            settings.cors_origin_list(),
+            vec![
+                "https://app.example.com".to_string(),
+                "http://localhost:5173".to_string()
+            ]
+        );
     }
 
     #[test]

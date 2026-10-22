@@ -28,9 +28,13 @@ tower = { version = "0.5", features = ["timeout"] }
 # would pull `zstd-sys`/`libz-sys` (a C build) for a codec **no browser
 # accepts**. The API serves JSON to browsers: `gzip` is universal and `br` is
 # supported by every browser in use — so the pair is the whole practical
-# surface, and it drops the C-toolchain requirement. (The `csrf` feature is
-# NOT enabled here: T56 turns it on when it adopts `CsrfLayer`.)
-tower-http = { version = "0.7", features = ["trace", "cors", "request-id", "compression-gzip", "compression-br", "set-header", "fs", "sensitive-headers"] }
+# surface, and it drops the C-toolchain requirement.
+#
+# `csrf` (T56) provides `CsrfLayer`, which implements the Go 1.25
+# `CrossOriginProtection` algorithm step for step (the cross-origin check on
+# mutating requests). The feature is **dependency-free** (an empty feature
+# list), so enabling it does not move `Cargo.lock`.
+tower-http = { version = "0.7", features = ["trace", "cors", "csrf", "request-id", "compression-gzip", "compression-br", "set-header", "fs", "sensitive-headers"] }
 tower-sessions = { version = "0.15", features = ["signed"] }
 # `tower-sessions-core` is the SAME version `tower-sessions 0.14` pins
 # (`=0.14.0`), so this is NOT a second core in the tree — it is the same one,

@@ -59,7 +59,7 @@ fn to_response(row: LabelRow) -> LabelResponse {
         (status = 401, description = "Not authenticated")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn list_labels(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -109,7 +109,7 @@ pub async fn list_labels(
         (status = 409, description = "Label name already exists")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_label(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -145,7 +145,7 @@ pub async fn create_label(
         (status = 409, description = "Label name already exists")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn update_label(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -186,7 +186,7 @@ pub async fn update_label(
         (status = 404, description = "Label not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_label(
     State(state): State<AppState>,
     auth: AuthSession,

@@ -63,7 +63,7 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         (status = 404, description = "Card not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_checklist(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -102,7 +102,7 @@ pub async fn create_checklist(
         (status = 404, description = "Card not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn list_checklists(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -131,7 +131,7 @@ pub async fn list_checklists(
         (status = 404, description = "Checklist not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn get_checklist(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -160,7 +160,7 @@ pub async fn get_checklist(
         (status = 404, description = "Checklist not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn update_checklist(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -198,7 +198,7 @@ pub async fn update_checklist(
         (status = 404, description = "Checklist not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_checklist(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -231,7 +231,7 @@ pub async fn delete_checklist(
         (status = 404, description = "Checklist not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_item(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -274,7 +274,7 @@ pub async fn create_item(
         (status = 404, description = "Checklist item not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn update_item(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -317,7 +317,7 @@ pub async fn update_item(
         (status = 404, description = "Checklist item not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_item(
     State(state): State<AppState>,
     auth: AuthSession,

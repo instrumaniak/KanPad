@@ -55,7 +55,7 @@ fn to_response(row: TagRow) -> TagResponse {
         (status = 401, description = "Not authenticated")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn list_tags(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -90,7 +90,7 @@ pub async fn list_tags(
         (status = 409, description = "Tag name already exists")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_tag(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -126,7 +126,7 @@ pub async fn create_tag(
         (status = 409, description = "Tag name already exists")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn update_tag(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -167,7 +167,7 @@ pub async fn update_tag(
         (status = 404, description = "Tag not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_tag(
     State(state): State<AppState>,
     auth: AuthSession,

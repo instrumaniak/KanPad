@@ -77,7 +77,7 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         (status = 404, description = "Board not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn list_columns(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -109,7 +109,7 @@ pub async fn list_columns(
         (status = 404, description = "Board not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_column(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -154,7 +154,7 @@ pub async fn create_column(
         (status = 404, description = "Column not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn rename_column_handler(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -202,7 +202,7 @@ pub async fn rename_column_handler(
         (status = 404, description = "Column not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_column(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -246,7 +246,7 @@ fn move_state_error(field: &'static str, message: &'static str) -> AppError {
         (status = 404, description = "Column not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn move_cards(
     State(state): State<AppState>,
     auth: AuthSession,

@@ -81,7 +81,7 @@ async fn load_detail(
         (status = 404, description = "Column not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn create_card(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -138,7 +138,7 @@ pub async fn create_card(
         (status = 404, description = "Card not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn get_card(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -172,7 +172,7 @@ pub async fn get_card(
         (status = 404, description = "Card not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn update_card(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -347,7 +347,7 @@ async fn attach_and_reload(
         (status = 404, description = "Card or label not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn attach_card_label(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -380,7 +380,7 @@ pub async fn attach_card_label(
         (status = 404, description = "Card or label not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth, input))]
 pub async fn attach_card_label_alias(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -417,7 +417,7 @@ pub async fn attach_card_label_alias(
         (status = 404, description = "Card, label, or assignment not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn detach_card_label(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -446,7 +446,7 @@ pub async fn detach_card_label(
         (status = 404, description = "Card not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn delete_card(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -476,7 +476,7 @@ pub async fn delete_card(
         (status = 404, description = "Column not found")
     )
 )]
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, auth))]
 pub async fn list_cards(
     State(state): State<AppState>,
     auth: AuthSession,
@@ -504,4 +504,114 @@ pub async fn list_cards(
         pagination.limit,
         total,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::Future,
+        sync::{Arc, Mutex},
+    };
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    /// Captures the RENDERED value of every field of every new span.
+    ///
+    /// `#[instrument]` records every argument it is not told to skip, via
+    /// that argument's `Debug` impl — so the DTO body (card title +
+    /// description) and the session's email used to land in the log sink.
+    /// This capture is what proves they no longer do.
+    #[derive(Clone, Default)]
+    struct SpanFieldCapture(Arc<Mutex<Vec<String>>>);
+
+    impl Visit for SpanFieldCapture {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0
+                .lock()
+                .expect("capture lock")
+                .push(format!("{}={:?}", field.name(), value));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0
+                .lock()
+                .expect("capture lock")
+                .push(format!("{}={}", field.name(), value));
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for SpanFieldCapture
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_new_span(
+            &self,
+            attributes: &tracing::span::Attributes<'_>,
+            _id: &tracing::Id,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut visitor = self.clone();
+            attributes.record(&mut visitor);
+        }
+    }
+
+    /// AC (T56, `54` B4): the card-create span must carry NEITHER the card
+    /// title NOR its description NOR the session's email.
+    ///
+    /// The instrumented handler creates its span when its future is first
+    /// POLLED, so one poll is enough to record the span's fields; the
+    /// handler's body never completes (the pool is lazy and the future is
+    /// dropped right after the poll).
+    #[tokio::test]
+    async fn card_create_span_records_neither_the_body_nor_the_email() {
+        const TITLE: &str = "TOP-SECRET-CARD-TITLE";
+        const DESCRIPTION: &str = "TOP-SECRET-CARD-DESCRIPTION";
+        const EMAIL: &str = "top-secret@example.com";
+
+        let capture = SpanFieldCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        // An unroutable DB URL: the pool is lazy and the handler is never
+        // awaited to completion, so nothing ever talks to a database.
+        let settings = crate::config::Settings {
+            database_url: Some("://not a url".to_string()),
+            ..Default::default()
+        };
+        let state = crate::state::AppState::from_settings(settings);
+        let auth = AuthSession {
+            user_id: crate::common::ids::UserId::from(1),
+            email: EMAIL.to_string(),
+            role: "user".to_string(),
+        };
+        let input = ValidJson(CreateCardInput {
+            title: TITLE.to_string(),
+            column_id: 1,
+            position: None,
+            description: Some(DESCRIPTION.to_string()),
+            due_date: None,
+        });
+
+        let mut future = Box::pin(create_card(State(state), auth, input));
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        let _ = future.as_mut().poll(&mut context);
+        drop(future);
+        drop(guard);
+
+        let rendered = capture.0.lock().expect("capture lock").join("\n");
+        assert!(
+            !rendered.contains(TITLE),
+            "the card title leaked into the span: {rendered}"
+        );
+        assert!(
+            !rendered.contains(DESCRIPTION),
+            "the card description leaked into the span: {rendered}"
+        );
+        assert!(
+            !rendered.contains(EMAIL),
+            "the session email leaked into the span: {rendered}"
+        );
+    }
 }

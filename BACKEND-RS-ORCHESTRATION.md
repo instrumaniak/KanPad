@@ -379,7 +379,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | Task | Branch | Worktree | Depends | Status |
 |------|--------|----------|---------|--------|
 | T54 naming (`APP_ENV` + `kanpad.sid`) | (merged, branch deleted) | — | none | **DONE `8b0cef64`** |
-| T55 CI activation + lint-gate repair | `rs-t55-ci` | `KanPad-wt/wt-t55` | T54 | IN PROGRESS |
+| T55 CI activation + lint-gate repair | (merged, branch deleted) | — | T54 | **DONE `689dc895`** |
 | T57 build & supply chain | `rs-t57-build` | — | T55 | pending |
 | T63 dead deps | `rs-t63-deps` | — | T57 | pending |
 | T65 in-tree session store | `rs-t65-store` | — | T63 | pending |
@@ -407,3 +407,31 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **`gh` is NOT installed** → T55's AC *"the workflow runs green on the PR (a `gh run
   list` link)"* cannot be satisfied locally. Everything else in T55 is verified by
   replaying each gate by hand; the CI run itself needs a push to GitHub.
+
+## Resume 2026-10-22 (T55 done — the CI can finally run)
+
+- **T55 MERGED `689dc895`** (ff into `dev-rs-local`; worktree + branch deleted per the standing rule).
+  - **B1**: `backend-rs/.github/workflows/ci.yml` → **repo root** `.github/workflows/backend-rs.yml`
+    (a RENAME — the nested file is deleted; two copies would drift). The trigger path filter now
+    includes the workflow file itself.
+  - **B2**: the 3 sites the `unwrap`/`expect` gate reported are fixed **in the code**:
+    `columns/store.rs::to_response_one` (the create/update paths no longer build a one-element
+    `Vec`, pop it and `expect` it) + `state.rs` now uses the file's `unwrap_or_else(|_| panic!(…))`
+    fail-fast idiom. A **second gate** was added (`panic!`/`todo!`/`unimplemented!` outside
+    `main.rs`+`#[cfg(test)]`, with the boot-time `state.rs` fail-fasts allow-listed).
+  - **B3**: `allow_methods` gained **`PUT`** + the new `tests/api/cors.rs` preflight guard
+    (**the `PUT` fix moved here from T56** — the guard must not land red). T56 keeps the
+    Origin check + CSP + span redaction.
+  - **The THIRD gate was also repaired**: `no format! in store.rs` had never run and failed on
+    two false positives (a doc comment mentioning `format!`; the sanctioned LIKE-escape VALUE
+    builder). The GATE was fixed (skip comments; flag a `format!` only when the built text
+    carries a SQL keyword), not the code.
+- **Evidence (local replay, since `gh` is not installed):** all three grep gates green AND each
+  proved **RED** on a probe; fmt 0 | clippy -D warnings 0 | lib 60/60 | **api 86/86** (82 + 4
+  CORS) | `sqlx prepare --check` 0 | `.sqlx/` unchanged. The CORS guard is red-proofed too
+  (removing `PUT` → `CORS must allow PUT, got "GET,POST,PATCH,DELETE,OPTIONS"`).
+- **Open AC**: "the workflow runs green on the PR (a `gh run list` link)" — needs a push to
+  GitHub + the `gh` CLI. Everything else in T55 is satisfied locally.
+- **Next**: T57 (build & supply chain: `[lints]`, `[profile.release]`, `rust-toolchain.toml`
+  @ 1.99.1 + the CI toolchain-override fix, `deny.toml`, edition 2024) → T63 → T65 → T67 →
+  {T56, T66} → T58 → T59 → T60 → T61 → T62.

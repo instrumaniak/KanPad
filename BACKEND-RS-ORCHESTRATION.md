@@ -515,3 +515,27 @@ still UNCOMMITTED (the user is preparing the commits by hand).
   the 2026-10-22 (e) review: the status banner, the stale `ci.yml` paths, the A1/A2 blast-radius
   file names, **T65's "five store files" → EIGHT**, the `openapi.json` claim, the matrix's clippy
   command, and "two lint-gate greps" → three) — then **T65** (the hinge).
+
+## Resume 2026-10-22 (P2 done — the specs match the tree again)
+
+- **P2 MERGED `65eb76b2`** (ff into `dev-rs-local`; worktree + branch deleted). Spec-only PR — **no runtime file touched**.
+- **8 drift defects fixed**, in BOTH directions:
+  - *the plan described a tree that no longer exists*: the `54` status banner (now a single accurate
+    paragraph + an **implementation-status table**), 5 stale `backend-rs/.github/workflows/ci.yml`
+    pointers, the "repo-side claims" paragraph (now labelled a SNAPSHOT + re-measured), and
+    `11-rewrite-deltas.md`'s E5 banner (the build chain + gate landed; the observability half is still
+    PLANNED).
+  - *the plan described a tree that never existed*: **T65's "five store files" are EIGHT** (measured:
+    boards, cards, checklists, columns, labels, notes, projects, tags — `labels`/`projects`/`tags` were
+    missing, so **T65's own AC would have failed on them**), and "no task touches `openapi.json`" is
+    false (T57 changed its `info` block — 3 lines; `schema.d.ts` byte-identical).
+  - *the plan mandated a command that FAILS*: the matrix's clippy command now carries the
+    `-A clippy::pedantic` advisory exemption (the un-exempted form fails with ~290 pedantic errors),
+    and the T55 matrix row counts **three** grep gates, not two.
+- **Verification was mechanical, not eyeballed**: every path `54` names resolves; the stale patterns
+  are gone; every count `54` asserts re-measured PASS; the code gates still hold (fmt 0 | clippy 0 |
+  lib 60/60 | prepare --check 0).
+- **NEXT: T65** — the hinge. Corrected scope: the in-tree `tower_sessions_core::SessionStore` over the
+  app pool, MessagePack payload + the `sessions` DDL byte-identical, `tower-sessions-sqlx-store` dropped,
+  the `AS "…chrono::NaiveDateTime"` overrides deleted from **EIGHT** store files, `sqlx/time` off, and
+  the `state.rs` grep-gate allow-list entry dropped (T55's sequencing note).

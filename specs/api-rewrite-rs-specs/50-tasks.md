@@ -400,11 +400,11 @@ runbook). Only T02b remains as separate work. Same global DoD.
   * **`checklists` missing** in the `add-card-input.tsx` fixture — the generated `Card` requires it, the fixture omits it.
   * `column_id: number | null` vs `number` in `use-cards.ts` — the same optional/nullable confusion.
   **Decision:** fix the frontend (the type surgery + the camelCase leftovers), NOT the generated types — the generated types are the contract, and the backend is correct. **This task is a FRONTEND task and does not touch `backend-rs/`.** It must ALSO add the missing `web`-job CI evidence to the pipeline's green story: the `web` job has never run either (T55 moved the backend workflow to the root; the `web` job is IN that workflow — so it is discoverable, but it has never been green). Depends: none (the backend's contract is already frozen). Blocks: the pipeline's first green run. Touch only: `frontend/src/**`. AC:
-  - [ ] `npx tsc --noEmit -p tsconfig.app.json` → **0 errors** (today: 15)
-  - [ ] `npm run build` → green (today: it FAILS at `tsc -b`)
-  - [ ] `npm run gen:api -- --check` → the committed `schema.d.ts` matches `backend-rs/openapi.json`
-  - [ ] no `camelCase` identifier from the Nest era survives against a snake_case API field (grep the touched files for `boardCount` and friends)
-  - [ ] evidence: the `tsc` output (0 errors) + the build output + the diff
+  - [x] `npx tsc --noEmit -p tsconfig.app.json` → **0 errors** (was 15)
+  - [x] `npm run build` → green (was failing at `tsc -b`; vite build produced `dist/` in 9.5 s)
+  - [x] `npm run gen:api -- --check` → *"schema.d.ts is up to date"* (the committed file matches `backend-rs/openapi.json`)
+  - [x] no `camelCase` identifier from the Nest era survives against a snake_case API field — `boardCount` now appears only in prose (the `projects.api.ts` doc comment + the generated schema's description), never as an identifier
+  - [x] evidence: `tsc` 0 errors + `npm run build` green + `gen:api --check` up to date + vitest **723/723 (77 files)**; 10 files, +69/−32, `frontend/src/**` only; **no `schema.d.ts` edit** and no `any`/`@ts-ignore`/`as unknown as` escape hatch. Merged `93ca7016`.
 
 * **T68 CI first-run defect repair.** (`54` B1 + the T55 first-run AC.) T55 moved the workflow to the repo root, which made the pipeline **discoverable for the first time** — and therefore made every step in it **verifiable for the first time**. Replaying each step by hand surfaced **two RED steps** that had been latent since the workflow was authored, plus one unpinned tool:
   * **(a) The `cargo audit` step contradicted the committed `deny.toml`.** The workflow ran **two** advisory gates with **different** policies: `cargo-deny` reads `deny.toml` (4 task-bound ignores), `cargo-audit` reads `.cargo/audit.toml` — which does not exist — so it never saw the ignores and failed on exactly the advisories the project had deliberately, and with a reason, accepted. **Red-proof:** `cargo audit` → `error: 4 vulnerabilities found!` (exit 1), while `cargo deny check advisories` → `ok`. **Fix: DELETE the `cargo audit` step** — it is not in T06's normative step order, `cargo deny check advisories` reads the same RustSec DB *and* checks yanked crates *and* honours the task-bound ignores, and a second ignore list can only drift. One policy, one gate, one source of truth.

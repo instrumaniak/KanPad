@@ -17,6 +17,6 @@
 //! identity (`tests/api/users.rs`).
 
 pub use crate::features::auth::store::{
-    find_auth_row_by_email, find_user_by_email, find_user_by_id, insert_user_row, AuthRow,
-    StoredUser,
+    AuthRow, StoredUser, find_auth_row_by_email, find_user_by_email, find_user_by_id,
+    insert_user_row,
 };

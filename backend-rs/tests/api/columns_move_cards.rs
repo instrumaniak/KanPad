@@ -25,8 +25,8 @@ use super::helpers::{
     app_on_pool, assert_errors_nonempty, assert_problem, authed_request, create_board, json_body,
     json_of, register, send,
 };
-use axum::http::StatusCode;
 use axum::Router;
+use axum::http::StatusCode;
 use sqlx::MySqlPool;
 
 async fn column_ids(app: Router, jar: &str, board_id: i64) -> Vec<i64> {

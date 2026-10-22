@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use sqlx::mysql::MySqlPoolOptions;
 use sqlx::MySqlExecutor;
+use sqlx::mysql::MySqlPoolOptions;
 
 /// Canonical pool defaults per 10-architecture.md DB pool.
 pub fn pool_options() -> MySqlPoolOptions {
@@ -25,7 +25,7 @@ pub fn pool_options() -> MySqlPoolOptions {
 /// containing `-`, `.`, or a space, is legal SQL but rejected here. The
 /// session table lives in the app database (`30-db-schema.md` deviation 11),
 /// so the database name must satisfy the store's rule or every session query
-/// fails at runtime. Mirrored here so [`Settings::validate`](crate::config::Settings::validate)
+/// fails at runtime. Mirrored here so `Settings::validate`
 /// can reject such a config cleanly at load instead of letting store
 /// construction panic later.
 pub fn is_valid_db_name(name: &str) -> bool {

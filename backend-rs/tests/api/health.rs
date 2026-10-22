@@ -7,12 +7,12 @@
 use std::sync::Mutex;
 
 use axum::body::to_bytes;
-use axum::http::{header, Method, Request, StatusCode};
+use axum::http::{Method, Request, StatusCode, header};
 use backend_rs::{build_state, config::Settings, create_app};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use super::helpers::{test_app, test_settings, PROBLEM_BASE};
+use super::helpers::{PROBLEM_BASE, test_app, test_settings};
 
 const WRONG_PASSWORD: &str = "this-password-is-wrong-xyz";
 

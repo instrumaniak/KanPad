@@ -27,7 +27,7 @@ use crate::{
     error::{AppError, Internal},
 };
 
-use super::types::{format_timestamp, ColumnResponse};
+use super::types::{ColumnResponse, format_timestamp};
 
 /// One `columns` row (assembled by [`fetch_column_owned`]/[`fetch_columns`];
 /// cards ride separately via `common::card_summary` so the column select stays

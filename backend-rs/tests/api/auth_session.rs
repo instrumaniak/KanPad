@@ -31,9 +31,9 @@
 //! alias serves the same handlers.
 
 use axum::{
-    body::Body,
-    http::{header, HeaderMap, Request, StatusCode},
     Router,
+    body::Body,
+    http::{HeaderMap, Request, StatusCode, header},
 };
 use backend_rs::config::Settings;
 use secrecy::SecretString;
@@ -349,9 +349,11 @@ async fn auth_session_full_flow(pool: MySqlPool) {
             "validation-error",
             "Login validation: bad email / empty / overlong password…",
         );
-        assert!(failure["errors"]
-            .as_array()
-            .is_some_and(|errors| !errors.is_empty()));
+        assert!(
+            failure["errors"]
+                .as_array()
+                .is_some_and(|errors| !errors.is_empty())
+        );
     }
 
     // 5. Legacy bcrypt (cost-10 `$2b$`) verifies, then upgrades to Argon2id

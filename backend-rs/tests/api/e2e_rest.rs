@@ -42,7 +42,7 @@ use serde_json::Value;
 use sqlx::MySqlPool;
 
 use super::helpers::assert_errors_nonempty;
-use super::wire::{assert_problem, cookie_jar, header_first, parse_response, WireResponse};
+use super::wire::{WireResponse, assert_problem, cookie_jar, header_first, parse_response};
 
 /// This suite's black-box listener address (`host:port`), set once by the
 /// single `#[sqlx::test]` below, right after the bind.

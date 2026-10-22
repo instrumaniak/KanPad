@@ -6,7 +6,7 @@
 //! — the handler reads the embedded file, so default settings suffice).
 
 use axum::{
-    body::{to_bytes, Body},
+    body::{Body, to_bytes},
     extract::Request,
 };
 use tower::ServiceExt;

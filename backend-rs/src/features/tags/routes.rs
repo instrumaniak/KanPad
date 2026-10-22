@@ -1,11 +1,11 @@
 //! tags handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
 use axum::{
+    Json,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::get,
-    Json,
 };
 
 use crate::{
@@ -17,8 +17,8 @@ use crate::{
 
 use super::{
     store::{
-        apply_tag_patch, count_tags, delete_tag_row, fetch_tag, fetch_tag_page, insert_tag,
-        wire_created_at, TagPatch, TagRow,
+        TagPatch, TagRow, apply_tag_patch, count_tags, delete_tag_row, fetch_tag, fetch_tag_page,
+        insert_tag, wire_created_at,
     },
     types::{CreateTagInput, TagBody, TagResponse, UpdateTagInput},
 };

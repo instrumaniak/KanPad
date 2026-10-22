@@ -20,7 +20,7 @@
 //! database — see `helpers.rs` module docs).
 
 use axum::{
-    body::{to_bytes, Body},
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use tower::ServiceExt;

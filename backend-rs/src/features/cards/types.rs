@@ -84,12 +84,12 @@ where
 /// always pass; a set value must fit `<= 10_000` chars (no not-blank rule —
 /// whitespace-only descriptions are stored, mirroring Nest).
 fn validate_nullable_description(value: &Option<Option<String>>, _context: &()) -> garde::Result {
-    if let Some(Some(description)) = value {
-        if description.chars().count() > 10_000 {
-            return Err(garde::Error::new(
-                "length: must be at most 10000 characters",
-            ));
-        }
+    if let Some(Some(description)) = value
+        && description.chars().count() > 10_000
+    {
+        return Err(garde::Error::new(
+            "length: must be at most 10000 characters",
+        ));
     }
     Ok(())
 }

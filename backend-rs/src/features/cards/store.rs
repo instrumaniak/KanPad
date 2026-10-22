@@ -50,7 +50,7 @@ use sqlx::{MySql, MySqlExecutor, QueryBuilder};
 use crate::{
     common::{
         card_summary::{
-            format_timestamp as summary_timestamp, CardLabelRef, CardSummary, ChecklistProgress,
+            CardLabelRef, CardSummary, ChecklistProgress, format_timestamp as summary_timestamp,
         },
         ids::{CardId, ColumnId, LabelId},
     },
@@ -58,7 +58,7 @@ use crate::{
 };
 
 use super::types::{
-    format_timestamp, CardDetailResponse, ChecklistItemResponse, ChecklistResponse,
+    CardDetailResponse, ChecklistItemResponse, ChecklistResponse, format_timestamp,
 };
 
 /// One `cards` row (assembled by [`fetch_card_owned`]; labels/checklists ride

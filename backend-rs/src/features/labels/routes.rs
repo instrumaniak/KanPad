@@ -1,11 +1,11 @@
 //! labels handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
 use axum::{
+    Json,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::get,
-    Json,
 };
 
 use crate::{
@@ -17,8 +17,8 @@ use crate::{
 
 use super::{
     store::{
-        apply_label_patch, count_labels, delete_label_row, fetch_label, fetch_label_page,
-        insert_label, wire_timestamps, LabelPatch, LabelRow,
+        LabelPatch, LabelRow, apply_label_patch, count_labels, delete_label_row, fetch_label,
+        fetch_label_page, insert_label, wire_timestamps,
     },
     types::{CreateLabelInput, LabelBody, LabelResponse, UpdateLabelInput},
 };

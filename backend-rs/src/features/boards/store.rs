@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::types::{
-    format_timestamp, BoardDetailResponse, BoardListResponse, ColumnSummary, ProjectRef,
+    BoardDetailResponse, BoardListResponse, ColumnSummary, ProjectRef, format_timestamp,
 };
 
 /// Default columns created with every board (`name`, `position` pairs —

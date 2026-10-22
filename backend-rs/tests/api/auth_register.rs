@@ -18,9 +18,9 @@
 //! `REGISTRATION_ENABLED=false` -> 403 problem+json.
 
 use axum::{
-    body::Body,
-    http::{header, HeaderMap, Request, StatusCode},
     Router,
+    body::Body,
+    http::{HeaderMap, Request, StatusCode, header},
 };
 use backend_rs::config::Settings;
 use sqlx::MySqlPool;

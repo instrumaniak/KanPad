@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 
 use crate::common::{
     ids::ProjectId,
-    validation::{validate_not_blank, validate_optional_not_blank, SORT_ORDERS},
+    validation::{SORT_ORDERS, validate_not_blank, validate_optional_not_blank},
 };
 
 /// Allowed `?sort=` keys for `GET /api/v1/projects` (whitelisted `match` in
@@ -24,26 +24,26 @@ pub const DEFAULT_PROJECT_ORDER: &str = "desc";
 
 /// `?sort=` allowlist: `name` | `created_at` | `updated_at`.
 fn validate_optional_project_sort(value: &Option<String>, _context: &()) -> garde::Result {
-    if let Some(sort) = value {
-        if !PROJECT_SORTS.contains(&sort.as_str()) {
-            return Err(garde::Error::new(format!(
-                "sort must be one of: {}",
-                PROJECT_SORTS.join(", ")
-            )));
-        }
+    if let Some(sort) = value
+        && !PROJECT_SORTS.contains(&sort.as_str())
+    {
+        return Err(garde::Error::new(format!(
+            "sort must be one of: {}",
+            PROJECT_SORTS.join(", ")
+        )));
     }
     Ok(())
 }
 
 /// `?order=` allowlist: `asc` | `desc` (mirrors the column `sort_order` enum).
 fn validate_optional_list_order(value: &Option<String>, _context: &()) -> garde::Result {
-    if let Some(order) = value {
-        if !SORT_ORDERS.contains(&order.as_str()) {
-            return Err(garde::Error::new(format!(
-                "order must be one of: {}",
-                SORT_ORDERS.join(", ")
-            )));
-        }
+    if let Some(order) = value
+        && !SORT_ORDERS.contains(&order.as_str())
+    {
+        return Err(garde::Error::new(format!(
+            "order must be one of: {}",
+            SORT_ORDERS.join(", ")
+        )));
     }
     Ok(())
 }

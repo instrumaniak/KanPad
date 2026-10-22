@@ -7,17 +7,17 @@
 //! the real feature DTOs through [`ValidJson`]/[`ValidQuery`].
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::Request,
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     middleware,
     response::Response,
     routing::{get, post},
-    Json, Router,
 };
 use backend_rs::{
     common::{ids::BoardId, validation::MAX_PASSWORD_BYTES},
-    error::{capture_request_context, AppError},
+    error::{AppError, capture_request_context},
     extract::{ValidJson, ValidPath, ValidQuery},
     features::{
         auth::types::{LoginInput, RegisterInput},
@@ -35,7 +35,7 @@ use backend_rs::{
     },
 };
 use garde::Validate;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 
@@ -435,12 +435,14 @@ async fn login_weak_but_wellformed_password_passes_validation() {
         let response = post_json("/v/login", &body).await;
         assert_eq!(response.status(), StatusCode::OK, "password: {password:?}");
     }
-    assert!(LoginInput {
-        email: "u@example.com".to_string(),
-        password: "weakpass".to_string(),
-    }
-    .validate()
-    .is_ok());
+    assert!(
+        LoginInput {
+            email: "u@example.com".to_string(),
+            password: "weakpass".to_string(),
+        }
+        .validate()
+        .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -606,12 +608,14 @@ async fn column_move_sort_and_checklist_position_rules() {
 
     // Zero is a legal checklist-item position; card positions stay
     // unclamped at the DTO layer (negative card positions clamp in store).
-    assert!(CreateChecklistItemInput {
-        text: "Buy milk".to_string(),
-        position: Some(0),
-    }
-    .validate()
-    .is_ok());
+    assert!(
+        CreateChecklistItemInput {
+            text: "Buy milk".to_string(),
+            position: Some(0),
+        }
+        .validate()
+        .is_ok()
+    );
     assert!(
         CreateCardInput {
             title: "T".to_string(),
@@ -714,11 +718,13 @@ async fn update_dtos_trim_and_required_rules() {
         },
         "name",
     );
-    assert!(UpdateProjectInput {
-        name: Some("New".to_string()),
-    }
-    .validate()
-    .is_ok());
+    assert!(
+        UpdateProjectInput {
+            name: Some("New".to_string()),
+        }
+        .validate()
+        .is_ok()
+    );
 
     // Optional update fields: absent is fine, blank is 400.
     direct_field_error(
@@ -741,15 +747,17 @@ async fn update_dtos_trim_and_required_rules() {
         },
         "view_mode",
     );
-    assert!(UpdateBoardInput {
-        name: None,
-        background_color: None,
-        project_id: None,
-        view_mode: None,
-        is_archived: Some(true),
-    }
-    .validate()
-    .is_ok());
+    assert!(
+        UpdateBoardInput {
+            name: None,
+            background_color: None,
+            project_id: None,
+            view_mode: None,
+            is_archived: Some(true),
+        }
+        .validate()
+        .is_ok()
+    );
 
     direct_field_error(
         &UpdateTagInput {
@@ -849,14 +857,16 @@ async fn length_caps_match_nest_dtos() {
         },
         "tag_ids",
     );
-    assert!(CreateNoteInput {
-        title: "T".to_string(),
-        content: "x".repeat(65_535),
-        board_id: Some(2),
-        project_id: None,
-        card_id: None,
-        tag_ids: Some(vec![1, 2]),
-    }
-    .validate()
-    .is_ok());
+    assert!(
+        CreateNoteInput {
+            title: "T".to_string(),
+            content: "x".repeat(65_535),
+            board_id: Some(2),
+            project_id: None,
+            card_id: None,
+            tag_ids: Some(vec![1, 2]),
+        }
+        .validate()
+        .is_ok()
+    );
 }

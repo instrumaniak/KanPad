@@ -22,11 +22,11 @@
 //! `Content-Type: application/problem+json` + exact `type` URI.
 
 use super::helpers::{
-    app_on_pool, assert_errors_nonempty, assert_problem, authed_request, create_board_json,
-    create_project, json_of, register, send, PROBLEM_BASE, PROBLEM_JSON,
+    PROBLEM_BASE, PROBLEM_JSON, app_on_pool, assert_errors_nonempty, assert_problem,
+    authed_request, create_board_json, create_project, json_of, register, send,
 };
-use axum::http::{header, HeaderMap, StatusCode};
 use axum::Router;
+use axum::http::{HeaderMap, StatusCode, header};
 use serde_json::Value;
 use sqlx::MySqlPool;
 

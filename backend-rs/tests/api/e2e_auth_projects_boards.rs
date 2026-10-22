@@ -54,7 +54,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::helpers::{
     assert_errors_nonempty as assert_errors_nonempty_fields, assert_no_legacy_keys,
 };
-use super::wire::{assert_problem, parse_response, WireResponse};
+use super::wire::{WireResponse, assert_problem, parse_response};
 
 // ---------------------------------------------------------------------------
 // Per-target expectation params.
@@ -85,11 +85,7 @@ impl Target {
     /// Expected status for hard deletes (projects, boards) and logout:
     /// rewrite `204` (no body) vs Nest `200` + `message`.
     fn delete_status(self) -> u16 {
-        if self.is_rust() {
-            204
-        } else {
-            200
-        }
+        if self.is_rust() { 204 } else { 200 }
     }
 }
 
@@ -275,10 +271,10 @@ async fn spawn_blackbox(pool: &MySqlPool) -> (SocketAddr, tokio::task::JoinHandl
         jar: Vec::new(),
     };
     for _ in 0..100 {
-        if let Some(response) = probe.try_request("GET", "/health", None).await {
-            if response.status == 200 {
-                break;
-            }
+        if let Some(response) = probe.try_request("GET", "/health", None).await
+            && response.status == 200
+        {
+            break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }

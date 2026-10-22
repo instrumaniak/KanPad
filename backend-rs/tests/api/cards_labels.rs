@@ -36,8 +36,8 @@ use super::helpers::{
     app_on_pool, assert_errors_nonempty, assert_problem, authed_request, json_body, json_of,
     register, send,
 };
-use axum::http::{header, StatusCode};
 use axum::Router;
+use axum::http::{StatusCode, header};
 use sqlx::MySqlPool;
 
 async fn create_label(app: Router, jar: &str, name: &str, color: &str) -> i64 {

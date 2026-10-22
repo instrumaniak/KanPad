@@ -1,11 +1,11 @@
 //! `create-admin` CLI core (T12; `10-architecture.md` create-admin CLI).
 //!
 //! Thin boundary over the T10 auth store: [`run_create_admin`] validates with
-//! **the same [`common::validation`] email + password fns as registration**
+//! **the same [`crate::common::validation`] email + password fns as registration**
 //! (single shared helpers — no drift; the Nest source drifted here), hashes
 //! with the T10 Argon2id [`hash_password`] **before** opening the tx, and
 //! seeds the six default labels via prod
-//! [`common::label_seed::ensure_default_labels`] in the same tx as the
+//! [`crate::common::label_seed::ensure_default_labels`] in the same tx as the
 //! insert. `main.rs` owns prompting/exit; tests drive this module directly
 //! (no manual ops, no subprocess).
 //!

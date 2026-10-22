@@ -1,17 +1,17 @@
 //! columns handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
 use axum::{
+    Json,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, patch, post},
-    Json,
 };
 
 use crate::{
     common::card_summary::{
-        assemble_summaries, fetch_board_card_labels, fetch_board_card_progress, fetch_board_cards,
-        CardSummary,
+        CardSummary, assemble_summaries, fetch_board_card_labels, fetch_board_card_progress,
+        fetch_board_cards,
     },
     error::{AppError, Internal},
     extract::{AuthSession, ValidJson, ValidPath},
@@ -26,8 +26,8 @@ use super::{
         rewrite_card_positions, to_response, to_response_one,
     },
     types::{
-        ColumnBody, ColumnListBody, CreateColumnInput, MoveCardsBody, MoveCardsData,
-        MoveCardsInput, UpdateColumnInput, DEFAULT_COLUMN_NAME,
+        ColumnBody, ColumnListBody, CreateColumnInput, DEFAULT_COLUMN_NAME, MoveCardsBody,
+        MoveCardsData, MoveCardsInput, UpdateColumnInput,
     },
 };
 

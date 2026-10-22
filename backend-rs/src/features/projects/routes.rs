@@ -1,11 +1,11 @@
 //! projects handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
 use axum::{
+    Json,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, patch},
-    Json,
 };
 
 use crate::{

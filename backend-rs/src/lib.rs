@@ -21,21 +21,21 @@ use std::{
 };
 
 use axum::{
+    Json, Router,
     error_handling::HandleErrorLayer,
     extract::{ConnectInfo, Request, State},
-    http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use docs::HealthResponse;
-use error::{capture_request_context, handle_timeout, AppError};
+use error::{AppError, capture_request_context, handle_timeout};
 use secrecy::ExposeSecret;
 use sha2::{Digest, Sha512};
 use state::AppState;
 use tower::ServiceBuilder;
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::KeyExtractor, GovernorError, GovernorLayer,
+    GovernorError, GovernorLayer, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
 };
 use tower_http::{
     compression::CompressionLayer,
@@ -47,8 +47,8 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tower_sessions::{
-    cookie::{Key, SameSite},
     Expiry, SessionManagerLayer,
+    cookie::{Key, SameSite},
 };
 use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
@@ -351,10 +351,9 @@ impl KeyExtractor for ClientIpExtractor {
             .trusted
             .iter()
             .any(|entry| proxy_entry_matches(entry, peer))
+            && let Some(forwarded) = first_forwarded_ip(req.headers())
         {
-            if let Some(forwarded) = first_forwarded_ip(req.headers()) {
-                return Ok(forwarded);
-            }
+            return Ok(forwarded);
         }
         Ok(peer)
     }
@@ -541,7 +540,7 @@ async fn spa_index(method: Method, uri: Uri) -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use serde_json::Value;
     use tower::ServiceExt;
 

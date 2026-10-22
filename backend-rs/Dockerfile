@@ -17,7 +17,9 @@
 #     to /app/public (ServeDir::new("public/") resolves against WORKDIR).
 #   * Serves :3001 by default (PORT env, default 3001 in Settings).
 
-FROM rust:1.96-bookworm AS builder
+# The builder base moves WITH the toolchain pin (rust-toolchain.toml =
+# 1.99.1) in the same commit — never one without the other.
+FROM rust:1.99-bookworm AS builder
 
 ENV SQLX_OFFLINE=true
 

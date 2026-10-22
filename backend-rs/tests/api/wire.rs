@@ -37,7 +37,7 @@ use super::helpers::assert_problem_fields;
 
 /// A parsed HTTP/1.1 response.
 #[derive(Debug, Clone)]
-pub struct WireResponse {
+pub(crate) struct WireResponse {
     /// Status code.
     pub status: u16,
     /// Header names are lowercased; each may repeat (`Set-Cookie`).
@@ -48,7 +48,7 @@ pub struct WireResponse {
 
 impl WireResponse {
     /// First value of `name` (header names are matched lowercased).
-    pub fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .get(&name.to_ascii_lowercase())
             .and_then(|values| values.first())
@@ -59,7 +59,7 @@ impl WireResponse {
     ///
     /// The wire-flavored counterpart of `super::helpers::json_of` — same
     /// contract, different transport (bytes off a socket, not an axum body).
-    pub fn json(&self, what: &str) -> Value {
+    pub(crate) fn json(&self, what: &str) -> Value {
         assert!(
             !self.body.is_empty(),
             "{what}: expected a JSON body, got empty"
@@ -78,7 +78,7 @@ impl WireResponse {
 ///
 /// `method`/`path` only label panic messages. A `transfer-encoding: chunked`
 /// body is de-chunked; anything else is taken verbatim.
-pub fn parse_response(raw: &[u8], method: &str, path: &str) -> WireResponse {
+pub(crate) fn parse_response(raw: &[u8], method: &str, path: &str) -> WireResponse {
     let split = raw
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -121,7 +121,7 @@ pub fn parse_response(raw: &[u8], method: &str, path: &str) -> WireResponse {
 }
 
 /// Undo `transfer-encoding: chunked` framing.
-pub fn dechunk(mut input: &[u8]) -> Vec<u8> {
+pub(crate) fn dechunk(mut input: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     loop {
         let eol = input
@@ -142,7 +142,7 @@ pub fn dechunk(mut input: &[u8]) -> Vec<u8> {
 
 /// First value of `name` in a raw header map (the name is matched
 /// lowercased, exactly like [`WireResponse::header`]).
-pub fn header_first(headers: &HashMap<String, Vec<String>>, name: &str) -> Option<String> {
+pub(crate) fn header_first(headers: &HashMap<String, Vec<String>>, name: &str) -> Option<String> {
     headers
         .get(&name.to_ascii_lowercase())
         .and_then(|values| values.first())
@@ -155,7 +155,7 @@ pub fn header_first(headers: &HashMap<String, Vec<String>>, name: &str) -> Optio
 /// [`super::helpers::cookie_jar_from`] core — the same core the in-process
 /// `super::helpers::cookie_jar` uses, so the two transports cannot drift.
 /// (Same name, different input type: a suite importing both must alias one.)
-pub fn cookie_jar(headers: &HashMap<String, Vec<String>>) -> String {
+pub(crate) fn cookie_jar(headers: &HashMap<String, Vec<String>>) -> String {
     super::helpers::cookie_jar_from(
         headers
             .get("set-cookie")
@@ -169,7 +169,7 @@ pub fn cookie_jar(headers: &HashMap<String, Vec<String>>) -> String {
 ///
 /// Delegates to [`super::helpers::assert_problem_fields`] — the same core the
 /// in-process suites assert with.
-pub fn assert_problem(response: &WireResponse, body: &Value, slug: &str, what: &str) {
+pub(crate) fn assert_problem(response: &WireResponse, body: &Value, slug: &str, what: &str) {
     let content_type = response
         .header("content-type")
         .unwrap_or_else(|| panic!("{what}: error must set Content-Type"));
@@ -188,7 +188,7 @@ pub fn assert_problem(response: &WireResponse, body: &Value, slug: &str, what: &
 /// The returned `SocketAddr` is the source of truth: the OS may hand out a
 /// different port than requested, so never re-derive the address from the
 /// requested port.
-pub async fn bind_blackbox() -> (tokio::net::TcpListener, SocketAddr) {
+pub(crate) async fn bind_blackbox() -> (tokio::net::TcpListener, SocketAddr) {
     // Port 0 = "let the OS pick a free ephemeral port".
     let port = pinned_port().unwrap_or(0);
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))

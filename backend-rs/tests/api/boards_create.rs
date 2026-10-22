@@ -23,10 +23,10 @@
 //! mutation re-reads state via second GET or direct `SELECT`.
 
 use super::helpers::{
-    app_on_pool, assert_errors_nonempty, assert_no_legacy_keys, assert_problem, authed_request,
-    create_project, json_body, json_of, register, send, PROBLEM_JSON,
+    PROBLEM_JSON, app_on_pool, assert_errors_nonempty, assert_no_legacy_keys, assert_problem,
+    authed_request, create_project, json_body, json_of, register, send,
 };
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use sqlx::MySqlPool;
 
 #[sqlx::test(migrations = "./migrations")]

@@ -1,11 +1,11 @@
 //! boards handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
 use axum::{
+    Json,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
-    Json,
 };
 
 use crate::{
@@ -17,13 +17,13 @@ use crate::{
 
 use super::{
     store::{
-        apply_board_patch, check_project_owned, count_boards, delete_board_row, fetch_board,
-        fetch_board_columns, fetch_board_page, insert_board, insert_default_columns,
-        to_list_response, to_response, BoardPatch,
+        BoardPatch, apply_board_patch, check_project_owned, count_boards, delete_board_row,
+        fetch_board, fetch_board_columns, fetch_board_page, insert_board, insert_default_columns,
+        to_list_response, to_response,
     },
     types::{
-        BoardDetailBody, BoardListQuery, BoardListResponse, CreateBoardInput, UpdateBoardInput,
-        DEFAULT_BOARD_COLOR,
+        BoardDetailBody, BoardListQuery, BoardListResponse, CreateBoardInput, DEFAULT_BOARD_COLOR,
+        UpdateBoardInput,
     },
 };
 

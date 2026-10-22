@@ -25,7 +25,7 @@ use crate::{
     error::{AppError, Internal},
 };
 
-use super::types::{format_timestamp, ChecklistItemResponse, ChecklistResponse};
+use super::types::{ChecklistItemResponse, ChecklistResponse, format_timestamp};
 
 /// One `checklists` row (assembled by [`fetch_checklist_owned`] /
 /// [`fetch_checklists_for_card`]; items ride separately so the checklist

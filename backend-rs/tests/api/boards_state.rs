@@ -22,10 +22,10 @@
 //! URI; every mutation re-reads state via second GET or direct `SELECT`.
 
 use super::helpers::{
-    app_on_pool, assert_errors_nonempty, assert_problem, authed_request, create_board_json,
-    create_project, json_body, json_of, register, send, PROBLEM_JSON,
+    PROBLEM_JSON, app_on_pool, assert_errors_nonempty, assert_problem, authed_request,
+    create_board_json, create_project, json_body, json_of, register, send,
 };
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use sqlx::MySqlPool;
 
 #[sqlx::test(migrations = "./migrations")]
@@ -570,11 +570,14 @@ async fn boards_state_update_archive_delete_flow(pool: MySqlPool) {
 
     // 11. Ownership: foreign/missing id → 404 (never 403) on PATCH+DELETE;
     //     garbage id → 400 `invalid-path`.
-    let intruder_board =
-        create_board_json(app(), &intruder_jar, &serde_json::json!({"name": "Theirs"})).await
-            ["data"]["id"]
-            .as_i64()
-            .expect("intruder board id");
+    let intruder_board = create_board_json(
+        app(),
+        &intruder_jar,
+        &serde_json::json!({"name": "Theirs"}),
+    )
+    .await["data"]["id"]
+        .as_i64()
+        .expect("intruder board id");
     for (method, what) in [
         (
             "PATCH",

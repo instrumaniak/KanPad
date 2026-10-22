@@ -36,8 +36,8 @@ use super::helpers::{
     app_on_pool, assert_errors_nonempty, assert_problem, authed_request, json_body, json_of,
     register, send,
 };
-use axum::http::StatusCode;
 use axum::Router;
+use axum::http::StatusCode;
 use serde_json::Value;
 use sqlx::MySqlPool;
 
@@ -577,11 +577,7 @@ async fn cards_move_reorder_fuzz_flow(pool: MySqlPool) {
         // append-`max+1` path.
         let cross = rng.below(2) == 0;
         let (target, source) = if cross {
-            if in_a {
-                (col_b, col_a)
-            } else {
-                (col_a, col_b)
-            }
+            if in_a { (col_b, col_a) } else { (col_a, col_b) }
         } else if in_a {
             (col_a, col_a)
         } else {

@@ -14,12 +14,12 @@ use std::net::SocketAddr;
 use axum::{
     body::Body,
     extract::ConnectInfo,
-    http::{header, HeaderMap, Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode, header},
 };
 use backend_rs::{build_state, config::Settings, create_app};
 use serde_json::Value;
 
-use super::helpers::{send_ref, PROBLEM_BASE};
+use super::helpers::{PROBLEM_BASE, send_ref};
 
 /// Unroutable DB port (refused fast): `/ready` deterministically 503s, and no
 /// probe below can accidentally pass via a live database.

@@ -42,7 +42,7 @@ use crate::{
     error::{AppError, Internal},
 };
 
-use super::types::{format_timestamp, NoteDetailResponse, NoteSummaryResponse, TagRef};
+use super::types::{NoteDetailResponse, NoteSummaryResponse, TagRef, format_timestamp};
 
 /// One `notes` row (assembled by [`fetch_note_owned`]; tags ride separately
 /// so the note select stays single-row).

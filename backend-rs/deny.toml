@@ -1,0 +1,146 @@
+# KanPad backend-rs supply-chain policy.
+#
+# DERIVED, NOT GUESSED (2026-10-22, T57): every value below came out of a
+# real `cargo-deny` run against this dependency graph. The generated
+# `cargo deny init` default was REJECTED by the first run in three ways, and
+# the policy was then written from what the tool actually reported:
+#
+#   1. `cargo deny check licenses` rejected BSD-3-Clause (zstd / zstd-safe /
+#      zstd-sys) and every other non-MIT/Apache licence, because the
+#      generated allow-list is near-empty.
+#   2. `cargo deny check bans` rejected the whole tree on
+#      `multiple-versions = "deny"` — 20+ crates legitimately appear twice
+#      (every real tree does). A hard deny here is unachievable and would
+#      block every dependency bump, so duplicates are a WARNING (tracked),
+#      not an error.
+#   3. The crate itself has no publishable licence (the project's licence is
+#      still undecided — see the root README checklist), so it is marked
+#      `publish = false` in Cargo.toml and skipped here via
+#      `[licenses] private = { ignore = true }`.
+#
+# The dependency set changes in T63/T65/T66/T67 (dead deps removed, the
+# in-tree session store, sqlx 0.9, the library majors) — **re-derive this file
+# from a fresh run when the dependency set changes**: `cargo deny check` and
+# add what it names. A stale allow-list is a policy that lies.
+
+[graph]
+# The container image is linux/amd64 (see backend-rs/Dockerfile). Checking
+# only the target triple keeps the graph honest: a windows-only dependency
+# cannot sneak in unnoticed.
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Advisories (RustSec)
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+# A vulnerability in any dependency (including transitive ones) fails the
+# build. This is the point of running the check.
+yanked = "deny"
+
+# ---------------------------------------------------------------------------
+# Ignores — each one is BOUND to a task that removes it. There is no blanket
+# "allow advisories" here: every entry below is a KNOWN, ASSESSED advisory
+# with a named owner and a removal condition. The first `cargo deny` run
+# (2026-10-22, T57) reported exactly these and no others.
+#
+# **The removal conditions are not optional.** The task named in each reason
+# MUST delete its entry, and `cargo deny check advisories` must then pass
+# WITHOUT the ignore. A stale ignore is a silent hole in the gate.
+# ---------------------------------------------------------------------------
+ignore = [
+    # idna 0.5.0 — Punycode labels that decode to no non-ASCII
+    # (RUSTSEC-2024-0421). Pulled ONLY by `validator 0.18` <- `axum-valid
+    # 0.20` — the dependency T63 REMOVES (0 references in the tree).
+    # REMOVED BY: T63 (drop `axum-valid` -> `validator` -> `idna 0.5`).
+    { id = "RUSTSEC-2024-0421", reason = "idna 0.5 arrives only via the dead axum-valid -> validator chain; T63 removes it" },
+
+    # paste 1.0.15 — unmaintained (RUSTSEC-2024-0436). Pulled ONLY by
+    # `utoipa-axum 0.2` — the dependency T63 REMOVES (0 references: the
+    # spec is built with `#[derive(utoipa::OpenApi)]`, not `OpenApiRouter`).
+    # It is a proc-macro helper used at COMPILE time only.
+    # REMOVED BY: T63 (drop `utoipa-axum` -> `paste`).
+    { id = "RUSTSEC-2024-0436", reason = "paste arrives only via the dead utoipa-axum dependency; T63 removes it" },
+
+    # zip 3.0.0 — three advisories (SUID/SGID bits on extraction, symlink
+    # escape, permissions through symlinks). It is a BUILD-time dependency of
+    # `utoipa-swagger-ui 9` (it vendors the Swagger UI assets into the
+    # binary); it is NOT reachable from the running service.
+    # REMOVED BY: T67 (utoipa-swagger-ui 10 requires `zip ^9.0`).
+    { id = "RUSTSEC-2026-0367", reason = "zip 3.0 is a build-time dep of utoipa-swagger-ui 9; T67 takes swagger-ui 10 (zip ^9)" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 3.0 is a build-time dep of utoipa-swagger-ui 9; T67 takes swagger-ui 10 (zip ^9)" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 3.0 is a build-time dep of utoipa-swagger-ui 9; T67 takes swagger-ui 10 (zip ^9)" },
+
+    # rsa 0.9.10 — the Marvin attack, a Bleichenbacher-style timing oracle
+    # (RUSTSEC-2023-0071). It is used by `sqlx-mysql` ONLY for the MySQL
+    # `caching_sha2_password` handshake, where the SERVER encrypts with OUR
+    # public key and WE decrypt — the attack targets a server decrypting
+    # client-supplied ciphertext, so the exposure is inverted. There is no
+    # patched `rsa` 0.9 release.
+    # REMOVED BY: T66 (sqlx 0.9 depends on `rsa ^0.10.0-rc.18`, which is
+    # outside the advisory's affected range).
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9 arrives only via sqlx-mysql 0.8's caching_sha2_password auth; T66 takes sqlx 0.9 (rsa 0.10-rc)" },
+]
+
+# ---------------------------------------------------------------------------
+# Licenses
+# ---------------------------------------------------------------------------
+[licenses]
+# The MINIMAL set that satisfies every licence expression in the tree
+# (derived from `cargo metadata` over the resolved graph). OR-expressions
+# (e.g. "MIT OR Apache-2.0") are satisfied by ONE allowed alternative, so
+# only licences that are REQUIRED by an AND-expression or used alone are
+# listed:
+#   MIT, Apache-2.0                    — the overwhelming majority
+#   Apache-2.0 WITH LLVM-exception     — linux-raw-sys / rustix / wasi
+#   BSD-3-Clause                       — zstd*, subtle, brotli (AND MIT)
+#   ISC                                — ring ("Apache-2.0 AND ISC")
+#   Unicode-3.0                        — idna / icu_* / unicode-ident
+#   Zlib                               — foldhash, zlib-rs
+#   CDLA-Permissive-2.0                — webpki-roots (the rustls root store)
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+# The crate itself is `publish = false` (a service crate, never published to
+# crates.io) and its licence is not decided yet — do not fail the build on
+# our own unpublished package.
+private = { ignore = true }
+
+# ---------------------------------------------------------------------------
+# Bans (duplicate + wildcard dependencies)
+# ---------------------------------------------------------------------------
+[bans]
+# Duplicates are a WARNING, not an error: a hard deny on `multiple-versions`
+# fails on every real tree and blocks every dependency bump. The known
+# duplicates are tracked — the big ones disappear in T63 (the `axum-valid`
+# dependency drags a second axum 0.7.9 + a second garde 0.20 + validator
+# 0.18 into the tree) and in T65/T67 (sha2 0.10 vs 0.11).
+multiple-versions = "warn"
+# Wildcard versions ("*", "1.*") are banned outright: they make a build
+# unreproducible and hide supply-chain risk. The tree has none.
+wildcards = "deny"
+allow-wildcard-paths = false
+# Crates we refuse outright.
+deny = []
+# No skips are needed while duplicates are a warning; a `skip` entry would
+# rot silently against every dependency bump.
+skip = []
+
+[sources]
+# Only crates.io (plus the local path dependency, if any). A git or
+# alternative-registry dependency is a supply-chain decision that must be
+# explicit, not inherited from a transitive crate.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

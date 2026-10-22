@@ -19,7 +19,7 @@
 //!   input) → exit code 1
 
 use backend_rs::{
-    admin::{run_create_admin, AdminExit, CreateAdminArgs},
+    admin::{AdminExit, CreateAdminArgs, run_create_admin},
     config::Settings,
     features::auth::store::verify_argon2,
 };

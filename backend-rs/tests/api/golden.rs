@@ -36,7 +36,7 @@
 //! mints its own user+jar and asserts nothing about absolute store counts.
 
 use super::helpers::{app_on_pool, assert_problem, authed_request, cookie_jar, send};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use serde_json::Value;
 use sqlx::MySqlPool;
 use std::collections::HashMap;

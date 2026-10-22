@@ -36,8 +36,8 @@ use super::helpers::{
     app_on_pool, assert_errors_nonempty, assert_problem, authed_request, create_board_json,
     json_body, json_of, register, send,
 };
-use axum::http::{header, StatusCode};
 use axum::Router;
+use axum::http::{StatusCode, header};
 use serde_json::Value;
 use sqlx::MySqlPool;
 

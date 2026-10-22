@@ -23,7 +23,7 @@ use axum::{
     http::request::Parts,
 };
 use garde::Validate;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{Deserialize, de::DeserializeOwned};
 use tower_sessions::Session;
 
 use crate::{common::ids::UserId, error::AppError, state::AppState};

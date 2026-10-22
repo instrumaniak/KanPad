@@ -85,10 +85,10 @@ where
 /// always pass; a set id must be `>= 1` (ownership itself is store logic →
 /// 404, never 403).
 fn validate_optional_link(value: &Option<Option<i32>>, _context: &()) -> garde::Result {
-    if let Some(Some(link)) = value {
-        if *link < 1 {
-            return Err(garde::Error::new("must be at least 1"));
-        }
+    if let Some(Some(link)) = value
+        && *link < 1
+    {
+        return Err(garde::Error::new("must be at least 1"));
     }
     Ok(())
 }

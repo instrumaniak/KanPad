@@ -64,7 +64,7 @@ impl AppState {
     /// fail-fast behaviour rather than a silent fallback: a store pointed at
     /// the wrong schema would fail every session query at runtime, with a
     /// far worse diagnostic. Production screens the name at boot —
-    /// [`Settings::validate`](crate::config::Settings::validate) rejects it
+    /// `Settings::validate` rejects it
     /// with a clean [`ConfigError`](crate::config::ConfigError) via
     /// [`db::is_valid_db_name`] — and a `#[sqlx::test]` database name is
     /// always a valid identifier.

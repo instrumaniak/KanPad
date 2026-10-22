@@ -5,16 +5,16 @@
 //! registry (`https://kanpad.dev/problems/<slug>`, never `about:blank`) and an
 //! always-set `instance` of the form `"{METHOD} {path}#{x-request-id}"` (fed by
 //! [`capture_request_context`], which the middleware stack runs inside the
-//! request-id layers). [`problem_response`] is the single constructor behind
+//! request-id layers). `problem_response` is the single constructor behind
 //! [`AppError`], the T30 governor 429 handler, and the T11 `AuthSession`
 //! rejection so all three render an identical shape.
 
 use axum::{
-    extract::{rejection::JsonRejection, Request},
-    http::{header, HeaderValue, StatusCode},
+    Json,
+    extract::{Request, rejection::JsonRejection},
+    http::{HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use tower_http::request_id::RequestId;
@@ -139,7 +139,7 @@ tokio::task_local! {
     static REQUEST_CONTEXT: RequestContext;
 }
 
-/// Stash [`RequestContext`] for the duration of the request. The fallback id
+/// Stash `RequestContext` for the duration of the request. The fallback id
 /// `unknown` only triggers outside the middleware stack (unit tests that do
 /// not scope a context); production traffic always flows through this layer.
 pub async fn capture_request_context(request: Request, next: Next) -> Response {
@@ -416,7 +416,7 @@ pub async fn handle_timeout(_error: axum::BoxError) -> impl IntoResponse {
 mod tests {
     use super::*;
     use axum::{
-        body::{to_bytes, Body},
+        body::{Body, to_bytes},
         extract::{FromRequest, FromRequestParts, Query},
     };
     use serde::Deserialize;

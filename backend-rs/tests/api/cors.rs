@@ -22,7 +22,7 @@
 
 use axum::{
     body::Body,
-    http::{header, Method, Request, StatusCode},
+    http::{Method, Request, StatusCode, header},
 };
 use tower::ServiceExt;
 

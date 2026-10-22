@@ -3,7 +3,7 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use sqlx::{MySqlPool, Row};
 use tower_sessions::session_store::ExpiredDeletion;

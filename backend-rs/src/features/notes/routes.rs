@@ -1,11 +1,11 @@
 //! notes handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
 
 use axum::{
+    Json,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
-    Json,
 };
 
 use crate::{
@@ -17,11 +17,10 @@ use crate::{
 
 use super::{
     store::{
-        apply_note_patch, check_board_owned, check_card_owned, check_project_owned,
-        check_single_link, check_tags_owned, clear_note_tags, count_notes, dedup_tag_ids,
-        delete_note_row, fetch_note_ids, fetch_note_owned, fetch_note_summaries, fetch_note_tags,
-        fetch_notes_tags, insert_note, link_note_tags, to_detail, to_summaries, NoteFilter,
-        NotePatch,
+        NoteFilter, NotePatch, apply_note_patch, check_board_owned, check_card_owned,
+        check_project_owned, check_single_link, check_tags_owned, clear_note_tags, count_notes,
+        dedup_tag_ids, delete_note_row, fetch_note_ids, fetch_note_owned, fetch_note_summaries,
+        fetch_note_tags, fetch_notes_tags, insert_note, link_note_tags, to_detail, to_summaries,
     },
     types::{NoteBody, NoteListQuery, NoteSummaryResponse},
 };

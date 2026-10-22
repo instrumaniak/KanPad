@@ -1,7 +1,15 @@
 [package]
 name = "backend-rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+# A service crate: it is never published to crates.io. `publish = false` also
+# tells `cargo deny` to skip our own (unpublished) package in the licence
+# check — the project's licence is still undecided (root README checklist).
+publish = false
+license = "UNLICENSED"
+description = "KanPad API — board, column and card service (Axum + sqlx + MySQL)."
+repository = "https://github.com/instrumaniak/KanPad"
+rust-version = "1.99"
 
 [dependencies]
 axum = "0.8"
@@ -42,3 +50,45 @@ path = "tests/api.rs"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+# ---------------------------------------------------------------------------
+# Lints (Rust 1.74+ `[lints]` table — the crate-wide lint policy, in the
+# manifest, so it applies to every target: lib, bin and tests).
+# ---------------------------------------------------------------------------
+[lints.rust]
+# The doc discipline becomes a build gate, not a convention. MEASURED
+# 2026-10-22: the tree is already `missing_docs`-clean (0 warnings), so
+# this forbids NEW gaps without a doc-writing backlog.
+missing_docs = "deny"
+# `pub` items that are not reachable from the crate root are dead API
+# surface. Also measured clean (0 warnings today).
+unreachable_pub = "warn"
+# The crate has ZERO `unsafe` blocks today — make that a build property.
+unsafe_code = "forbid"
+
+[lints.clippy]
+# The default group is already enforced by CI's `-D warnings`; stating it
+# makes the policy explicit.
+all = "deny"
+# `pedantic` is ADVISORY: the tree carries ~370 pedantic warnings (measured
+# 2026-10-22 — 173 `missing_errors_doc`, 45 `must_use_candidate`, 22
+# `doc_markdown`, ~40 `cast_*`). The `cast_*` family cannot be "fixed"
+# without changing runtime semantics, so pedantic is enabled as a to-do
+# list here and EXEMPTED in CI (`-A clippy::pedantic`) until a follow-up
+# task drains the measured debt.
+pedantic = { level = "warn", priority = -1 }
+
+# ---------------------------------------------------------------------------
+# Release profile — the Docker image ships THIS build, not a stock one.
+# ---------------------------------------------------------------------------
+[profile.release]
+# Thin LTO + a single codegen unit: smaller, faster binary (the image is
+# the deployment artefact).
+lto = "thin"
+codegen-units = 1
+# Strip the symbol table: the shipped image carries no debug symbols.
+strip = "symbols"
+# `panic = "abort"` is deliberately NOT set: axum/tower catch a panic per
+# task and turn it into a 500 problem+json response. Aborting would kill
+# the process instead of serving the error.
+

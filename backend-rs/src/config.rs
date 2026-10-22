@@ -5,7 +5,7 @@
 //! `APP_ENV` whitelist, `HASH_COST` prod floor, `DATABASE_URL` charset +
 //! database-name identifier rule, CORS allowlist shape) and never logs
 //! secrets — [`Settings`] implements a redacting
-//! [`fmt::Debug`](std::fmt::Debug).
+//! `fmt::Debug`.
 //!
 //! **The runtime-mode key is `APP_ENV`, not `NODE_ENV`** (`54` A1). `NODE_ENV`
 //! is a Node.js/npm convention with no meaning in a Rust binary. Boot
@@ -33,6 +33,11 @@ pub const REQUIRED_DB_CHARSET: &str = "charset=utf8mb4";
 
 /// Dev-only default CORS allowlist (config-driven for prod).
 pub const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
+
+/// The retired Node.js runtime-mode key. Its PRESENCE in the environment
+/// fails the boot (see [`ConfigError::LegacyNodeEnv`]) — `APP_ENV` is the
+/// key this crate reads.
+pub const LEGACY_ENV_KEY: &str = "NODE_ENV";
 
 /// Session cookie base name (dev/test). Production prefixes it with
 /// [`HOST_COOKIE_PREFIX`].
@@ -255,10 +260,34 @@ impl Settings {
     /// `development` default would silently apply to a deployment that meant
     /// `production` (`54` A1 fail-fast rule).
     pub fn load_from_env() -> Result<Self, ConfigError> {
-        if std::env::var_os("NODE_ENV").is_some() {
+        if std::env::var_os(LEGACY_ENV_KEY).is_some() {
             return Err(ConfigError::LegacyNodeEnv);
         }
         let settings: Settings = envy::from_env()?;
+        settings.validate()?;
+        Ok(settings)
+    }
+
+    /// Load from an explicit key/value map — the **test seam**.
+    ///
+    /// Edition 2024 made `std::env::set_var` / `remove_var` **UNSAFE**
+    /// (they race with any concurrent environment access), and this crate
+    /// sets `unsafe_code = "forbid"` — so the config tests must NOT mutate
+    /// the process environment. They build a map and load from it instead.
+    /// The deserialize + validate path is identical; only the SOURCE
+    /// differs. A side benefit: the tests no longer need the `ENV_LOCK`
+    /// mutex (they were serialized for no reason) and are now
+    /// parallel-safe.
+    #[cfg(test)]
+    pub(crate) fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self, ConfigError> {
+        if pairs.iter().any(|(key, _)| *key == LEGACY_ENV_KEY) {
+            return Err(ConfigError::LegacyNodeEnv);
+        }
+        let settings: Settings = envy::from_iter(
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string())),
+        )?;
         settings.validate()?;
         Ok(settings)
     }
@@ -282,7 +311,7 @@ impl Settings {
     }
 
     /// Parsed CORS allowlist (trimmed, empties dropped). The wildcard `"*"`
-    /// is rejected at [`Settings::validate`] because the stack always sends
+    /// is rejected at `Settings::validate` because the stack always sends
     /// `allow_credentials(true)` (browsers reject `*` + credentials).
     pub fn cors_origin_list(&self) -> Vec<String> {
         self.cors_origins
@@ -401,33 +430,14 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Every `Settings` env key. Tests set the full matrix explicitly so
-    /// ambient process env (CI `DATABASE_URL`, local `PORT`, …) cannot leak
-    /// in; dropped guards restore the previous values.
-    const SETTINGS_KEYS: &[&str] = &[
-        "APP_ENV",
-        // The legacy Node.js key is listed so the harness CLEARS it by default
-        // (an ambient NODE_ENV in a developer shell would fail every test).
-        "NODE_ENV",
-        "PORT",
-        "HASH_COST",
-        "SESSION_SECRET",
-        "DATABASE_URL",
-        "DB_HOST",
-        "DB_PORT",
-        "DB_USERNAME",
-        "DB_PASSWORD",
-        "DB_NAME",
-        "REGISTRATION_ENABLED",
-        "THROTTLE_GLOBAL_PER_MIN",
-        "THROTTLE_AUTH_PER_MIN",
-        "CORS_ORIGINS",
-        "TRUSTED_PROXIES",
-    ];
+    // NOTE: the tests build a KEY/VALUE MAP and load from it
+    // ([`Settings::from_pairs`]) — they never mutate the process
+    // environment: edition 2024 made `std::env::set_var` unsafe, and this
+    // crate forbids `unsafe`. The matrix below therefore sets every key
+    // EXPLICITLY (so ambient process env — CI's `DATABASE_URL`, a local
+    // `PORT` — cannot leak in), and the legacy Node key is deliberately
+    // ABSENT (a map that contains it must fail the load).
 
     const BASE_VARS: &[(&str, &str)] = &[
         ("APP_ENV", "test"),
@@ -447,37 +457,6 @@ mod tests {
         ("CORS_ORIGINS", "http://localhost:5173"),
         ("TRUSTED_PROXIES", ""),
     ];
-
-    struct SavedEnv(Vec<(&'static str, Option<String>)>);
-
-    impl SavedEnv {
-        fn set(vars: &[(&'static str, &str)]) -> Self {
-            let saved = SETTINGS_KEYS
-                .iter()
-                .map(|key| (*key, std::env::var(key).ok()))
-                .collect();
-            for key in SETTINGS_KEYS {
-                if !vars.iter().any(|(name, _)| name == key) {
-                    std::env::remove_var(key);
-                }
-            }
-            for (key, value) in vars {
-                std::env::set_var(key, value);
-            }
-            Self(saved)
-        }
-    }
-
-    impl Drop for SavedEnv {
-        fn drop(&mut self) {
-            for (key, old) in self.0.drain(..) {
-                match old {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
 
     fn base_vars() -> Vec<(&'static str, &'static str)> {
         BASE_VARS.to_vec()
@@ -508,12 +487,11 @@ mod tests {
 
     #[test]
     fn hash_cost_floor() {
-        let _guard = ENV_LOCK.lock().unwrap();
         // Production with HASH_COST=1 must fail boot.
         {
             let vars = with_overrides(&[("APP_ENV", "production"), ("HASH_COST", "1")]);
-            let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("production HASH_COST=1 must fail boot");
+            let err =
+                Settings::from_pairs(&vars).expect_err("production HASH_COST=1 must fail boot");
             assert!(
                 err.to_string().contains("HASH_COST"),
                 "unexpected error: {err}"
@@ -522,19 +500,16 @@ mod tests {
         // Tests pin t=1 and must load outside production.
         {
             let vars = with_overrides(&[("APP_ENV", "test"), ("HASH_COST", "1")]);
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("test HASH_COST=1 must load");
+            let settings = Settings::from_pairs(&vars).expect("test HASH_COST=1 must load");
             assert_eq!(settings.hash_cost, 1);
         }
     }
 
     #[test]
     fn missing_session_secret_fails_boot() {
-        let _guard = ENV_LOCK.lock().unwrap();
         let mut vars = base_vars();
         vars.retain(|(name, _)| *name != "SESSION_SECRET");
-        let _env = SavedEnv::set(&vars);
-        let err = Settings::load_from_env().expect_err("missing SESSION_SECRET must fail boot");
+        let err = Settings::from_pairs(&vars).expect_err("missing SESSION_SECRET must fail boot");
         assert!(
             err.to_string().contains("session_secret"),
             "unexpected error: {err}"
@@ -543,12 +518,10 @@ mod tests {
 
     #[test]
     fn short_session_secret_fails_boot() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for secret in ["short", "0123456789abcdef0123456789abcde"] {
             assert!(secret.len() < MIN_SESSION_SECRET_BYTES);
             let vars = with_overrides(&[("SESSION_SECRET", secret)]);
-            let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("short SESSION_SECRET must fail boot");
+            let err = Settings::from_pairs(&vars).expect_err("short SESSION_SECRET must fail boot");
             assert!(
                 err.to_string().contains("SESSION_SECRET"),
                 "unexpected error: {err}"
@@ -556,8 +529,7 @@ mod tests {
         }
         // Exactly 32 bytes loads.
         let vars = with_overrides(&[("SESSION_SECRET", "0123456789abcdef0123456789abcdef")]);
-        let _env = SavedEnv::set(&vars);
-        Settings::load_from_env().expect("32-byte SESSION_SECRET must load");
+        Settings::from_pairs(&vars).expect("32-byte SESSION_SECRET must load");
     }
 
     /// AC (T54, `54` A1): the legacy Node.js `NODE_ENV` in the environment
@@ -568,15 +540,13 @@ mod tests {
     /// knows what to set.
     #[test]
     fn legacy_node_env_fails_boot_and_names_app_env() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for legacy in ["production", "development", ""] {
             let mut vars = with_overrides(&[("NODE_ENV", legacy)]);
             // `APP_ENV` deliberately left unset: the point is that the
             // legacy key alone must abort the boot.
             vars.retain(|(name, _)| *name != "APP_ENV");
-            let _env = SavedEnv::set(&vars);
-            let err =
-                Settings::load_from_env().expect_err("NODE_ENV in the environment must fail boot");
+            let err = Settings::from_pairs(&vars)
+                .expect_err("NODE_ENV in the environment must fail boot");
             let message = err.to_string();
             assert!(
                 message.contains("NODE_ENV"),
@@ -589,23 +559,20 @@ mod tests {
         }
         // The legacy key absent + APP_ENV set -> boots.
         let vars = with_overrides(&[("APP_ENV", "test")]);
-        let _env = SavedEnv::set(&vars);
-        Settings::load_from_env().expect("APP_ENV alone must load");
+        Settings::from_pairs(&vars).expect("APP_ENV alone must load");
     }
 
     /// AC (T54): the session cookie name is **app-scoped** — the Express
     /// default `connect.sid` must never come back, in any environment.
     #[test]
     fn session_cookie_never_uses_the_express_default() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for env in ["development", "test", "production"] {
             let vars = if env == "production" {
                 with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
             } else {
                 with_overrides(&[("APP_ENV", env)])
             };
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("env must load");
+            let settings = Settings::from_pairs(&vars).expect("env must load");
             let name = settings.session_cookie_name();
             assert!(
                 !name.contains("connect.sid"),
@@ -620,11 +587,9 @@ mod tests {
 
     #[test]
     fn app_env_whitelist_and_port_rejects() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for bad_env in ["prod", "Production", "staging", ""] {
             let vars = with_overrides(&[("APP_ENV", bad_env)]);
-            let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("bad APP_ENV must fail boot");
+            let err = Settings::from_pairs(&vars).expect_err("bad APP_ENV must fail boot");
             assert!(
                 err.to_string().contains("APP_ENV"),
                 "unexpected error for {bad_env:?}: {err}"
@@ -632,18 +597,15 @@ mod tests {
         }
         for good_env in ["development", "test"] {
             let vars = with_overrides(&[("APP_ENV", good_env)]);
-            let _env = SavedEnv::set(&vars);
-            Settings::load_from_env().expect("whitelisted APP_ENV must load");
+            Settings::from_pairs(&vars).expect("whitelisted APP_ENV must load");
         }
         // Production needs HASH_COST>=2 to get past the cost floor.
         {
             let vars = with_overrides(&[("APP_ENV", "production"), ("HASH_COST", "2")]);
-            let _env = SavedEnv::set(&vars);
-            Settings::load_from_env().expect("production APP_ENV must load");
+            Settings::from_pairs(&vars).expect("production APP_ENV must load");
         }
         let vars = with_overrides(&[("PORT", "0")]);
-        let _env = SavedEnv::set(&vars);
-        let err = Settings::load_from_env().expect_err("PORT=0 must fail boot");
+        let err = Settings::from_pairs(&vars).expect_err("PORT=0 must fail boot");
         assert!(err.to_string().contains("PORT"), "unexpected error: {err}");
     }
 
@@ -652,16 +614,15 @@ mod tests {
     /// `MySqlStore::with_schema_name`.
     #[test]
     fn rejects_database_names_the_session_store_would_refuse() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for (name, why) in [
             ("123kanpad", "leading digit"),
             ("kan-pad", "hyphen"),
             ("kan.pad", "dot"),
             ("kan pad", "space"),
         ] {
-            let _env = SavedEnv::set(&with_db_name(name));
+            let vars = with_db_name(name);
 
-            let err = Settings::load_from_env().expect_err("invalid DB_NAME must fail boot");
+            let err = Settings::from_pairs(&vars).expect_err("invalid DB_NAME must fail boot");
             let message = err.to_string();
             assert!(
                 message.contains("not a valid MySQL identifier"),
@@ -674,23 +635,20 @@ mod tests {
     /// above against over-rejecting the names sqlx actually creates.
     #[test]
     fn accepts_sqlx_test_style_database_names() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for name in ["kanpad", "_sqlx_test_a1b2c3", "kanpad_prod_1"] {
-            let _env = SavedEnv::set(&with_db_name(name));
-            Settings::load_from_env()
+            let vars = with_db_name(name);
+            Settings::from_pairs(&vars)
                 .unwrap_or_else(|err| panic!("{name:?} must be accepted: {err}"));
         }
     }
 
     #[test]
     fn database_url_charset_and_derivation() {
-        let _guard = ENV_LOCK.lock().unwrap();
         // Explicit URL without the charset flag is rejected.
         {
             let vars = with_overrides(&[("DATABASE_URL", "mysql://u:p@h:3306/db")]);
-            let _env = SavedEnv::set(&vars);
             let err =
-                Settings::load_from_env().expect_err("charset-less DATABASE_URL must fail boot");
+                Settings::from_pairs(&vars).expect_err("charset-less DATABASE_URL must fail boot");
             assert!(
                 err.to_string().contains("charset=utf8mb4"),
                 "unexpected error: {err}"
@@ -707,8 +665,7 @@ mod tests {
                 ("DB_PASSWORD", "s3cret"),
                 ("DB_NAME", "kanpad"),
             ]);
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("parts-derived config must load");
+            let settings = Settings::from_pairs(&vars).expect("parts-derived config must load");
             assert_eq!(
                 settings.database_url(),
                 "mysql://app:s3cret@db.internal:3307/kanpad?charset=utf8mb4"
@@ -720,19 +677,16 @@ mod tests {
                 ("DATABASE_URL", "mysql://x:y@h:1/z?charset=utf8mb4"),
                 ("DB_HOST", "ignored"),
             ]);
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("explicit DATABASE_URL must load");
+            let settings = Settings::from_pairs(&vars).expect("explicit DATABASE_URL must load");
             assert_eq!(settings.database_url(), "mysql://x:y@h:1/z?charset=utf8mb4");
         }
     }
 
     #[test]
     fn cors_any_with_credentials_fails_and_prod_empty_fails_closed() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for origins in ["*", "http://localhost:5173, *"] {
             let vars = with_overrides(&[("CORS_ORIGINS", origins)]);
-            let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("wildcard CORS must fail boot");
+            let err = Settings::from_pairs(&vars).expect_err("wildcard CORS must fail boot");
             assert!(
                 err.to_string().contains("CORS_ORIGINS"),
                 "unexpected error: {err}"
@@ -745,8 +699,7 @@ mod tests {
                 ("HASH_COST", "2"),
                 ("CORS_ORIGINS", "   "),
             ]);
-            let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("prod empty CORS must fail boot");
+            let err = Settings::from_pairs(&vars).expect_err("prod empty CORS must fail boot");
             assert!(
                 err.to_string().contains("CORS_ORIGINS"),
                 "unexpected error: {err}"
@@ -755,15 +708,14 @@ mod tests {
         // Non-prod empty allowlist loads (deny-all at runtime).
         {
             let vars = with_overrides(&[("CORS_ORIGINS", "")]);
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("dev empty CORS must load");
+            let settings = Settings::from_pairs(&vars).expect("dev empty CORS must load");
             assert!(settings.cors_origin_list().is_empty());
         }
         // Malformed origins fail boot (fail fast, not silent deny).
         for origins in ["not-a-url", "localhost:5173", "ftp://files.example.com"] {
             let vars = with_overrides(&[("CORS_ORIGINS", origins)]);
-            let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("malformed CORS origin must fail boot");
+            let err =
+                Settings::from_pairs(&vars).expect_err("malformed CORS origin must fail boot");
             assert!(
                 err.to_string().contains("CORS_ORIGINS"),
                 "unexpected error for {origins:?}: {err}"
@@ -775,8 +727,7 @@ mod tests {
                 "CORS_ORIGINS",
                 " https://app.example.com ,https://admin.example.com,,",
             )]);
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("multi-origin CORS must load");
+            let settings = Settings::from_pairs(&vars).expect("multi-origin CORS must load");
             assert_eq!(
                 settings.cors_origin_list(),
                 vec![
@@ -789,10 +740,8 @@ mod tests {
 
     #[test]
     fn trusted_proxies_empty_by_default() {
-        let _guard = ENV_LOCK.lock().unwrap();
         let vars = base_vars();
-        let _env = SavedEnv::set(&vars);
-        let settings = Settings::load_from_env().expect("defaults must load");
+        let settings = Settings::from_pairs(&vars).expect("defaults must load");
         assert!(settings.trusted_proxy_list().is_empty());
         assert!(settings.registration_enabled);
         assert_eq!(settings.throttle_global_per_min, 120);
@@ -832,7 +781,6 @@ mod tests {
 
     #[test]
     fn session_cookie_name_follows_env() {
-        let _guard = ENV_LOCK.lock().unwrap();
         for (env, name) in [
             ("development", "kanpad.sid"),
             ("test", "kanpad.sid"),
@@ -844,8 +792,7 @@ mod tests {
             } else {
                 with_overrides(&[("APP_ENV", env)])
             };
-            let _env = SavedEnv::set(&vars);
-            let settings = Settings::load_from_env().expect("env must load");
+            let settings = Settings::from_pairs(&vars).expect("env must load");
             assert_eq!(settings.session_cookie_name(), name, "env: {env}");
             assert_eq!(settings.is_production(), env == "production");
         }

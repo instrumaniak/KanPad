@@ -11,8 +11,8 @@ use utoipa::ToSchema;
 use crate::common::{
     ids::{BoardId, ColumnId, ProjectId},
     validation::{
-        validate_not_blank, validate_optional_hex_color, validate_optional_not_blank,
-        validate_optional_view_mode, SORT_ORDERS,
+        SORT_ORDERS, validate_not_blank, validate_optional_hex_color, validate_optional_not_blank,
+        validate_optional_view_mode,
     },
 };
 
@@ -76,10 +76,10 @@ where
 /// and detach (`Some(None)`) always pass; a relink id must be `>= 1`
 /// (ownership itself is store logic → 404, never 403).
 fn validate_optional_project_link(value: &Option<Option<i32>>, _context: &()) -> garde::Result {
-    if let Some(Some(project_id)) = value {
-        if *project_id < 1 {
-            return Err(garde::Error::new("project_id must be at least 1"));
-        }
+    if let Some(Some(project_id)) = value
+        && *project_id < 1
+    {
+        return Err(garde::Error::new("project_id must be at least 1"));
     }
     Ok(())
 }
@@ -96,26 +96,26 @@ pub const DEFAULT_BOARD_ORDER: &str = "desc";
 
 /// `?sort=` allowlist: `name` | `created_at` | `updated_at`.
 fn validate_optional_board_sort(value: &Option<String>, _context: &()) -> garde::Result {
-    if let Some(sort) = value {
-        if !BOARD_SORTS.contains(&sort.as_str()) {
-            return Err(garde::Error::new(format!(
-                "sort must be one of: {}",
-                BOARD_SORTS.join(", ")
-            )));
-        }
+    if let Some(sort) = value
+        && !BOARD_SORTS.contains(&sort.as_str())
+    {
+        return Err(garde::Error::new(format!(
+            "sort must be one of: {}",
+            BOARD_SORTS.join(", ")
+        )));
     }
     Ok(())
 }
 
 /// `?order=` allowlist: `asc` | `desc` (mirrors the column `sort_order` enum).
 fn validate_optional_list_order(value: &Option<String>, _context: &()) -> garde::Result {
-    if let Some(order) = value {
-        if !SORT_ORDERS.contains(&order.as_str()) {
-            return Err(garde::Error::new(format!(
-                "order must be one of: {}",
-                SORT_ORDERS.join(", ")
-            )));
-        }
+    if let Some(order) = value
+        && !SORT_ORDERS.contains(&order.as_str())
+    {
+        return Err(garde::Error::new(format!(
+            "order must be one of: {}",
+            SORT_ORDERS.join(", ")
+        )));
     }
     Ok(())
 }

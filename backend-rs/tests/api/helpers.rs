@@ -99,9 +99,9 @@
 //! NEVER reintroduce a global `DELETE FROM sessions`, an `UPDATE`-all, or a
 //! schema drop in any suite's setup/teardown.
 
-use axum::body::{to_bytes, Body};
-use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use backend_rs::state::AppState;
 use backend_rs::{build_state, config::Settings, create_app};
 use serde_json::Value;
@@ -110,7 +110,7 @@ use tower::ServiceExt;
 
 /// Fixture load order (FK order). `#[sqlx::test(fixtures(..))]` lists must
 /// follow this sequence; shared-DB suites replay it the same way.
-pub const FIXTURE_ORDER: [&str; 12] = [
+pub(crate) const FIXTURE_ORDER: [&str; 12] = [
     "users",
     "projects",
     "boards",
@@ -126,13 +126,13 @@ pub const FIXTURE_ORDER: [&str; 12] = [
 ];
 
 /// `Content-Type` every problem+json error must carry.
-pub const PROBLEM_JSON: &str = "application/problem+json";
+pub(crate) const PROBLEM_JSON: &str = "application/problem+json";
 
 /// Base URI of the problem-type slugs asserted by [`assert_problem`].
-pub const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
+pub(crate) const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
 
 /// Test settings: `APP_ENV=test`, minimal Argon2 cost for speed.
-pub fn test_settings() -> Settings {
+pub(crate) fn test_settings() -> Settings {
     Settings {
         app_env: "test".to_string(),
         hash_cost: 1,
@@ -144,7 +144,7 @@ pub fn test_settings() -> Settings {
 
 /// Boot the app in-process via `lib::create_app`/`build_state`
 /// (never spawns the session sweeper — only `main.rs` does).
-pub fn test_app() -> Router {
+pub(crate) fn test_app() -> Router {
     create_app(build_state(test_settings()))
 }
 
@@ -160,7 +160,7 @@ pub fn test_app() -> Router {
 /// `SELECT DATABASE()`.
 ///
 /// In-process via `create_app` — never spawns the session sweeper.
-pub fn app_on_pool(pool: &MySqlPool) -> Router {
+pub(crate) fn app_on_pool(pool: &MySqlPool) -> Router {
     app_on_pool_with(pool, Settings::default())
 }
 
@@ -168,17 +168,17 @@ pub fn app_on_pool(pool: &MySqlPool) -> Router {
 /// with one flag flipped (registration gate, `SESSION_SECRET`, `APP_ENV`).
 /// The session store still follows the pool's database, so overrides never
 /// cost a suite its store wiring.
-pub fn app_on_pool_with(pool: &MySqlPool, settings: Settings) -> Router {
+pub(crate) fn app_on_pool_with(pool: &MySqlPool, settings: Settings) -> Router {
     create_app(AppState::with_pool(settings, pool.clone()))
 }
 
 /// Serialize a JSON payload for a request body.
-pub fn json_body(value: &Value) -> String {
+pub(crate) fn json_body(value: &Value) -> String {
     value.to_string()
 }
 
 /// Build a request, optionally carrying a cookie jar and a JSON body.
-pub fn authed_request(
+pub(crate) fn authed_request(
     method: &str,
     path: &str,
     cookie: Option<&str>,
@@ -198,14 +198,17 @@ pub fn authed_request(
 
 /// Drive one request through the router, returning status + headers + raw
 /// body (parse with [`json_of`] when the response is JSON).
-pub async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+pub(crate) async fn send(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
     send_ref(&app, request).await
 }
 
 /// [`send`], but the router is BORROWED — for suites that drive the same app
 /// repeatedly (e.g. `throttle.rs`'s flood probes, which must keep one
 /// governor state alive across many requests).
-pub async fn send_ref(app: &Router, request: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+pub(crate) async fn send_ref(
+    app: &Router,
+    request: Request<Body>,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
     let response = app
         .clone()
         .oneshot(request)
@@ -220,13 +223,16 @@ pub async fn send_ref(app: &Router, request: Request<Body>) -> (StatusCode, Head
 }
 
 /// [`send`], pre-parsed — for suites whose every assertion is on JSON.
-pub async fn send_json(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
+pub(crate) async fn send_json(
+    app: Router,
+    request: Request<Body>,
+) -> (StatusCode, HeaderMap, Value) {
     let (status, headers, bytes) = send(app, request).await;
     (status, headers, json_of(&bytes))
 }
 
 /// Parse a response body as JSON.
-pub fn json_of(bytes: &[u8]) -> Value {
+pub(crate) fn json_of(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).expect("response is JSON")
 }
 
@@ -236,7 +242,7 @@ pub fn json_of(bytes: &[u8]) -> Value {
 /// Shared by [`cookie_jar`] (axum `HeaderMap`) and `super::wire::cookie_jar`
 /// (raw wire headers) — one core, so the two transports cannot drift on how
 /// a jar is built.
-pub fn cookie_jar_from<'a>(values: impl Iterator<Item = &'a str>) -> String {
+pub(crate) fn cookie_jar_from<'a>(values: impl Iterator<Item = &'a str>) -> String {
     values
         .map(|cookie| cookie.split(';').next().unwrap_or("").trim())
         .filter(|pair| !pair.is_empty())
@@ -245,7 +251,7 @@ pub fn cookie_jar_from<'a>(values: impl Iterator<Item = &'a str>) -> String {
 }
 
 /// First `name=value` pair of every `Set-Cookie`, joined as a `Cookie` header.
-pub fn cookie_jar(headers: &HeaderMap) -> String {
+pub(crate) fn cookie_jar(headers: &HeaderMap) -> String {
     cookie_jar_from(
         headers
             .get_all(header::SET_COOKIE)
@@ -259,7 +265,7 @@ pub fn cookie_jar(headers: &HeaderMap) -> String {
 ///
 /// `what` labels the failing step in the panic message — every call site
 /// passes one so a failure names the scenario, not just the line.
-pub fn assert_problem(
+pub(crate) fn assert_problem(
     status: StatusCode,
     headers: &HeaderMap,
     body: &Value,
@@ -281,7 +287,7 @@ pub fn assert_problem(
 /// (`super::wire::assert_problem`, which reads it off the raw HTTP response).
 /// One core, so the two transports can never drift on what a problem body
 /// must contain.
-pub fn assert_problem_fields(
+pub(crate) fn assert_problem_fields(
     content_type: &str,
     body: &Value,
     status: u16,
@@ -302,7 +308,7 @@ pub fn assert_problem_fields(
 }
 
 /// Assert a validation-class problem carries a non-empty `errors[]`.
-pub fn assert_errors_nonempty(body: &Value, what: &str) {
+pub(crate) fn assert_errors_nonempty(body: &Value, what: &str) {
     assert!(
         body["errors"]
             .as_array()
@@ -313,7 +319,7 @@ pub fn assert_errors_nonempty(body: &Value, what: &str) {
 
 /// Assert the body carries none of the legacy Nest response keys, at any
 /// depth (a raw-substring scan, so nested `description`/`content` also fail).
-pub fn assert_no_legacy_keys(body: &Value, what: &str) {
+pub(crate) fn assert_no_legacy_keys(body: &Value, what: &str) {
     let raw = body.to_string();
     for key in ["message", "description", "content"] {
         assert!(
@@ -332,7 +338,7 @@ pub fn assert_no_legacy_keys(body: &Value, what: &str) {
 }
 
 /// Register a fresh user with a live cookie jar; returns `(jar, user_id)`.
-pub async fn register(app: Router, email: &str) -> (String, i64) {
+pub(crate) async fn register(app: Router, email: &str) -> (String, i64) {
     let payload = serde_json::json!({"email": email, "password": "Str0ng!pass"});
     let (status, headers, bytes) = send(
         app,
@@ -353,7 +359,7 @@ pub async fn register(app: Router, email: &str) -> (String, i64) {
 }
 
 /// Create a project under `jar`; returns its id.
-pub async fn create_project(app: Router, jar: &str, name: &str) -> i64 {
+pub(crate) async fn create_project(app: Router, jar: &str, name: &str) -> i64 {
     let payload = serde_json::json!({"name": name});
     let (status, _, bytes) = send(
         app,
@@ -371,7 +377,7 @@ pub async fn create_project(app: Router, jar: &str, name: &str) -> i64 {
 }
 
 /// Create a board under `jar` from a caller-built payload; returns its id.
-pub async fn create_board(app: Router, jar: &str, payload: &Value) -> i64 {
+pub(crate) async fn create_board(app: Router, jar: &str, payload: &Value) -> i64 {
     create_board_json(app, jar, payload).await["data"]["id"]
         .as_i64()
         .expect("board id")
@@ -379,7 +385,7 @@ pub async fn create_board(app: Router, jar: &str, payload: &Value) -> i64 {
 
 /// [`create_board`] returning the whole `data` envelope — for suites that
 /// assert on `background_color` / `project_id` off the create response.
-pub async fn create_board_json(app: Router, jar: &str, payload: &Value) -> Value {
+pub(crate) async fn create_board_json(app: Router, jar: &str, payload: &Value) -> Value {
     let (status, _, bytes) = send(
         app,
         authed_request(
@@ -398,7 +404,10 @@ pub async fn create_board_json(app: Router, jar: &str, payload: &Value) -> Value
 /// Test-only wrapper around prod
 /// `backend_rs::common::label_seed::ensure_default_labels`.
 /// Returns rows inserted (6 on first call, 0 when already seeded).
-pub async fn ensure_default_labels(pool: &MySqlPool, user_id: i32) -> Result<u64, sqlx::Error> {
+pub(crate) async fn ensure_default_labels(
+    pool: &MySqlPool,
+    user_id: i32,
+) -> Result<u64, sqlx::Error> {
     backend_rs::common::label_seed::ensure_default_labels(pool, user_id).await
 }
 
@@ -559,7 +568,7 @@ async fn helpers_seeded_fixtures_suite(pool: MySqlPool) {
 /// binary, so a fixed default port made one of them fail with `AddrInUse`;
 /// an ephemeral port also means a dev server already holding `:3001` cannot
 /// break the suite.
-pub fn e2e_base_url() -> Option<String> {
+pub(crate) fn e2e_base_url() -> Option<String> {
     std::env::var("E2E_BASE_URL")
         .ok()
         .map(|value| value.trim().to_string())
@@ -568,6 +577,6 @@ pub fn e2e_base_url() -> Option<String> {
 
 /// Whether black-box suites should use Nest behavior-class expectations
 /// (`E2E_TARGET=nest`) instead of the default exact Rust-contract assertions.
-pub fn e2e_target_is_nest() -> bool {
+pub(crate) fn e2e_target_is_nest() -> bool {
     std::env::var("E2E_TARGET").is_ok_and(|value| value.eq_ignore_ascii_case("nest"))
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `title`, `created_at` AS \"created_at: chrono::NaiveDateTime\", `updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `checklists` WHERE `card_id` = ? ORDER BY `id` ASC",
+  "query": "SELECT `id`, `title`, `created_at`, `updated_at` FROM `checklists` WHERE `card_id` = ? ORDER BY `id` ASC",
   "describe": {
     "columns": [
       {
@@ -23,7 +23,7 @@
       },
       {
         "ordinal": 2,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -32,7 +32,7 @@
       },
       {
         "ordinal": 3,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -50,5 +50,5 @@
       false
     ]
   },
-  "hash": "815ea27526b10d5d7704224f1279d29eb023b208595478037c7b913b7fec6f21"
+  "hash": "3185c45c6f68eff634f74d6d5bd64454803cdfc95c1d4d4683a452642c581c29"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at` AS \"created_at: chrono::NaiveDateTime\", i.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `checklist_items` i JOIN `checklists` cl ON cl.`id` = i.`checklist_id` JOIN `cards` k ON k.`id` = cl.`card_id` JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE i.`id` = ? AND b.`user_id` = ?",
+  "query": "SELECT k.`id`, k.`title`, k.`column_id` AS \"column_id: i32\", k.`position`, k.`description` AS \"description: String\", k.`due_date`, k.`created_at`, k.`updated_at` FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE k.`id` = ? AND b.`user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -14,7 +14,7 @@
       },
       {
         "ordinal": 1,
-        "name": "text",
+        "name": "title",
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
@@ -23,16 +23,7 @@
       },
       {
         "ordinal": 2,
-        "name": "is_completed",
-        "type_info": {
-          "type": "Tiny",
-          "flags": "NOT_NULL",
-          "max_size": 1
-        }
-      },
-      {
-        "ordinal": 3,
-        "name": "checklist_id: i32",
+        "name": "column_id: i32",
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
@@ -40,7 +31,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "position",
         "type_info": {
           "type": "Long",
@@ -49,8 +40,26 @@
         }
       },
       {
+        "ordinal": 4,
+        "name": "description: String",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB",
+          "max_size": 262140
+        }
+      },
+      {
         "ordinal": 5,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "due_date",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "MULTIPLE_KEY | BINARY",
+          "max_size": 26
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -58,8 +67,8 @@
         }
       },
       {
-        "ordinal": 6,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "ordinal": 7,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -75,10 +84,11 @@
       false,
       false,
       false,
-      false,
+      true,
+      true,
       false,
       false
     ]
   },
-  "hash": "dbdc67db369f03966207edab8fdbc5afc3473ceb5620cbf8090a1f7d2cb051b5"
+  "hash": "f233c73044bd8bf713641b27657d016d6c3a5d1fb4af077859f9f6975f695ecd"
 }

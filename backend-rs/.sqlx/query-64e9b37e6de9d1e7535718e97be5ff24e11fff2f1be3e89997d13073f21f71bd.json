@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, `position`, `created_at` AS \"created_at: chrono::NaiveDateTime\", `updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+  "query": "SELECT `id`, `name`, `color`, `created_at`, `updated_at` FROM `labels` WHERE `id` = ? AND `user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -14,34 +14,25 @@
       },
       {
         "ordinal": 1,
-        "name": "board_id: i32",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
-          "max_size": 11
-        }
-      },
-      {
-        "ordinal": 2,
         "name": "name",
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
-          "max_size": 1020
+          "max_size": 200
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "color",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "max_size": 80
         }
       },
       {
         "ordinal": 3,
-        "name": "position",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "max_size": 11
-        }
-      },
-      {
-        "ordinal": 4,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -49,8 +40,8 @@
         }
       },
       {
-        "ordinal": 5,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "ordinal": 4,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -59,10 +50,9 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -70,5 +60,5 @@
       false
     ]
   },
-  "hash": "31fed938e7768f7de604188acae8b9c48b330553afed23b33fdf43b73e9ba47f"
+  "hash": "64e9b37e6de9d1e7535718e97be5ff24e11fff2f1be3e89997d13073f21f71bd"
 }

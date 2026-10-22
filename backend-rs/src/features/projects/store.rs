@@ -177,8 +177,8 @@ where
 {
     let row = sqlx::query!(
         "SELECT p.`id`, p.`name`, CAST(COUNT(b.`id`) AS SIGNED) AS `board_count`, \
-         p.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
-         p.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `projects` p \
+         p.`created_at`, \
+         p.`updated_at` FROM `projects` p \
          LEFT JOIN `boards` b ON b.`project_id` = p.`id` AND b.`user_id` = p.`user_id` \
          WHERE p.`id` = ? AND p.`user_id` = ? \
          GROUP BY p.`id`, p.`name`, p.`created_at`, p.`updated_at`",

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT p.`id`, p.`name`, CAST(COUNT(b.`id`) AS SIGNED) AS `board_count`, p.`created_at` AS \"created_at: chrono::NaiveDateTime\", p.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `projects` p LEFT JOIN `boards` b ON b.`project_id` = p.`id` AND b.`user_id` = p.`user_id` WHERE p.`id` = ? AND p.`user_id` = ? GROUP BY p.`id`, p.`name`, p.`created_at`, p.`updated_at`",
+  "query": "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, `position`, `created_at`, `updated_at` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
   "describe": {
     "columns": [
       {
@@ -14,6 +14,15 @@
       },
       {
         "ordinal": 1,
+        "name": "board_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "name",
         "type_info": {
           "type": "VarString",
@@ -22,17 +31,17 @@
         }
       },
       {
-        "ordinal": 2,
-        "name": "board_count",
+        "ordinal": 3,
+        "name": "position",
         "type_info": {
-          "type": "LongLong",
-          "flags": "NOT_NULL | BINARY",
-          "max_size": 21
+          "type": "Long",
+          "flags": "NOT_NULL",
+          "max_size": 11
         }
       },
       {
-        "ordinal": 3,
-        "name": "created_at: chrono::NaiveDateTime",
+        "ordinal": 4,
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -40,8 +49,8 @@
         }
       },
       {
-        "ordinal": 4,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "ordinal": 5,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -50,9 +59,10 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -60,5 +70,5 @@
       false
     ]
   },
-  "hash": "d6810eeefd7e25f5258e9f753486fcba3d238512890cedf61645fff41c4e65f6"
+  "hash": "da2a4d3ccae1dfeb3c0144be901e5f076961788f383fd1bb147b3b295b891274"
 }

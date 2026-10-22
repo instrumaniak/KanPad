@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT n.`id`, n.`title`, n.`content`, n.`board_id` AS \"board_id: i32\", n.`project_id` AS \"project_id: i32\", n.`card_id` AS \"card_id: i32\", n.`user_id` AS \"user_id: i32\", n.`created_at` AS \"created_at: chrono::NaiveDateTime\", n.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `notes` n WHERE n.`id` = ? AND n.`user_id` = ?",
+  "query": "SELECT n.`id`, n.`title`, n.`content`, n.`board_id` AS \"board_id: i32\", n.`project_id` AS \"project_id: i32\", n.`card_id` AS \"card_id: i32\", n.`user_id` AS \"user_id: i32\", n.`created_at`, n.`updated_at` FROM `notes` n WHERE n.`id` = ? AND n.`user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -68,7 +68,7 @@
       },
       {
         "ordinal": 7,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -77,7 +77,7 @@
       },
       {
         "ordinal": 8,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -100,5 +100,5 @@
       false
     ]
   },
-  "hash": "eb66954b813f17b17952fe9d001ebf52e734b694f1cb65ae2d7811bd09ddbeac"
+  "hash": "c63d779251ff8752dd89c620bd9f4cdd844d22530ebc8efc6ee4a6df9ff97cc6"
 }

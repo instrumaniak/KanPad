@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `text`, `is_completed`, `checklist_id` AS \"checklist_id: i32\", `position`, `created_at` AS \"created_at: chrono::NaiveDateTime\", `updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `checklist_items` WHERE `checklist_id` = ? ORDER BY `position` ASC",
+  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at`, i.`updated_at` FROM `checklist_items` i JOIN `checklists` cl ON cl.`id` = i.`checklist_id` JOIN `cards` k ON k.`id` = cl.`card_id` JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE i.`id` = ? AND b.`user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -50,7 +50,7 @@
       },
       {
         "ordinal": 5,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -59,7 +59,7 @@
       },
       {
         "ordinal": 6,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -68,7 +68,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -80,5 +80,5 @@
       false
     ]
   },
-  "hash": "90338b668d6c1c6350fd7c13b0731b3480e14ff20b132a9a8ea776db350c45ab"
+  "hash": "098942e5885d9b9782387814f814d7b37a96b471dcf0d79f18e8dd8f53efe42f"
 }

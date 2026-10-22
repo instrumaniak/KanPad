@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `name`, `color`, `created_at` AS \"created_at: chrono::NaiveDateTime\" FROM `tags` WHERE `user_id` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?",
+  "query": "SELECT `id`, `name`, `color`, `created_at` FROM `tags` WHERE `id` = ? AND `user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -32,7 +32,7 @@
       },
       {
         "ordinal": 3,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -41,7 +41,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 2
     },
     "nullable": [
       false,
@@ -50,5 +50,5 @@
       false
     ]
   },
-  "hash": "b9d3ce7c3d12f6453faad41ce92e711bc619c52282b91464ee0b438783f802c9"
+  "hash": "0c62b54c0a73fa3861c7f69c1adac2770adaf3cede37c9c4a367f25693d3fdf8"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT k.`id`, k.`title`, k.`column_id` AS \"column_id: i32\", k.`position`, k.`description` AS \"description: String\", k.`due_date` AS \"due_date: chrono::NaiveDateTime\", k.`created_at` AS \"created_at: chrono::NaiveDateTime\", k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE k.`id` = ? AND b.`user_id` = ?",
+  "query": "SELECT b.`id`, b.`name`, b.`background_color`, b.`project_id` AS \"project_id: i32\", b.`is_archived`, b.`view_mode`, b.`created_at`, b.`updated_at`, p.`name` AS \"project_name: String\" FROM `boards` b LEFT JOIN `projects` p ON p.`id` = b.`project_id` AND p.`user_id` = b.`user_id` WHERE b.`id` = ? AND b.`user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -14,7 +14,7 @@
       },
       {
         "ordinal": 1,
-        "name": "title",
+        "name": "name",
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
@@ -23,43 +23,43 @@
       },
       {
         "ordinal": 2,
-        "name": "column_id: i32",
+        "name": "background_color",
         "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
-          "max_size": 11
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 28
         }
       },
       {
         "ordinal": 3,
-        "name": "position",
+        "name": "project_id: i32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL",
+          "flags": "MULTIPLE_KEY",
           "max_size": 11
         }
       },
       {
         "ordinal": 4,
-        "name": "description: String",
+        "name": "is_archived",
         "type_info": {
-          "type": "Blob",
-          "flags": "BLOB",
-          "max_size": 262140
+          "type": "Tiny",
+          "flags": "NOT_NULL",
+          "max_size": 1
         }
       },
       {
         "ordinal": 5,
-        "name": "due_date: chrono::NaiveDateTime",
+        "name": "view_mode",
         "type_info": {
-          "type": "Datetime",
-          "flags": "MULTIPLE_KEY | BINARY",
-          "max_size": 26
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 40
         }
       },
       {
         "ordinal": 6,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -68,11 +68,20 @@
       },
       {
         "ordinal": 7,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
           "max_size": 26
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "project_name: String",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NO_DEFAULT_VALUE",
+          "max_size": 1020
         }
       }
     ],
@@ -83,12 +92,13 @@
       false,
       false,
       false,
-      false,
-      true,
       true,
       false,
-      false
+      false,
+      false,
+      false,
+      true
     ]
   },
-  "hash": "c1924787a64b2bfb11b60b490d8646b9001e3df295e099594bd9e67b0f85b817"
+  "hash": "71035d5d80a6791b257c161e8fef4e715b4801f5ecfee0a30b3748450a7fc27b"
 }

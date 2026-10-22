@@ -30,11 +30,10 @@
 //! List queries never `SELECT` the `description` TEXT: `has_description`
 //! comes from a SQL `CASE` (boolean only), `checklist_progress` from a batch
 //! aggregation (present only when the card owns at least one checklist).
-//! `query!` `DATETIME` selects carry explicit
-//! `AS "col: chrono::NaiveDateTime"` overrides (the lockfile `time` 0.3.55
-//! renames `PrimitiveDateTime` → `PlainDateTime`, so bare `DATETIME` maps to
-//! the `time` crate under `query!`); `QueryBuilder` page selects decode
-//! straight into `chrono` (the quirk only affects the macros). Nullable
+//! `query!` `DATETIME` selects need NO type override: with the in-tree
+//! session store (T65) the `sqlx` `time` feature is no longer enabled, so
+//! `query!` maps a bare `DATETIME` to `chrono::NaiveDateTime` natively.
+//! Nullable
 //! selects override with the INNER type (sqlx wraps nullable columns in
 //! `Option` itself). `COUNT()` decodes as `i64` (`LONGLONG`); `tinyint`
 //! decodes as `i8` (compare `!= 0` in Rust); `COUNT(CASE …)` — never `SUM()`
@@ -116,9 +115,9 @@ where
     let row = sqlx::query!(
         "SELECT k.`id`, k.`title`, k.`column_id` AS \"column_id: i32\", k.`position`, \
           k.`description` AS \"description: String\", \
-          k.`due_date` AS \"due_date: chrono::NaiveDateTime\", \
-          k.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          k.`due_date`, \
+          k.`created_at`, \
+          k.`updated_at` \
           FROM `cards` k \
           JOIN `columns` c ON c.`id` = k.`column_id` \
           JOIN `boards` b ON b.`id` = c.`board_id` \
@@ -596,8 +595,8 @@ where
 {
     let rows = sqlx::query!(
         "SELECT `id`, `title`, \
-          `created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          `updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          `created_at`, \
+          `updated_at` \
           FROM `checklists` WHERE `card_id` = ? ORDER BY `id` ASC",
         card_id
     )
@@ -644,8 +643,8 @@ where
     let rows = sqlx::query!(
         "SELECT i.`id`, i.`text`, i.`is_completed`, \
           i.`checklist_id` AS \"checklist_id: i32\", i.`position`, \
-          i.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          i.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          i.`created_at`, \
+          i.`updated_at` \
           FROM `checklist_items` i \
           WHERE i.`checklist_id` IN (SELECT c.`id` FROM `checklists` c WHERE c.`card_id` = ?) \
           ORDER BY i.`checklist_id` ASC, i.`position` ASC",

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT cl.`id`, cl.`title`, cl.`card_id` AS \"card_id: i32\", cl.`created_at` AS \"created_at: chrono::NaiveDateTime\", cl.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `checklists` cl JOIN `cards` k ON k.`id` = cl.`card_id` JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE cl.`id` = ? AND b.`user_id` = ?",
+  "query": "SELECT `id`, `text`, `is_completed`, `checklist_id` AS \"checklist_id: i32\", `position`, `created_at`, `updated_at` FROM `checklist_items` WHERE `checklist_id` = ? ORDER BY `position` ASC",
   "describe": {
     "columns": [
       {
@@ -14,7 +14,7 @@
       },
       {
         "ordinal": 1,
-        "name": "title",
+        "name": "text",
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
@@ -23,7 +23,16 @@
       },
       {
         "ordinal": 2,
-        "name": "card_id: i32",
+        "name": "is_completed",
+        "type_info": {
+          "type": "Tiny",
+          "flags": "NOT_NULL",
+          "max_size": 1
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "checklist_id: i32",
         "type_info": {
           "type": "Long",
           "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
@@ -31,8 +40,17 @@
         }
       },
       {
-        "ordinal": 3,
-        "name": "created_at: chrono::NaiveDateTime",
+        "ordinal": 4,
+        "name": "position",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -40,8 +58,8 @@
         }
       },
       {
-        "ordinal": 4,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "ordinal": 6,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -50,9 +68,11 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
+      false,
+      false,
       false,
       false,
       false,
@@ -60,5 +80,5 @@
       false
     ]
   },
-  "hash": "47684aa8d66a6cfde49ea40d5610777031f40a1d3686ee314fc71af464d62a18"
+  "hash": "f754855933acafbc5da0f76002d213deac1c1a7524bcfde522bb32b579d50a57"
 }

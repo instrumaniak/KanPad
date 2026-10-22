@@ -8,10 +8,10 @@
 //! NULL`) guards integrity, not isolation, so the check cannot be skipped.
 //!
 //! Create runs board + 3 default columns in ONE transaction (the Nest
-//! two-step save is non-atomic). `DATETIME` selects carry explicit
-//! `AS "col: chrono::NaiveDateTime"` overrides: the lockfile `time` 0.3.55
-//! renames `PrimitiveDateTime` → `PlainDateTime`, so `query!` maps bare
-//! `DATETIME` to the `time` crate otherwise. Nullable selects override with
+//! two-step save is non-atomic). `DATETIME` selects need NO type override:
+//! with the in-tree session store (T65) the `sqlx` `time` feature is no
+//! longer enabled, so `query!` maps a bare `DATETIME` to
+//! `chrono::NaiveDateTime` natively. Nullable selects override with
 //! the INNER type (`AS "project_id: i32"`, never `Option<i32>`): sqlx wraps
 //! nullable columns in `Option` itself, so an `Option` override double-wraps
 //! to `Option<Option<_>>`. `is_archived` (`tinyint`) decodes as `i8`, never
@@ -151,8 +151,8 @@ where
         "SELECT b.`id`, b.`name`, b.`background_color`, \
           b.`project_id` AS \"project_id: i32\", \
           b.`is_archived`, b.`view_mode`, \
-          b.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          b.`updated_at` AS \"updated_at: chrono::NaiveDateTime\", \
+          b.`created_at`, \
+          b.`updated_at`, \
           p.`name` AS \"project_name: String\" \
           FROM `boards` b \
           LEFT JOIN `projects` p ON p.`id` = b.`project_id` AND p.`user_id` = b.`user_id` \

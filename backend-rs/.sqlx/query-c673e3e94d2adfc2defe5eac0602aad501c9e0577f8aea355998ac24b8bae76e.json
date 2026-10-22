@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `name`, `color`, `created_at` AS \"created_at: chrono::NaiveDateTime\" FROM `tags` WHERE `id` = ? AND `user_id` = ?",
+  "query": "SELECT `id`, `name`, `color`, `created_at`, `updated_at` FROM `labels` WHERE `user_id` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?",
   "describe": {
     "columns": [
       {
@@ -26,13 +26,22 @@
         "name": "color",
         "type_info": {
           "type": "VarString",
-          "flags": "NOT_NULL",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
           "max_size": 80
         }
       },
       {
         "ordinal": 3,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "max_size": 26
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -41,14 +50,15 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 3
     },
     "nullable": [
+      false,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "3f129d0eb051f97f1c862b7ead425adc1c1fcbc5808e22ebafc52a9ca3c5e038"
+  "hash": "c673e3e94d2adfc2defe5eac0602aad501c9e0577f8aea355998ac24b8bae76e"
 }

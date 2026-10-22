@@ -383,12 +383,11 @@ impl Settings {
                 "DATABASE_URL must include ?charset=utf8mb4".to_string(),
             ));
         }
-        // The session store binds to this database via
-        // `MySqlStore::with_schema_name`, whose identifier rule is STRICTER
-        // than MySQL's (a leading digit, or `-`/`.`/space, is a legal schema
-        // name it refuses). Screen it here so a bad DB_NAME fails as a clean
-        // config error instead of panicking when the store is constructed
-        // (see `db::is_valid_db_name`). Never echoes credentials.
+        // Screen the database name against `db::is_valid_db_name`: it must
+        // be usable as a plain identifier (a leading digit, or `-`/`.`/space,
+        // is a legal MySQL name that operator tooling does not quote). A bad
+        // DB_NAME must fail here as a clean config error, not as a surprise
+        // at the first query or in a `mysql -D`. Never echoes credentials.
         let db_name = self
             .database_url()
             .parse::<sqlx::mysql::MySqlConnectOptions>()
@@ -609,9 +608,9 @@ mod tests {
         assert!(err.to_string().contains("PORT"), "unexpected error: {err}");
     }
 
-    /// AC: a database name the session store would reject (leading digit,
-    /// hyphen, dot, space) is a clean config error — never a boot panic from
-    /// `MySqlStore::with_schema_name`.
+    /// AC: a database name that is not usable as a plain identifier (leading
+    /// digit, hyphen, dot, space) is a clean config error — never a boot
+    /// panic (see `db::is_valid_db_name`).
     #[test]
     fn rejects_database_names_the_session_store_would_refuse() {
         for (name, why) in [

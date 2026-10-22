@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at` AS \"created_at: chrono::NaiveDateTime\", i.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `checklist_items` i WHERE i.`checklist_id` IN (SELECT c.`id` FROM `checklists` c WHERE c.`card_id` = ?) ORDER BY i.`checklist_id` ASC, i.`position` ASC",
+  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at`, i.`updated_at` FROM `checklist_items` i WHERE i.`checklist_id` IN (SELECT c.`id` FROM `checklists` c WHERE c.`card_id` = ?) ORDER BY i.`checklist_id` ASC, i.`position` ASC",
   "describe": {
     "columns": [
       {
@@ -50,7 +50,7 @@
       },
       {
         "ordinal": 5,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -59,7 +59,7 @@
       },
       {
         "ordinal": 6,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -80,5 +80,5 @@
       false
     ]
   },
-  "hash": "a18ce5e819a467ccc5b4205bee1ad9f9bb31d375425f8a6a12d2f2e391f0369c"
+  "hash": "c9a1c2802f31844f871ec66342d5564ae6db0c7508b650a2702b53da37bc591d"
 }

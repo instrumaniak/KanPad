@@ -21,7 +21,26 @@ tower = { version = "0.5", features = ["timeout"] }
 # body cap is axum's `DefaultBodyLimit`. Neither tower-http layer is used.
 tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "compression-full", "set-header", "fs", "sensitive-headers"] }
 tower-sessions = { version = "0.14", features = ["signed"] }
-tower-sessions-sqlx-store = { version = "0.15", features = ["mysql"] }
+# `tower-sessions-core` is the SAME version `tower-sessions 0.14` pins
+# (`=0.14.0`), so this is NOT a second core in the tree — it is the same one,
+# with one extra feature enabled.
+#
+# The `deletion-task` feature provides `ExpiredDeletion::continuously_delete_expired`
+# — the sweeper loop `main.rs` runs. It used to be enabled *transitively*, by
+# `tower-sessions-sqlx-store` (`features = ["deletion-task"]` on its own core
+# dependency). Dropping the store dropped the feature with it, so it is now
+# requested explicitly here. Declaring it keeps the sweeper on the upstream
+# implementation instead of a hand-rolled loop in `main.rs`.
+tower-sessions-core = { version = "0.14", features = ["deletion-task"] }
+# The session store is owned IN-TREE (`src/common/session_store.rs`) — see
+# `54` Part C §C4. `tower-sessions-sqlx-store` required `sqlx ^0.8` AND
+# `tower-sessions-core ^0.14`, so taking either dependency major pulled a
+# second sqlx / a second core into the tree and did not compile.
+# `rmp-serde` is the MessagePack codec the previous store used — the payload
+# format is unchanged (a row written before the swap still reads).
+rmp-serde = "1"
+# `SessionStore` is an `#[async_trait]` trait — the impl needs the macro.
+async-trait = "0.1"
 tower_governor = "=0.8.0"
 argon2 = "0.5"
 bcrypt = "0.17"

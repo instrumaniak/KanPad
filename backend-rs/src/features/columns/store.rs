@@ -14,10 +14,9 @@
 //! `card_labels`/`checklists`/items/notes the same way). `columns` is a
 //! reserved word: always backticked.
 //!
-//! `DATETIME` selects carry explicit `AS "col: chrono::NaiveDateTime"`
-//! overrides (the lockfile `time` 0.3.55 renames `PrimitiveDateTime` →
-//! `PlainDateTime`, so `query!` maps bare `DATETIME` to the `time` crate
-//! otherwise).
+//! `DATETIME` selects need NO type override: with the in-tree session store
+//! (T65) the `sqlx` `time` feature is no longer enabled, so `query!` maps a
+//! bare `DATETIME` to `chrono::NaiveDateTime` natively.
 
 use chrono::NaiveDateTime;
 use sqlx::{MySql, MySqlExecutor, QueryBuilder};
@@ -76,8 +75,8 @@ where
 {
     let row = sqlx::query!(
         "SELECT c.`id`, c.`board_id` AS \"board_id: i32\", c.`name`, c.`position`, \
-          c.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          c.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          c.`created_at`, \
+          c.`updated_at` \
           FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` \
           WHERE c.`id` = ? AND b.`user_id` = ?",
         id,
@@ -106,8 +105,8 @@ where
 {
     let rows = sqlx::query!(
         "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, `position`, \
-          `created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          `updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          `created_at`, \
+          `updated_at` \
           FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
         board_id
     )

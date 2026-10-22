@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `name`, `color`, `created_at` AS \"created_at: chrono::NaiveDateTime\", `updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `labels` WHERE `user_id` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?",
+  "query": "SELECT c.`id`, c.`board_id` AS \"board_id: i32\", c.`name`, c.`position`, c.`created_at`, c.`updated_at` FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` WHERE c.`id` = ? AND b.`user_id` = ?",
   "describe": {
     "columns": [
       {
@@ -14,25 +14,34 @@
       },
       {
         "ordinal": 1,
-        "name": "name",
+        "name": "board_id: i32",
         "type_info": {
-          "type": "VarString",
-          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
-          "max_size": 200
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 11
         }
       },
       {
         "ordinal": 2,
-        "name": "color",
+        "name": "name",
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
-          "max_size": 80
+          "max_size": 1020
         }
       },
       {
         "ordinal": 3,
-        "name": "created_at: chrono::NaiveDateTime",
+        "name": "position",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL",
+          "max_size": 11
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -40,8 +49,8 @@
         }
       },
       {
-        "ordinal": 4,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "ordinal": 5,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -50,9 +59,10 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 2
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -60,5 +70,5 @@
       false
     ]
   },
-  "hash": "d137bdfc73f2579936f82af2438473dcf9b37aace66e98e35ae16ce0b8056c0d"
+  "hash": "86c64f99f9fef96ff6ff8114b063497a9f07ebaea1b79ecc368824468b0ef546"
 }

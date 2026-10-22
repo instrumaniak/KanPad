@@ -17,17 +17,22 @@ pub fn pool_options() -> MySqlPoolOptions {
         .test_before_acquire(true)
 }
 
-/// Whether `name` is acceptable to `tower-sessions-sqlx-store`'s
-/// `MySqlStore::with_schema_name`, which validates every name against this
-/// exact rule (the crate's own `is_valid_identifier` is private).
+/// Whether `name` is usable as a plain database identifier.
 ///
-/// It is STRICTER than MySQL itself: a schema name starting with a digit, or
-/// containing `-`, `.`, or a space, is legal SQL but rejected here. The
-/// session table lives in the app database (`30-db-schema.md` deviation 11),
-/// so the database name must satisfy the store's rule or every session query
-/// fails at runtime. Mirrored here so `Settings::validate`
-/// can reject such a config cleanly at load instead of letting store
-/// construction panic later.
+/// The rule is STRICTER than MySQL itself: a database name starting with a
+/// digit, or containing `-`, `.`, or a space, is legal SQL but rejected here.
+///
+/// **Why the rule still exists (it used to be the store's rule).** It was
+/// inherited from `tower-sessions-sqlx-store`'s `with_schema_name`, which
+/// interpolated the name into every statement and validated it. The
+/// in-tree store (T65) takes the pool and interpolates **nothing**, so it no
+/// longer needs the name to be identifier-safe — but the screen stays, for
+/// two reasons that outlive the store: (a) the database name reaches
+/// operator tooling that does not quote identifiers (`mysql -D`, dumps, the
+/// runbook's `CREATE DATABASE`), where a name needing quoting is a trap;
+/// (b) `Settings::validate` is the place where a bad name becomes a clean
+/// boot error instead of a surprise at the first query. Mirrored here so
+/// that screen can be expressed in one place.
 pub fn is_valid_db_name(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -69,9 +74,10 @@ mod tests {
 
     #[test]
     fn rejects_names_mysql_allows_but_the_store_does_not() {
-        // These are legal MySQL schema names; `MySqlStore::with_schema_name`
-        // refuses them, so `Settings::validate` must too — otherwise the
-        // session store panics at construction on boot.
+        // These are legal MySQL schema names but unusable as plain
+        // identifiers, so `Settings::validate` must reject them — otherwise
+        // the first operator tool that does not quote identifiers breaks on
+        // a name that the boot screen let through.
         for name in [
             "123kanpad", // leading digit
             "kan-pad",   // hyphen needs quoting

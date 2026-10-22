@@ -23,11 +23,10 @@
 //! wrapped in `%…%`) and ride `push_bind` only — user text is never `push`ed —
 //! with an explicit `ESCAPE` clause.
 //!
-//! `query!` `DATETIME` selects carry explicit
-//! `AS "col: chrono::NaiveDateTime"` overrides (the lockfile `time` 0.3.55
-//! renames `PrimitiveDateTime` → `PlainDateTime`, so bare `DATETIME` maps to
-//! the `time` crate under `query!`); `QueryBuilder` page selects decode
-//! straight into `chrono` (the quirk only affects the macros). Nullable
+//! `query!` `DATETIME` selects need NO type override: with the in-tree
+//! session store (T65) the `sqlx` `time` feature is no longer enabled, so
+//! `query!` maps a bare `DATETIME` to `chrono::NaiveDateTime` natively.
+//! Nullable
 //! selects override with the INNER type (sqlx wraps nullable columns in
 //! `Option` itself). `COUNT(DISTINCT …)` decodes as `i64` (`LONGLONG`).
 //!
@@ -310,8 +309,8 @@ where
           n.`project_id` AS \"project_id: i32\", \
           n.`card_id` AS \"card_id: i32\", \
           n.`user_id` AS \"user_id: i32\", \
-          n.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          n.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          n.`created_at`, \
+          n.`updated_at` \
           FROM `notes` n WHERE n.`id` = ? AND n.`user_id` = ?",
         id,
         user_id

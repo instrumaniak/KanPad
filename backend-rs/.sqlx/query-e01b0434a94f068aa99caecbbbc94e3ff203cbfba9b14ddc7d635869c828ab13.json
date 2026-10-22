@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT c.`id`, c.`board_id` AS \"board_id: i32\", c.`name`, c.`position`, c.`created_at` AS \"created_at: chrono::NaiveDateTime\", c.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` WHERE c.`id` = ? AND b.`user_id` = ?",
+  "query": "SELECT `id`, `title`, `card_id` AS \"card_id: i32\", `created_at`, `updated_at` FROM `checklists` WHERE `card_id` = ? ORDER BY `id` ASC",
   "describe": {
     "columns": [
       {
@@ -14,16 +14,7 @@
       },
       {
         "ordinal": 1,
-        "name": "board_id: i32",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
-          "max_size": 11
-        }
-      },
-      {
-        "ordinal": 2,
-        "name": "name",
+        "name": "title",
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL | NO_DEFAULT_VALUE",
@@ -31,17 +22,17 @@
         }
       },
       {
-        "ordinal": 3,
-        "name": "position",
+        "ordinal": 2,
+        "name": "card_id: i32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
           "max_size": 11
         }
       },
       {
-        "ordinal": 4,
-        "name": "created_at: chrono::NaiveDateTime",
+        "ordinal": 3,
+        "name": "created_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -49,8 +40,8 @@
         }
       },
       {
-        "ordinal": 5,
-        "name": "updated_at: chrono::NaiveDateTime",
+        "ordinal": 4,
+        "name": "updated_at",
         "type_info": {
           "type": "Datetime",
           "flags": "NOT_NULL | BINARY",
@@ -59,10 +50,9 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -70,5 +60,5 @@
       false
     ]
   },
-  "hash": "d40141a8d30e119869793b74afa3df7854a79efaeb8dc37152867e2290edc64b"
+  "hash": "e01b0434a94f068aa99caecbbbc94e3ff203cbfba9b14ddc7d635869c828ab13"
 }

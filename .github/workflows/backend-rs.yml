@@ -131,21 +131,19 @@ jobs:
 
       # The OTHER panic spellings in a request path (54 B2, 3rd decision).
       # NOTE: `unwrap_or_else` is deliberately NOT matched — it is not a panic
-      # spelling (it is used benignly 6x on the tree) and the ONE documented
-      # fail-fast IS `unwrap_or_else(|_| panic!(...))`. The single allow-listed
-      # site below is a BOOT-time invariant (it runs while the router is
-      # built, never per request), so it cannot be triggered by a request.
+      # spelling (it is used benignly 6x on the tree).
       #
-      # ALLOWLIST: src/state.rs — the session-store identifier guards (see the
-      # `# Panics` contract on AppState::with_pool). Both are BOOT-time
-      # invariants (they run while the router is built, never per request), so
-      # they cannot be triggered by a request. T65 replaces the store in-tree
-      # and MUST then drop this allow-list entry.
+      # ALLOWLIST: **none** since T65. It used to exempt `src/state.rs`, whose
+      # session-store identifier guards were the one documented fail-fast (a
+      # BOOT-time invariant, never per request). T65 replaced the store with an
+      # IN-TREE one that interpolates no schema name, so there is no
+      # identifier to validate, the guards are gone, and the allow-list entry
+      # with them. An allow-list entry that outlives its reason is a hole.
       - name: grep gate — no panic!/todo!/unimplemented! outside main.rs and #[cfg(test)]
         working-directory: backend-rs
         run: |
           set -euo pipefail
-          hits="$(find src -name '*.rs' ! -name 'main.rs' ! -name 'state.rs' | while read -r f; do
+          hits="$(find src -name '*.rs' ! -name 'main.rs' | while read -r f; do
             awk '
               /^[[:space:]]*#\[cfg\(test\)\]/ { skip=1; depth=0; seen=0; next }
               skip {
@@ -161,11 +159,11 @@ jobs:
             ' "$f"
           done | grep -E '\b(panic!|todo!|unimplemented!)\(' || true)"
           if [ -n "$hits" ]; then
-            echo 'FAIL: panic!/todo!/unimplemented! outside src/main.rs, #[cfg(test)] and the state.rs allow-list:'
+            echo 'FAIL: panic!/todo!/unimplemented! outside src/main.rs and #[cfg(test)]:'
             echo "$hits"
             exit 1
           fi
-          echo 'OK: no panic!/todo!/unimplemented! outside src/main.rs, #[cfg(test)] and the state.rs allow-list'
+          echo 'OK: no panic!/todo!/unimplemented! outside src/main.rs and #[cfg(test)]'
 
       # format!-interpolated SQL is banned in store.rs (SQL must be fully
       # parameterized `?` bindings; see 00-overview.md constitution).

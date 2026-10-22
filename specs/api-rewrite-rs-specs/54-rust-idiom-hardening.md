@@ -2,7 +2,7 @@
 
 > **Status: PARTIALLY IMPLEMENTED (2026-10-22).** This file + `50-tasks.md`
 > Phase 7 are the **work order**; executors implement T54–T68 and flip each AC
-> as it lands. **Five tasks have landed** (the table below); everything else
+> as it lands. **Six tasks have landed** (the table below); everything else
 > is still PLAN ONLY.
 >
 > **The tree no longer has** `NODE_ENV` + `connect.sid` (T54), **a workflow
@@ -21,7 +21,7 @@
 > | **T57** | **DONE** | `98fb1ce2` | `edition 2024` + `rust-toolchain.toml` @ **1.99.1** + the Dockerfile base bump; the `[lints]` + `[profile.release]` tables; the committed **`deny.toml`**, derived from its first failing run |
 > | **T63** | **DONE** | `85f433f3` | `axum-valid` / `utoipa-axum` / `zeroize` + 2 dead `tower-http` features removed; **2 advisory ignores deleted** with their crates |
 > | **T68** | **DONE** | `0b03ea58` | the CI **first-run defect repair**: the `cargo audit` step deleted (it contradicted the committed `deny.toml`) + the SHOW CREATE TABLE assert fixed (it queried the pre-2026-10-19 `tower_sessions` schema) + `cargo-deny` pinned |
-> | T65 | pending | — | the in-tree `SessionStore` — **the hinge** of the phase |
+> | **T65** | **DONE** | *(this PR)* | the **in-tree `SessionStore`** — the hinge of the phase: `tower-sessions-sqlx-store` is gone (the lock **shrank by one package**), `sqlx/time` is off, the `AS "…chrono::NaiveDateTime"` overrides are gone from all **eight** feature store files, and the `sqlx 0.9` + `tower-sessions 0.15` majors are now reachable |
 > | T67, T66, T56, T58, T59, T60, T61, T62 | pending | — | see `50-tasks.md` Phase 7 |
 >
 > **The three corrections this file's own text still needs** (recorded in
@@ -1235,7 +1235,7 @@ anyhow 1.0.104 · tracing-subscriber 0.3.23 · serde/serde_json.
 | **garde 0.22.1 → 0.23.0** · **dialoguer 0.11 → 0.12** | minor. dialoguer 0.11 is one of three crates pulling **thiserror 1.0.69** alongside the app's thiserror 2. |
 | **tower_governor `=0.8.0` → `0.8`** | 0.8.0 *is* the latest, so the exact pin buys nothing today but blocks every 0.8.x patch. CI already runs `--locked`, which is the reproducibility mechanism that matters. |
 
-### C4 — The session store is the blocker, and the unlock
+### C4 — The session store is the blocker, and the unlock — **LANDED IN T65 (2026-10-22)**
 
 Two upstream constraints, both verified in the **vendored** sources:
 
@@ -1318,7 +1318,42 @@ required the 0.9 `SqlSafeStr` migration for dynamic query strings
 here.
 
 **The cost, stated honestly:** ~200 LOC of security-critical code the project
-now owns and must maintain, versus a 3.8 KB crate it does not. The
+now owns and must maintain, versus a 3.8 KB crate it does not.
+
+**What T65 actually found (2026-10-22).** Three things the plan did not
+anticipate, all resolved in the same PR:
+
+1. **The sweeper's loop lived behind a FEATURE, not in the store's code.**
+   `ExpiredDeletion::continuously_delete_expired` is gated behind
+   `tower-sessions-core`'s `deletion-task` feature — which the old store
+   enabled **transitively** (`features = ["deletion-task"]` on its own core
+   dependency). Dropping the store dropped the feature with it, and
+   `main.rs` stopped compiling. The fix is to declare
+   `tower-sessions-core = { version = "0.14", features = ["deletion-task"] }`
+   **directly** — the SAME core version `tower-sessions 0.14` pins
+   (`=0.14.0`), so it is not a second core in the tree. Declaring it keeps the
+   sweeper on the upstream implementation instead of a hand-rolled loop.
+   **Lesson: a transitive feature can vanish with the crate that enabled it.**
+2. **The store interpolated a schema name into every statement — so the
+   in-tree one interpolates NOTHING.** The 2026-10-19 invariant ("the store
+   must live in the pool's database") was previously *configured* (a schema
+   name, validated at boot, with a `panic!` if it was not a valid
+   identifier). An in-tree store that takes the pool satisfies the same
+   invariant **structurally** — there is no name to get wrong. The
+   boot-time screen in `Settings::validate` stays (the name still reaches
+   operator tooling that does not quote identifiers), but the
+   `AppState::with_pool` panic and its `# Panics` contract are **gone** —
+   and with them the CI grep gate's `state.rs` allow-list entry, exactly as
+   T55's sequencing note anticipated.
+3. **The `sqlx/time` feature was the whole reason for the `AS` overrides.**
+   Confirmed: `tower-sessions-sqlx-store` was the only enabler of sqlx's
+   `time` feature, so dropping it turns the feature off, sqlx infers
+   `chrono::NaiveDateTime` natively, and the overrides in the **eight**
+   feature store files become unnecessary. The expiry column is the one
+   place the two time types meet: the store converts `OffsetDateTime` →
+   `chrono::NaiveDateTime` at **microsecond** precision — the column's
+   precision, and the precision the previous store's encoding truncated to
+   as well (so the stored value is unchanged). The
 mitigations are that the trait is five methods, the on-disk format is
 unchanged, the session path already has a test suite, and the whole change
 lands in **one** reviewable PR **before** the data migration.
@@ -1541,7 +1576,7 @@ Task-specific additions:
 | T61 | the deadlock-retry test proves the retry is taken (a fault-injected `1213` is retried and the operation eventually succeeds) and that the matcher keys on the **error number** (a `1205`/`HY000` lock-wait timeout is retried too — a `40001`-only matcher would miss it); the whole transaction is `ROLLBACK` before a retry (a `1205` rolls back only the current statement by default); the move tx runs at `READ COMMITTED` (asserted by a `SELECT @@transaction_isolation` probe inside the tx) **and the `SET TRANSACTION ISOLATION LEVEL` statement is issued BEFORE `BEGIN`** (issued inside a tx it fails with MySQL error 1568); pool sizing honours the env keys |
 | T62 | `cargo llvm-cov --summary-only --fail-under-lines 85` green **and a summary is actually printed** (a bare `--fail-under-lines` prints no summary — `--summary-only` requires `--json`/`--lcov`/`--cobertura`); the workflow's action refs are **commit SHAs** (via `gh actions-lock` + the committed lockfile, or hand-pinned + dependabot); `dependabot.yml` covers cargo + npm + github-actions; `docker build` passes the new `.dockerignore` + `HEALTHCHECK` + digest pins; `docker run` reports `healthy` |
 | T63 | `cargo tree -i axum@0.7.9` → *"did not match any packages"* (the second axum is gone); `cargo tree -i axum-core@0.4.5` → not found; `cargo tree -i garde` → **no ambiguity** (one version); `cargo tree -i validator` → not found; `grep -rn 'axum_valid\|utoipa_axum\|zeroize::' src/ tests/` → **0** hits (**`\btime::` is deliberately NOT in this grep** — `src/lib.rs:155` legitimately uses the `time` crate, which is **required** by `tower_sessions::Expiry::OnInactivity`; the separate bullet below asserts `time` stays); `cargo tree -e features -i tower-http` shows **no** `timeout` and **no** `limit` feature; `secrecy`'s `serde` feature is **still enabled** (it is load-bearing — `SecretString: Deserialize` for `envy`); the lockfile's duplicated-crate count drops; `cargo fmt/clippy/test` green; `cargo sqlx prepare --check` green |
-| T65 | the in-tree store implements `tower_sessions_core::SessionStore` and the **existing** `sessions` table + DDL are unchanged (`SHOW CREATE TABLE` matches the baseline byte-for-byte — the runbook's step 5(d) drift gate stays green); the payload stays **MessagePack** (a store written before the change still reads it); `tower-sessions-sqlx-store` is **gone** from `Cargo.toml` and the lockfile; `cargo tree -i sqlx` shows **one** sqlx version; `cargo tree -i tower-sessions-core` shows **one** core version; the `AS "…chrono::NaiveDateTime"` overrides are gone from **all eight** store files — `{boards,cards,checklists,columns,labels,notes,projects,tags}` (measured 2026-10-22 (e): **eight, not five**) — (`grep -rc 'chrono::NaiveDateTime' src/features/*/store.rs` → 0) and sqlx now infers `chrono` natively; `sqlx/time` is no longer enabled (verified via `cargo tree -e features`); the session suite (login / logout / me / cycle_id / expiry / sweeper) is green |
+| T65 | the in-tree store implements `tower_sessions_core::SessionStore` and the **existing** `sessions` table + DDL are unchanged (`SHOW CREATE TABLE` matches the baseline byte-for-byte — the runbook's step 5(d) drift gate stays green); the payload stays **MessagePack**, asserted **byte-identical** to the previous store's `rmp_serde::to_vec(&record)` (so a row written before the change still reads); `tower-sessions-sqlx-store` is **gone** from `Cargo.toml` and the lockfile (**the lock shrank by exactly one package; nothing else moved, no downgrade**); `cargo tree -i sqlx` shows **one** sqlx version; `cargo tree -i tower-sessions-core` shows **one** core version; the `AS "…chrono::NaiveDateTime"` overrides are gone from **all eight** store files — `{boards,cards,checklists,columns,labels,notes,projects,tags}` (measured 2026-10-22 (e): **eight, not five**) — (`grep -rn 'AS "[^"]*: chrono::NaiveDateTime"' src/features/*/store.rs` → 0) and sqlx now infers `chrono` natively; the **16 re-keyed `.sqlx/` entries keep their exact column signatures**; `sqlx/time` is no longer enabled (verified via `cargo tree -e features`); the session suite (login / logout / me / cycle_id / expiry / sweeper) is green |
 | T67 | every target version is in `Cargo.toml` at the version this spec names; `argon2`'s `hash_password_into` is used and the Argon2id PHC format is unchanged (`$argon2id$v=19$m=19456,…` — the existing tests pin it); `tower-http` 0.7.1's compression **406** behavior is either accepted or disabled by an explicit test; the `ServeDir` trailing-slash change is verified against the SPA fallback; `utoipa` 6's OpenAPI output is regenerated (`openapi.json` + `frontend/src/lib/api/schema.d.ts` in the **same PR**) and `openapi_snapshot` is green; `Cargo.lock`'s diff is reviewed line by line (no unintended downgrade); `cargo fmt/clippy/test` green |
 | T66 | the `DATABASE_URL` carries `collation=utf8mb4_unicode_ci` in **all five** places it appears (`.env`, `compose.yaml`, the CI workflow, `docs/data-migration-live.md`, `BACKEND-RS-ORCHESTRATION.md`); `SELECT @@collation_connection` = `utf8mb4_unicode_ci` is asserted by a test (so the pin is load-bearing, not decorative); the `sqlx` feature names are the 0.9 ones (`runtime-tokio` + `tls-rustls-ring-native-roots`, **not** `runtime-tokio-rustls`); `.sqlx/` is regenerated with `cargo sqlx prepare --workspace --all -- --all-targets` and the **diff is reviewed** (the app's own columns are all non-binary `VarString`/`Long`/`Datetime`, so the 0.9 `Vec<u8>`→`String` inference change must produce **no** Rust type change — if it does, stop and re-read the DTOs); `cargo sqlx prepare --check` green; the `Migrate` trait is adopted (no hand-rolled `SELECT version FROM _sqlx_migrations`); the 2 runtime `sqlx::query()` calls still compile as `&'static str` (no `AssertSqlSafe` needed) and the 83 `query!` macros are unaffected |
 

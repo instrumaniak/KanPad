@@ -76,8 +76,8 @@ where
 {
     let rows = sqlx::query!(
         "SELECT `id`, `name`, `color`, \
-          `created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          `updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          `created_at`, \
+          `updated_at` \
           FROM `labels` WHERE `user_id` = ? \
           ORDER BY `id` ASC LIMIT ? OFFSET ?",
         user_id,
@@ -107,8 +107,8 @@ where
 {
     let row = sqlx::query!(
         "SELECT `id`, `name`, `color`, \
-          `created_at` AS \"created_at: chrono::NaiveDateTime\", \
-          `updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
+          `created_at`, \
+          `updated_at` \
           FROM `labels` WHERE `id` = ? AND `user_id` = ?",
         id,
         user_id

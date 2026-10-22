@@ -1,9 +1,12 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status: PARTIALLY IMPLEMENTED (2026-10-22).** This file + `50-tasks.md`
-> Phase 7 are the **work order**; executors implement T54–T68 and flip each AC
-> as it lands. **Six tasks have landed** (the table below); everything else
-> is still PLAN ONLY.
+> **Status: PARTIALLY IMPLEMENTED (2026-10-22, updated after T69).** This file
+> + `50-tasks.md` Phase 7 are the **work order**; executors implement T54–T69
+> and the orchestrator flips each AC as it lands (single writer — parallel
+> agents editing `50-tasks.md` is how the AC table drifts).
+> **Nine of the fourteen tasks have landed** (the table below); T56, T58–T62
+> remain PLAN ONLY, and **T69 (the frontend's 15 `tsc` errors)** was added to
+> Phase 7 after it surfaced as the pipeline's third latent red.
 >
 > **The tree no longer has** `NODE_ENV` + `connect.sid` (T54), **a workflow
 > that has never run** (T55 moved it to the repo root — and T68 repaired the
@@ -20,15 +23,17 @@
 > | **T55** | **DONE** | `689dc895` | the workflow **moved to the repo root** (it had never run); the 3 lint-gate sites fixed in code (`to_response_one`); a second grep gate (the panic spellings) + the third gate **repaired**; `allow_methods` gained **`PUT`** + the preflight guard |
 > | **T57** | **DONE** | `98fb1ce2` | `edition 2024` + `rust-toolchain.toml` @ **1.99.1** + the Dockerfile base bump; the `[lints]` + `[profile.release]` tables; the committed **`deny.toml`**, derived from its first failing run |
 > | **T63** | **DONE** | `85f433f3` | `axum-valid` / `utoipa-axum` / `zeroize` + 2 dead `tower-http` features removed; **2 advisory ignores deleted** with their crates |
+> | **T65** | **DONE** | `55071642` | the **in-tree `SessionStore`** — the hinge of the phase: `tower-sessions-sqlx-store` is gone (the lock **shrank by one package**), `sqlx/time` is off, the `AS "…chrono::NaiveDateTime"` overrides are gone from all **eight** feature store files, and the `sqlx 0.9` + `tower-sessions 0.15` majors are now reachable |
+> | **T67** | **DONE** | `a0b25543` | the **library majors**: `tower-http 0.7` (the compression **406** + `ServeDir` trailing-slash changes test-locked), `tower-sessions 0.15`, `utoipa 6` + swagger-ui 10, `argon2 0.6` / `bcrypt 0.19` (PHC output unchanged), `sha2 0.11`, `garde 0.23`; the **3 `zip` advisory ignores deleted**; `compression-gzip`+`br` chose away the C-toolchain |
+> | **T66** | **DONE** | `afd87c0e` | **`sqlx 0.9`** (`runtime-tokio` + `tls-rustls-ring-native-roots`, `mysql-rsa` now opt-in **and required** on a plaintext connection); the **collation pin** enforced at boot + asserted by a test; `sqlx.toml` **deleted** (a hard compile error under 0.9 without the feature); the `Migrate` trait adopted |
 > | **T68** | **DONE** | `0b03ea58` | the CI **first-run defect repair**: the `cargo audit` step deleted (it contradicted the committed `deny.toml`) + the SHOW CREATE TABLE assert fixed (it queried the pre-2026-10-19 `tower_sessions` schema) + `cargo-deny` pinned |
-> | **T65** | **DONE** | *(this PR)* | the **in-tree `SessionStore`** — the hinge of the phase: `tower-sessions-sqlx-store` is gone (the lock **shrank by one package**), `sqlx/time` is off, the `AS "…chrono::NaiveDateTime"` overrides are gone from all **eight** feature store files, and the `sqlx 0.9` + `tower-sessions 0.15` majors are now reachable |
-> | T67, T66, T56, T58, T59, T60, T61, T62 | pending | — | see `50-tasks.md` Phase 7 |
+> | **T69** | **DONE** | `93ca7016` | the **frontend** type errors: 15 → **0** `tsc` errors (the Nest-era `boardCount` leftover, the optional-vs-nullable drift from the hand-written `Omit<CardSummary, …>` surgery, the missing `checklists` fixture field, `column_id: number | null`); `npm run build` + `gen:api --check` + vitest **723/723**; **no `schema.d.ts` edit** (the generated type is the contract) |
+> | T56, T58, T59, T60, T61, T62 | pending | — | see `50-tasks.md` Phase 7 |
 >
-> **The three corrections this file's own text still needs** (recorded in
-> `50-tasks.md` + `AGENTS.md` as the 2026-10-22 (c)/(d)/(e) passes): the
-> verification matrix's clippy command, the "five store files" that are
-> actually **eight**, and the claim that no task touches `openapi.json`
-> (T57 changed its `info` block).
+> **The three corrections this file's own text needed** (the verification
+> matrix's clippy command, the "five store files" that are actually **eight**,
+> and the claim that no task touches `openapi.json`) were **applied in P2**
+> (`65eb76b2`) — the text below is consistent with the tree again.
 >
 > **Relationship to the other spec files:** this file records *why* the naming
 > amendments (Part A) and the quality-baseline tasks (Part B) exist. The

@@ -385,8 +385,9 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T65 in-tree session store | (merged, branch deleted) | — | T63 | **DONE `55071642`** |
 | T67 library majors | (merged, branch deleted) | — | T65 | **DONE `a0b25543`** |
 | T66 sqlx 0.9 | (merged, branch deleted) | — | T67 | **DONE `afd87c0e`** |
-| T56 CSRF + CSP + CORS `PUT` + span redaction | `rs-t56-security` | — | T67 | pending |
-| T58 public-API ergonomics | `rs-t58-ergonomics` | — | T66 | pending |
+| T69 frontend types vs the snake_case contract | (merged, branch deleted) | — | T67 | **DONE `93ca7016`** |
+| T56 CSRF + CSP + span redaction | `rs-t56-security` | `wt-t56` | T67 | **IN FLIGHT** (WIP `8968143e`) |
+| T58 public-API ergonomics | `rs-t58-ergonomics` | — | T56 | pending |
 | T59 shared-kernel DRY + `/ready` in OpenAPI | `rs-t59-dry` | — | T58 | pending |
 | T60 observability (`/metrics` + JSON logs) | `rs-t60-obs` | — | T59 | pending |
 | T61 concurrency + pool tuning | `rs-t61-concurrency` | — | T59 | pending |
@@ -615,3 +616,28 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **The `rsa` advisory ignore STAYS** — the plan was wrong: RUSTSEC-2023-0071 has **NO patched version** (it covers `rsa` 0.10.0-rc too). The reason was rewritten to state the real exposure.
 - **Gates**: fmt 0 | clippy 0 | lib 69/69 | api 92/92 | prepare --check 0 | cargo deny ×3 ok | the three grep gates green.
 - **NEXT**: **T56** (the security hardening — the `CsrfLayer` Origin check + the CSP + the span redaction) and **T58** (the public-API ergonomics — unblocked now that T66 is in) can run in parallel; **T69** (the frontend's 15 type errors) is needed before the pipeline can be green. Then T59 → T60 → T61 → T62.
+
+## Resume 2026-10-22 (T69 done — the frontend type errors are gone; T56 in flight)
+
+- **T69 MERGED `93ca7016`** (ff into `dev-rs-local`; branch deleted). 10 files, +69/−32,
+  `frontend/src/**` only. **No `schema.d.ts` edit** — the generated type is the contract.
+- **Verified by the orchestrator (command-level, no subagent):** `tsc --noEmit -p
+  tsconfig.app.json` **0 errors** (was 15) | `npm run build` green (9.5 s) | `gen:api --check`
+  "schema.d.ts is up to date" | vitest **723/723 (77 files)** | no `any` / `@ts-ignore` /
+  `as unknown as` introduced | `frontend/dist/` not staged.
+- **Flake note:** the first vitest run (concurrent with Rust compilation) failed 2/723; a clean
+  rerun was 723/723. Load-induced flakes are environmental — do not "fix" a test for them.
+- **No remote branch for `dev-rs-local`** → nothing is pushed; `gh` is still not installed, so
+  the GitHub Actions run remains the one unverifiable AC.
+- **T56 IN FLIGHT** on `opencode/deepseek-v4.1-flash-free` (the configured default
+  `minimax-m3.1-flash-free` no longer exists in the provider catalogue; the PAID siblings now
+  answer *"Insufficient account funds"*, so **free models only** from here on).
+- **Fourth latent pipeline red (owned by T62):** `backend-rs/Dockerfile:29` still copies
+  `sqlx.toml` — deleted by T66 — so `docker build` fails in the `docker-e2e` job. Docker
+  builds are also disk-infeasible here (`/` is 98% full), exactly as recorded for T06.
+- **NEXT**: T56 (in flight) → **T58** (config.rs is free once T56 lands; T56 also touches it) →
+  T59 → {T60 ∥ T61} → T62. **One backend subagent at a time** — two parallel agents on the free
+  model contend for the shared cargo target and get rate-limited.
+- **Spec/status writers:** the orchestrator is the SINGLE writer for `50-tasks.md` ACs,
+  `54-rust-idiom-hardening.md`'s status table and this file. Executors must not flip ACs —
+  parallel agents editing `50-tasks.md` is how the AC table drifted before.

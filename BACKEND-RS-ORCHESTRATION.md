@@ -351,3 +351,59 @@ still UNCOMMITTED (the user is preparing the commits by hand).
   "pick the shared variant", the cookie-jar core) and a lesson: **a normative header
   that the code violates is worse than no header — audit the forbidden set against the
   actual `fn` definitions, not against the import statements.**
+
+## Resume 2026-10-22 — Phase 7 (Rust-idiom amendments + quality baseline) started
+
+- **Task source of truth:** `specs/api-rewrite-rs-specs/50-tasks.md` **Phase 7** (T54–T67);
+  rationale + scorecard in `54-rust-idiom-hardening.md`. Ordering is
+  **dependency-first, feature-second** (the NestJS data is NOT migrated yet, so the
+  toolchain / resolver / dependency set / DB-connection semantics are cheap NOW and
+  expensive after the cutover — `54` Part C §C8).
+- **Spec patch landed first** (`d3d0eac9`): a third verification pass **executed** the
+  plan's gates instead of reading them → **6 more corrections, 2 blocking** (the new
+  grep gate contradicted its own prescribed fix; T63's AC contradicted itself).
+  Details in `54` §"Second verification pass (2026-10-22 (c))" + `00-overview.md`
+  Amendment 13.
+- **T54 DONE** (`8b0cef64`, merged ff into `dev-rs-local`): `APP_ENV` replaces
+  `NODE_ENV` (boot FAILS when `NODE_ENV` is present — `ConfigError::LegacyNodeEnv`,
+  checked *before* `envy` reads `APP_ENV`); cookie `connect.sid` → `kanpad.sid` /
+  `__Host-kanpad.sid`. Gates: fmt 0 | clippy -D warnings 0 | lib 60/60 | **api 82/82** |
+  `sqlx prepare --check` 0 | `.sqlx/` unchanged | `openapi.json` + `schema.d.ts`
+  UNCHANGED. Red-proof: removing the `NODE_ENV` check makes the new test fail with
+  `app_env: "development"` — the exact silent downgrade the rule prevents.
+- **T54's red-proof lesson** (now in AGENTS.md): a rename must not fail open, and a
+  boot-failure gate must be proved RED on a probe before it is trusted.
+
+### Phase 7 task table
+
+| Task | Branch | Worktree | Depends | Status |
+|------|--------|----------|---------|--------|
+| T54 naming (`APP_ENV` + `kanpad.sid`) | (merged, branch deleted) | — | none | **DONE `8b0cef64`** |
+| T55 CI activation + lint-gate repair | `rs-t55-ci` | `KanPad-wt/wt-t55` | T54 | IN PROGRESS |
+| T57 build & supply chain | `rs-t57-build` | — | T55 | pending |
+| T63 dead deps | `rs-t63-deps` | — | T57 | pending |
+| T65 in-tree session store | `rs-t65-store` | — | T63 | pending |
+| T67 library majors | `rs-t67-libs` | — | T65 | pending |
+| T66 sqlx 0.9 | `rs-t66-sqlx` | — | T67 | pending |
+| T56 CSRF + CSP + CORS `PUT` + span redaction | `rs-t56-security` | — | T67 | pending |
+| T58 public-API ergonomics | `rs-t58-ergonomics` | — | T66 | pending |
+| T59 shared-kernel DRY + `/ready` in OpenAPI | `rs-t59-dry` | — | T58 | pending |
+| T60 observability (`/metrics` + JSON logs) | `rs-t60-obs` | — | T59 | pending |
+| T61 concurrency + pool tuning | `rs-t61-concurrency` | — | T59 | pending |
+| T62 coverage gate + CI pins + Docker hardening | `rs-t62-gates` | — | T60 | pending |
+
+### Environment notes (2026-10-22)
+
+- The shared test DB container `kanpad-rs-testdb` had been **stopped**, and its data
+  dir is **tmpfs (RAM)** → a restart WIPES the schema. Recreate with:
+  `docker start kanpad-rs-testdb` + `SQLX_OFFLINE=true cargo run -- migrate run`
+  (`migrate info` → `applied: 2 pending: 0`). The `query!` macros need the schema at
+  compile time **unless** `SQLX_OFFLINE=true` — use it for the migrate step itself
+  (chicken-and-egg: the lib will not compile without a schema *or* the offline cache).
+- Every cargo command needs `CARGO_TARGET_DIR=/mnt/mint/home/raziur/CodeLab/Personal/AITestLab/.cargo-target-kanpad`
+  (+ `CARGO_HOME=…/.cargo-home`), `DATABASE_URL=mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4`,
+  and `SESSION_SECRET` (32+ bytes) — the worktrees have **no `.env`** (gitignored), so
+  `Settings::load()` fails with *"missing value for field session_secret"* without it.
+- **`gh` is NOT installed** → T55's AC *"the workflow runs green on the PR (a `gh run
+  list` link)"* cannot be satisfied locally. Everything else in T55 is verified by
+  replaying each gate by hand; the CI run itself needs a push to GitHub.

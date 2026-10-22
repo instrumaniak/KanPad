@@ -382,7 +382,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T55 CI activation + lint-gate repair | (merged, branch deleted) | — | T54 | **DONE `689dc895`** |
 | T57 build & supply chain | (merged, branch deleted) | — | T55 | **DONE `98fb1ce2`** |
 | T63 dead deps | (merged, branch deleted) | — | T57 | **DONE `85f433f3`** |
-| T65 in-tree session store | `rs-t65-store` | — | T63 | pending |
+| T65 in-tree session store | (merged, branch deleted) | — | T63 | **DONE `55071642`** |
 | T67 library majors | `rs-t67-libs` | — | T65 | pending |
 | T66 sqlx 0.9 | `rs-t66-sqlx` | — | T67 | pending |
 | T56 CSRF + CSP + CORS `PUT` + span redaction | `rs-t56-security` | — | T67 | pending |
@@ -539,3 +539,36 @@ still UNCOMMITTED (the user is preparing the commits by hand).
   app pool, MessagePack payload + the `sessions` DDL byte-identical, `tower-sessions-sqlx-store` dropped,
   the `AS "…chrono::NaiveDateTime"` overrides deleted from **EIGHT** store files, `sqlx/time` off, and
   the `state.rs` grep-gate allow-list entry dropped (T55's sequencing note).
+
+## Resume 2026-10-22 (T65 done — the hinge is through; both dependency majors are reachable)
+
+- **T65 MERGED `55071642`** (ff into `dev-rs-local`; worktree + branch deleted).
+- **The in-tree `SessionStore` lives at `backend-rs/src/common/session_store.rs`.** `tower-sessions-sqlx-store`
+  is gone → **`sqlx 0.9` and `tower-sessions 0.15` are now reachable** (they were blocked by it: it required
+  `sqlx ^0.8` AND `tower-sessions-core ^0.14`).
+- **The on-disk format is byte-identical** — the blob is asserted byte-for-byte equal to
+  `rmp_serde::to_vec(&record)` (the previous store's exact call), the `sessions` DDL is untouched, and
+  `SHOW CREATE TABLE sessions` still matches the baseline (the runbook's step 5(d) drift gate stays green).
+- **THREE findings the plan did not anticipate** (all resolved in the PR):
+  1. **The sweeper's loop was behind a transitive FEATURE** (`tower-sessions-core/deletion-task`, enabled by
+     the store) — dropping the store dropped the feature and `main.rs` stopped compiling. Fix: declare
+     `tower-sessions-core` **directly** with the feature (the same version `tower-sessions 0.14` pins, so no
+     second core).
+  2. **The invariant became STRUCTURAL** — the old store interpolated a schema name (so it had to be
+     configured + validated + it could `panic!`); the in-tree store interpolates nothing, so the
+     `with_pool` panic, its `# Panics` contract and the CI grep gate's `state.rs` allow-list entry are all
+     **gone**. The gate now has **no allow-list** and still passes.
+  3. **`sqlx/time` was the only reason for the `AS "…chrono::NaiveDateTime"` overrides** — confirmed, and
+     the overrides are gone from **all eight** feature store files.
+- **The `.sqlx/` diff was reviewed**: 76 → 83 (60 unchanged, 16 re-keyed with **identical column
+  signatures**, 7 new). **The spec's "the 76 entries are unchanged" was wrong** and is corrected — removing
+  an override changes the SQL text, so those entries are re-keyed.
+- **`Cargo.lock` SHRANK by exactly one package**; nothing else moved and nothing was downgraded.
+- **Gates**: fmt 0 | clippy 0 | lib 69/69 (9 new store tests) | api 86/86 | prepare --check 0 | cargo deny ×3 ok.
+- **A note on the test suite's duration**: it ranged 21s → 239s across runs during this session — the cause
+  is the MACHINE (load average 5.4 from the desktop; the base commit measured 120s under the same load
+  while the branch measured 27.6s right after). A/B against the base commit under identical conditions is
+  the only reliable comparison; a single timing is not.
+- **NEXT: T67** (library majors: tower-http 0.7, tower-sessions 0.15, utoipa 6 + swagger-ui 10, argon2 0.6,
+  bcrypt 0.19, sha2 0.11, garde 0.23 — **and delete the 3 `zip` advisory ignores**) → then {T56, T66
+  (**delete the `rsa` ignore**)}.

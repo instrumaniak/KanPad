@@ -384,7 +384,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T63 dead deps | (merged, branch deleted) | — | T57 | **DONE `85f433f3`** |
 | T65 in-tree session store | (merged, branch deleted) | — | T63 | **DONE `55071642`** |
 | T67 library majors | (merged, branch deleted) | — | T65 | **DONE `a0b25543`** |
-| T66 sqlx 0.9 | `rs-t66-sqlx` | — | T67 | pending |
+| T66 sqlx 0.9 | (merged, branch deleted) | — | T67 | **DONE `afd87c0e`** |
 | T56 CSRF + CSP + CORS `PUT` + span redaction | `rs-t56-security` | — | T67 | pending |
 | T58 public-API ergonomics | `rs-t58-ergonomics` | — | T66 | pending |
 | T59 shared-kernel DRY + `/ready` in OpenAPI | `rs-t59-dry` | — | T58 | pending |
@@ -603,3 +603,15 @@ still UNCOMMITTED (the user is preparing the commits by hand).
   + **delete the `rsa` advisory ignore**) and it BLOCKS T58/T59; T56 is the security hardening (the
   `CsrfLayer` Origin check + the CSP + the span redaction) and it can run in parallel. **T69 (the frontend
   types) is needed before the pipeline can be green.** Then T58 → T59 → T60 → T61 → T62.
+
+## Resume 2026-10-22 (T66 done — the driver major is taken; the collation is pinned)
+
+- **T66 MERGED `afd87c0e`** (ff into `dev-rs-local`; worktree + branch deleted).
+- **`sqlx 0.9`**: `runtime-tokio` + `tls-rustls-ring-native-roots`, and **`mysql-rsa` is now OPT-IN and REQUIRED** (the `caching_sha2_password` handshake needs the server's RSA key on a PLAINTEXT connection — the dev/test DB; production is TLS, so the RSA path never runs there).
+- **THE COLLATION PIN** — sqlx 0.9 sends only `SET NAMES utf8mb4` and lets the SERVER pick (`utf8mb4_0900_ai_ci` on MySQL 8 — a DIFFERENT collation from this schema's `utf8mb4_unicode_ci`), so the driver version alone would have silently changed it. The pin is now **enforced at boot** (`Settings::validate` rejects a URL without it), present in the **derived** URL (so `compose.yaml`'s `DB_*`-only topology is covered), in all five URL places, and **asserted by a test** (`@@collation_connection`).
+- **`backend-rs/sqlx.toml` DELETED** — the plan assumed it would be *inert* under 0.9; it is a **HARD COMPILE ERROR** without the `sqlx-toml` feature. Deleting it is safe (its only setting IS 0.9's default).
+- **The `Migrate` trait is adopted** — `main.rs` uses `Migrate::list_applied_migrations` instead of a hand-rolled `SELECT version FROM _sqlx_migrations` (the table name is a sqlx implementation detail). `migrate info` → `applied: 2 pending: 0`.
+- **The `.sqlx/` diff was reviewed**: 45 modified, **0 added/removed**, and **NO Rust type changed** (same SQL, same column signatures, same nullability — the diffs are sqlx 0.9 ADDING `collation`+`origin` metadata).
+- **The `rsa` advisory ignore STAYS** — the plan was wrong: RUSTSEC-2023-0071 has **NO patched version** (it covers `rsa` 0.10.0-rc too). The reason was rewritten to state the real exposure.
+- **Gates**: fmt 0 | clippy 0 | lib 69/69 | api 92/92 | prepare --check 0 | cargo deny ×3 ok | the three grep gates green.
+- **NEXT**: **T56** (the security hardening — the `CsrfLayer` Origin check + the CSP + the span redaction) and **T58** (the public-API ergonomics — unblocked now that T66 is in) can run in parallel; **T69** (the frontend's 15 type errors) is needed before the pipeline can be green. Then T59 → T60 → T61 → T62.

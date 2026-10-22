@@ -134,9 +134,11 @@ cap, no memory hardness). Folded into `10-architecture.md` pins and
 
 ## A5. Naming: `APP_ENV` + `kanpad.sid` (no Node artifacts)
 
-> Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
-> folded into `10-architecture.md` (Config + Sessions) by T54. Do not
-> implement from the MUSTs below.
+> Rationale record. **IMPLEMENTED (2026-10-22) — landed in T54:** the
+> `APP_ENV` key + the `NODE_ENV`-present boot failure + the `kanpad.sid` /
+> `__Host-kanpad.sid` cookie names are in the tree, and folded into
+> `10-architecture.md` (Config + Sessions). The MUSTs below are the record of
+> *why*, not open work.
 
 The rewrite's own constitution (`00-overview.md` Amendment 10) forbids
 carrying NestJS-isms into `backend-rs/`. Two survived the first pass because

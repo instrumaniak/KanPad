@@ -54,7 +54,7 @@ DB_PORT=3306
 DB_USERNAME=user
 DB_PASSWORD=<staging password>
 DB_NAME=kanpad_rs_dev
-NODE_ENV=development
+APP_ENV=development
 SESSION_SECRET=<32+ hex chars — set a FRESH value at cutover>
 ```
 
@@ -633,14 +633,21 @@ curl -s -i -X POST http://127.0.0.1:3001/api/v1/auth/login \
   -c /tmp/kanpad-cookies.txt \
   -d '{"email":"<your prod email>","password":"<your prod password>"}'
 # ✓ 200 with {"data":{"id":…,"email":…,"role":…}}
-# ✓ set-cookie: connect.sid=…; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400
+# ✓ set-cookie: kanpad.sid=…; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400
 ```
 
-> **The cookie is `connect.sid`, not `__Host-connect.sid`,** as long as
-> `NODE_ENV=development` (the staging setting in step 0). The `__Host-` prefix is
-> used only when `NODE_ENV=production` — and it must be, because a `__Host-`
+> **The cookie is `kanpad.sid`, not `__Host-kanpad.sid`,** as long as
+> `APP_ENV=development` (the staging setting in step 0). The `__Host-` prefix is
+> used only when `APP_ENV=production` — and it must be, because a `__Host-`
 > cookie is required to carry `Secure`, which browsers only accept over HTTPS.
 > Staging serves plain HTTP, so the dev cookie name is the correct one.
+>
+> **The service refuses to start if `NODE_ENV` is set.** `APP_ENV` replaced the
+> Node.js `NODE_ENV` (T54), and boot **fails** rather than silently defaulting
+> to `development` — a stale export would otherwise drop `Secure`, the
+> `__Host-` prefix and the prod CORS default. If the service refuses to boot
+> with *"NODE_ENV is not used by backend-rs"*, unset `NODE_ENV` and set
+> `APP_ENV` instead.
 
 Signed in, spot-check the migrated data (use the cookie jar you just saved):
 
@@ -770,7 +777,7 @@ $MYSQL -e "DROP DATABASE kanpad_nest_restore;
 - Step 8: `cargo run serve` logged `backend-rs listening … port=3001`; `/health`
   and `/ready` returned 200 with `served-by: rust`; an unauthenticated
   `/api/v1/boards` returned 401. Login returned 200 `{"data":{…}}` with a
-  `connect.sid` cookie, and the logged-in user's bcrypt hash was **upgraded in
+  `kanpad.sid` cookie, and the logged-in user's bcrypt hash was **upgraded in
   place to `$argon2id$v=19$`** while the other user stayed `$2b$10$`. The session
   row landed in `kanpad_rs_dev.sessions` (the app DB), confirming the 2026-10-19
   store change. `/api/v1/boards` listed the imported boards and `/api/v1/boards/1`

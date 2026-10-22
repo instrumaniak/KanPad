@@ -55,7 +55,10 @@ services:
       DB_USERNAME: ${DB_USERNAME:-root}
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: ${DB_NAME:-kanbanflow_dev}
-      NODE_ENV: ${NODE_ENV:-development}
+      # APP_ENV, not NODE_ENV: the Rust service is not a Node service (T54).
+      # The Nest service above keeps NODE_ENV — separate container, separate
+      # runtime. Passing NODE_ENV to the Rust service now FAILS its boot.
+      APP_ENV: ${APP_ENV:-development}
 
   frontend:
     build:

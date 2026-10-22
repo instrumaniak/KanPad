@@ -14,7 +14,7 @@ redirects), then removed.
 
 | Area | Nest today | Rust rewrite | Keep or break |
 |---|---|---|---|
-| Transport | cookie session (`connect.sid`, 24h, `credentials:include`) | same mechanism (`tower-sessions` 0.14 + sqlx store, sliding 24h, `credentials:include`) | **keep** |
+| Transport | cookie session (`connect.sid`, 24h, `credentials:include`) | same mechanism (`tower-sessions` 0.14 + sqlx store, sliding 24h, `credentials:include`), cookie renamed to `kanpad.sid` (`__Host-kanpad.sid` in production) — the Express-derived `connect.sid` name is not carried over | **keep mechanism, break name** |
 | Error shape | `{statusCode, message: string\|string[], error}` | RFC9457 `application/problem+json {type, title, status, detail, instance, errors?}` (stable `type` URIs, always-set `instance`) | **break (adopted)** |
 | Validation status | 400 (per-endpoint pipes; register/login unvalidated) | 400 everywhere, with `errors[]` field→message map | **keep status, break shape** |
 | Lists | `{data, total = data.length}` (projects/boards) / bare `{data: []}` (rest) | `Page<T> = {data, page, limit, total}` via count query, `?page&limit` strict-400 (`page ≥ 1`, `1 ≤ limit ≤ 100`, no clamp) | **break (adopted)** |
@@ -163,6 +163,17 @@ here).
   accepted one release); bad credentials → 401 same shape (no enumeration).
 - `served-by: nest|rust` response-header plan: implemented in T05, asserted
   in T51 (cutover detection).
+- **Session cookie name (T54):** `kanpad.sid` (dev/test) /
+  `__Host-kanpad.sid` (production). `connect.sid` was express-session's
+  default, copied from the Nest source (`backend/src/main.ts:39`) — a Rust
+  service must not name its session cookie after an Express middleware. The
+  cookie **attributes are unchanged** (`HttpOnly`, `SameSite=Lax`, `Path=/`,
+  `Secure` in production, never a `Domain`), the `__Host-` invariant is
+  unchanged (production = `Secure` + `Path=/` + no `Domain`), and the
+  frontend never names the cookie (it uses `credentials: 'include'`), so
+  **no client change is required** — only the `Set-Cookie` name on the wire.
+  A pre-cutover `connect.sid` cookie is not accepted (new name + new
+  `SESSION_SECRET` ⇒ force re-login, as in the cutover row of §1).
 
 ## 11. GDPR erasure runbook
 

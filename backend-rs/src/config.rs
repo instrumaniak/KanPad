@@ -2,10 +2,19 @@
 //!
 //! Precedence: real environment > `.env` > defaults. [`Settings::load`]
 //! validates everything fail-fast (secret length in bytes, port range,
-//! `NODE_ENV` whitelist, `HASH_COST` prod floor, `DATABASE_URL` charset +
+//! `APP_ENV` whitelist, `HASH_COST` prod floor, `DATABASE_URL` charset +
 //! database-name identifier rule, CORS allowlist shape) and never logs
 //! secrets — [`Settings`] implements a redacting
 //! [`fmt::Debug`](std::fmt::Debug).
+//!
+//! **The runtime-mode key is `APP_ENV`, not `NODE_ENV`** (`54` A1). `NODE_ENV`
+//! is a Node.js/npm convention with no meaning in a Rust binary. Boot
+//! **fails** when `NODE_ENV` is present in the environment (see
+//! [`ConfigError::LegacyNodeEnv`]): `APP_ENV` defaults to `development`, so a
+//! stale deployment that still exports `NODE_ENV=production` and has not yet
+//! added `APP_ENV` would otherwise boot as `development` — silently losing
+//! `Secure` cookies, the `__Host-` prefix, prod HSTS and the deny-all CORS
+//! default. A rename must never fail open.
 
 use std::fmt;
 
@@ -25,12 +34,32 @@ pub const REQUIRED_DB_CHARSET: &str = "charset=utf8mb4";
 /// Dev-only default CORS allowlist (config-driven for prod).
 pub const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 
+/// Session cookie base name (dev/test). Production prefixes it with
+/// [`HOST_COOKIE_PREFIX`].
+///
+/// `connect.sid` was **express-session's default**, copied verbatim from the
+/// Nest source (`backend/src/main.ts:39`). A Rust service must not name its
+/// session cookie after an Express middleware — the name misidentifies the
+/// implementation to every operator, browser extension and log scraper that
+/// keys on cookie names. (`54` A2.)
+pub const SESSION_COOKIE_NAME: &str = "kanpad.sid";
+
+/// RFC 6265bis `__Host-` prefix — **production only**.
+///
+/// The prefix is load-bearing hardening: it makes the cookie **host-only**
+/// (no `Domain` ⇒ no subdomain fixation), it requires `Secure` (⇒ no
+/// plaintext transmission) and it requires `Path=/`. It stays
+/// environment-conditional because `__Host-` mandates `Secure`, which
+/// browsers transmit only over HTTPS — the plain-HTTP staging box in
+/// `docs/data-migration-live.md` therefore needs the un-prefixed name.
+pub const HOST_COOKIE_PREFIX: &str = "__Host-";
+
 /// Application settings. Precedence: real environment > `.env` > defaults.
 #[derive(Clone, Deserialize)]
 pub struct Settings {
     /// One of `development|test|production`.
-    #[serde(default = "default_node_env")]
-    pub node_env: String,
+    #[serde(default = "default_app_env")]
+    pub app_env: String,
     /// Serve port. `0` is rejected.
     #[serde(default = "default_port")]
     pub port: u16,
@@ -78,7 +107,7 @@ pub struct Settings {
     pub trusted_proxies: String,
 }
 
-fn default_node_env() -> String {
+fn default_app_env() -> String {
     "development".to_string()
 }
 
@@ -132,7 +161,7 @@ impl fmt::Debug for Settings {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Settings")
-            .field("node_env", &self.node_env)
+            .field("app_env", &self.app_env)
             .field("port", &self.port)
             .field("hash_cost", &self.hash_cost)
             .field("session_secret", &"[redacted]")
@@ -156,11 +185,11 @@ impl fmt::Debug for Settings {
 
 /// Test/dev convenience defaults (never used at boot — `main` always calls
 /// [`Settings::load`]). Keeps integration-test construction one line:
-/// `Settings { node_env: "test".into(), ..Default::default() }`.
+/// `Settings { app_env: "test".into(), ..Default::default() }`.
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            node_env: "test".to_string(),
+            app_env: "test".to_string(),
             port: 3001,
             hash_cost: 1,
             session_secret: SecretString::new(
@@ -190,6 +219,19 @@ pub enum ConfigError {
     /// Validation failure with an actionable message.
     #[error("{0}")]
     Invalid(String),
+    /// The Node.js-only `NODE_ENV` was found in the environment.
+    ///
+    /// `NODE_ENV` is a Node.js/npm convention; `backend-rs` is a Rust
+    /// service and uses [`APP_ENV`](Settings::app_env). Boot fails rather
+    /// than ignoring it, because `APP_ENV` defaults to `development` — a
+    /// stale deployment would otherwise boot as `development` and silently
+    /// lose `Secure` cookies, the `__Host-` prefix, prod HSTS and the
+    /// deny-all CORS default.
+    #[error(
+        "configuration error: NODE_ENV is not used by backend-rs (this is a Rust service, not a \
+         Node one) — set APP_ENV=development|test|production instead"
+    )]
+    LegacyNodeEnv,
 }
 
 impl Settings {
@@ -207,7 +249,15 @@ impl Settings {
     /// which makes a "this must fail to boot" assertion pass for the wrong
     /// reason. Boot keeps using [`Settings::load`]; tests that assert on a
     /// missing/invalid key use this so ambient `.env` cannot leak in.
+    ///
+    /// **The legacy-`NODE_ENV` check runs FIRST**, before `envy` reads
+    /// `APP_ENV`: if `NODE_ENV` were merely ignored, `APP_ENV`'s
+    /// `development` default would silently apply to a deployment that meant
+    /// `production` (`54` A1 fail-fast rule).
     pub fn load_from_env() -> Result<Self, ConfigError> {
+        if std::env::var_os("NODE_ENV").is_some() {
+            return Err(ConfigError::LegacyNodeEnv);
+        }
         let settings: Settings = envy::from_env()?;
         settings.validate()?;
         Ok(settings)
@@ -257,34 +307,37 @@ impl Settings {
     /// Production predicate (secure cookies, `__Host-` prefix, HSTS, CORS
     /// deny-all default).
     pub fn is_production(&self) -> bool {
-        self.node_env == "production"
+        self.app_env == "production"
     }
 
     /// Session cookie name by env (`10-architecture.md` Sessions/Cookie):
-    /// `connect.sid` in dev/test, `__Host-connect.sid` in production (where
+    /// `kanpad.sid` in dev/test, `__Host-kanpad.sid` in production (where
     /// it MUST pair with `Secure + Path=/` and no `Domain` — enforced by the
-    /// `SessionManagerLayer` wiring in `lib.rs`, asserted per env in T11).
+    /// `SessionManagerLayer` wiring in `lib.rs`, asserted per env in T11/T54).
+    ///
+    /// The name is **app-scoped, not framework-scoped**: `connect.sid` was
+    /// express-session's default and is retired (`54` A2).
     pub fn session_cookie_name(&self) -> String {
         if self.is_production() {
-            "__Host-connect.sid".to_string()
+            format!("{HOST_COOKIE_PREFIX}{SESSION_COOKIE_NAME}")
         } else {
-            "connect.sid".to_string()
+            SESSION_COOKIE_NAME.to_string()
         }
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
-        match self.node_env.as_str() {
+        match self.app_env.as_str() {
             "development" | "test" | "production" => {}
             other => {
                 return Err(ConfigError::Invalid(format!(
-                    "NODE_ENV must be one of development|test|production, got {other:?}"
+                    "APP_ENV must be one of development|test|production, got {other:?}"
                 )));
             }
         }
         if self.port == 0 {
             return Err(ConfigError::Invalid("PORT must be non-zero".to_string()));
         }
-        if self.node_env == "production" && self.hash_cost < 2 {
+        if self.app_env == "production" && self.hash_cost < 2 {
             return Err(ConfigError::Invalid(
                 "HASH_COST must be >= 2 in production".to_string(),
             ));
@@ -356,6 +409,9 @@ mod tests {
     /// ambient process env (CI `DATABASE_URL`, local `PORT`, …) cannot leak
     /// in; dropped guards restore the previous values.
     const SETTINGS_KEYS: &[&str] = &[
+        "APP_ENV",
+        // The legacy Node.js key is listed so the harness CLEARS it by default
+        // (an ambient NODE_ENV in a developer shell would fail every test).
         "NODE_ENV",
         "PORT",
         "HASH_COST",
@@ -374,7 +430,7 @@ mod tests {
     ];
 
     const BASE_VARS: &[(&str, &str)] = &[
-        ("NODE_ENV", "test"),
+        ("APP_ENV", "test"),
         ("PORT", "3001"),
         ("HASH_COST", "1"),
         (
@@ -455,7 +511,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         // Production with HASH_COST=1 must fail boot.
         {
-            let vars = with_overrides(&[("NODE_ENV", "production"), ("HASH_COST", "1")]);
+            let vars = with_overrides(&[("APP_ENV", "production"), ("HASH_COST", "1")]);
             let _env = SavedEnv::set(&vars);
             let err = Settings::load_from_env().expect_err("production HASH_COST=1 must fail boot");
             assert!(
@@ -465,7 +521,7 @@ mod tests {
         }
         // Tests pin t=1 and must load outside production.
         {
-            let vars = with_overrides(&[("NODE_ENV", "test"), ("HASH_COST", "1")]);
+            let vars = with_overrides(&[("APP_ENV", "test"), ("HASH_COST", "1")]);
             let _env = SavedEnv::set(&vars);
             let settings = Settings::load_from_env().expect("test HASH_COST=1 must load");
             assert_eq!(settings.hash_cost, 1);
@@ -504,28 +560,86 @@ mod tests {
         Settings::load_from_env().expect("32-byte SESSION_SECRET must load");
     }
 
+    /// AC (T54, `54` A1): the legacy Node.js `NODE_ENV` in the environment
+    /// must **fail the boot** — never be silently ignored. `APP_ENV` defaults
+    /// to `development`, so ignoring `NODE_ENV=production` would silently
+    /// drop `Secure` cookies, the `__Host-` prefix, prod HSTS and the
+    /// deny-all CORS default. The error must name `APP_ENV` so the operator
+    /// knows what to set.
     #[test]
-    fn node_env_whitelist_and_port_rejects() {
+    fn legacy_node_env_fails_boot_and_names_app_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for legacy in ["production", "development", ""] {
+            let mut vars = with_overrides(&[("NODE_ENV", legacy)]);
+            // `APP_ENV` deliberately left unset: the point is that the
+            // legacy key alone must abort the boot.
+            vars.retain(|(name, _)| *name != "APP_ENV");
+            let _env = SavedEnv::set(&vars);
+            let err =
+                Settings::load_from_env().expect_err("NODE_ENV in the environment must fail boot");
+            let message = err.to_string();
+            assert!(
+                message.contains("NODE_ENV"),
+                "the error must name the offending key: {message}"
+            );
+            assert!(
+                message.contains("APP_ENV"),
+                "the error must name the replacement key: {message}"
+            );
+        }
+        // The legacy key absent + APP_ENV set -> boots.
+        let vars = with_overrides(&[("APP_ENV", "test")]);
+        let _env = SavedEnv::set(&vars);
+        Settings::load_from_env().expect("APP_ENV alone must load");
+    }
+
+    /// AC (T54): the session cookie name is **app-scoped** — the Express
+    /// default `connect.sid` must never come back, in any environment.
+    #[test]
+    fn session_cookie_never_uses_the_express_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for env in ["development", "test", "production"] {
+            let vars = if env == "production" {
+                with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
+            } else {
+                with_overrides(&[("APP_ENV", env)])
+            };
+            let _env = SavedEnv::set(&vars);
+            let settings = Settings::load_from_env().expect("env must load");
+            let name = settings.session_cookie_name();
+            assert!(
+                !name.contains("connect.sid"),
+                "env {env} must not emit the Express cookie name: {name}"
+            );
+            assert!(
+                name.ends_with(SESSION_COOKIE_NAME),
+                "env {env} must use the app-scoped cookie name: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_env_whitelist_and_port_rejects() {
         let _guard = ENV_LOCK.lock().unwrap();
         for bad_env in ["prod", "Production", "staging", ""] {
-            let vars = with_overrides(&[("NODE_ENV", bad_env)]);
+            let vars = with_overrides(&[("APP_ENV", bad_env)]);
             let _env = SavedEnv::set(&vars);
-            let err = Settings::load_from_env().expect_err("bad NODE_ENV must fail boot");
+            let err = Settings::load_from_env().expect_err("bad APP_ENV must fail boot");
             assert!(
-                err.to_string().contains("NODE_ENV"),
+                err.to_string().contains("APP_ENV"),
                 "unexpected error for {bad_env:?}: {err}"
             );
         }
         for good_env in ["development", "test"] {
-            let vars = with_overrides(&[("NODE_ENV", good_env)]);
+            let vars = with_overrides(&[("APP_ENV", good_env)]);
             let _env = SavedEnv::set(&vars);
-            Settings::load_from_env().expect("whitelisted NODE_ENV must load");
+            Settings::load_from_env().expect("whitelisted APP_ENV must load");
         }
         // Production needs HASH_COST>=2 to get past the cost floor.
         {
-            let vars = with_overrides(&[("NODE_ENV", "production"), ("HASH_COST", "2")]);
+            let vars = with_overrides(&[("APP_ENV", "production"), ("HASH_COST", "2")]);
             let _env = SavedEnv::set(&vars);
-            Settings::load_from_env().expect("production NODE_ENV must load");
+            Settings::load_from_env().expect("production APP_ENV must load");
         }
         let vars = with_overrides(&[("PORT", "0")]);
         let _env = SavedEnv::set(&vars);
@@ -627,7 +741,7 @@ mod tests {
         // Prod + empty allowlist fails closed (HASH_COST=2 to isolate the CORS gate).
         {
             let vars = with_overrides(&[
-                ("NODE_ENV", "production"),
+                ("APP_ENV", "production"),
                 ("HASH_COST", "2"),
                 ("CORS_ORIGINS", "   "),
             ]);
@@ -713,22 +827,22 @@ mod tests {
         settings
             .validate()
             .expect("Default test settings must validate");
-        assert_eq!(settings.node_env, "test");
+        assert_eq!(settings.app_env, "test");
     }
 
     #[test]
     fn session_cookie_name_follows_env() {
         let _guard = ENV_LOCK.lock().unwrap();
         for (env, name) in [
-            ("development", "connect.sid"),
-            ("test", "connect.sid"),
-            ("production", "__Host-connect.sid"),
+            ("development", "kanpad.sid"),
+            ("test", "kanpad.sid"),
+            ("production", "__Host-kanpad.sid"),
         ] {
             // Production refuses HASH_COST<2 at boot, so pin t=2 there.
             let vars = if env == "production" {
-                with_overrides(&[("NODE_ENV", env), ("HASH_COST", "2")])
+                with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
             } else {
-                with_overrides(&[("NODE_ENV", env)])
+                with_overrides(&[("APP_ENV", env)])
             };
             let _env = SavedEnv::set(&vars);
             let settings = Settings::load_from_env().expect("env must load");
@@ -737,8 +851,8 @@ mod tests {
         }
         // Struct-level (no env): same rule.
         let mut settings = Settings::default();
-        assert_eq!(settings.session_cookie_name(), "connect.sid");
-        settings.node_env = "production".to_string();
-        assert_eq!(settings.session_cookie_name(), "__Host-connect.sid");
+        assert_eq!(settings.session_cookie_name(), "kanpad.sid");
+        settings.app_env = "production".to_string();
+        assert_eq!(settings.session_cookie_name(), "__Host-kanpad.sid");
     }
 }

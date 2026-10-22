@@ -131,10 +131,10 @@ pub const PROBLEM_JSON: &str = "application/problem+json";
 /// Base URI of the problem-type slugs asserted by [`assert_problem`].
 pub const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
 
-/// Test settings: `NODE_ENV=test`, minimal Argon2 cost for speed.
+/// Test settings: `APP_ENV=test`, minimal Argon2 cost for speed.
 pub fn test_settings() -> Settings {
     Settings {
-        node_env: "test".to_string(),
+        app_env: "test".to_string(),
         hash_cost: 1,
         port: 3001,
         // T05 added Settings fields with `Default` (compile-compat only).
@@ -165,7 +165,7 @@ pub fn app_on_pool(pool: &MySqlPool) -> Router {
 }
 
 /// [`app_on_pool`] with a settings override — for suites that boot the app
-/// with one flag flipped (registration gate, `SESSION_SECRET`, `NODE_ENV`).
+/// with one flag flipped (registration gate, `SESSION_SECRET`, `APP_ENV`).
 /// The session store still follows the pool's database, so overrides never
 /// cost a suite its store wiring.
 pub fn app_on_pool_with(pool: &MySqlPool, settings: Settings) -> Router {

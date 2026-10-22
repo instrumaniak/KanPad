@@ -369,7 +369,7 @@ jobs:
           set -euo pipefail
           docker run -d --name kanpad-rust-ci --network host \
             -e PORT=3001 \
-            -e NODE_ENV=test \
+            -e APP_ENV=test \
             -e SESSION_SECRET=ci-test-secret-that-is-longer-than-32-bytes \
             -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4' \
             kanpad-rust:ci

@@ -133,8 +133,8 @@ pub fn create_app(state: AppState) -> Router {
     // Versioned routers + deprecated alias (same handlers, NOT redirects).
     let router = mount_versioned(router, v1);
     // [8] session management, innermost of the shared stack (closest to
-    // handlers). Cookie hardening (T11): env cookie name (`connect.sid` /
-    // `__Host-`), HMAC-signed with `SESSION_SECRET` (a wrong/pre-cutover
+    // handlers). Cookie hardening (T11): env cookie name (`kanpad.sid` /
+    // `__Host-kanpad.sid`), HMAC-signed with `SESSION_SECRET` (a wrong/pre-cutover
     // secret fails verification → anonymous → 401, the force-re-login
     // proof), sliding 24 h inactivity expiry, `HttpOnly` + `SameSite=Lax` +
     // `Path=/`, `Secure` in production only, never a `Domain`.

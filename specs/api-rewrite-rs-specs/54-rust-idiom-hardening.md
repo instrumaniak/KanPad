@@ -1,11 +1,20 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status: PLAN ONLY — nothing in this file is implemented yet.** The tree
+> **Status: PLAN ONLY — nothing in this file is implemented yet.** *(except
+> T54, see below.)* The tree
 > still has `NODE_ENV` + `connect.sid`, the CI workflow still lives at
 > `backend-rs/.github/workflows/` (so it has still never run), the repo's own
 > `unwrap`/`expect` grep gate still fails on three sites, and `allow_methods`
 > still omits `PUT`. This file + `50-tasks.md` Phase 7 are the **work order**;
 > executors implement T54–T67 and flip each AC as it lands.
+>
+> **Progress (2026-10-22): T54 LANDED** — the naming amendments (Part A:
+> `APP_ENV` + the `NODE_ENV`-present boot failure + the `kanpad.sid` /
+> `__Host-kanpad.sid` cookie names) are in the tree. Everything else in this
+> file is still PLAN ONLY: the CI workflow still lives at
+> `backend-rs/.github/workflows/` (so it has still never run), the repo's own
+> `unwrap`/`expect` grep gate still fails on three sites, and `allow_methods`
+> still omits `PUT`.
 >
 > **Relationship to the other spec files:** this file records *why* the naming
 > amendments (Part A) and the quality-baseline tasks (Part B) exist. The

@@ -26,7 +26,7 @@
 //! id-set shrinks by exactly the logged-out row), me 200 `{data:{id,email,role}}` else 401, me re-lookup
 //! (deleted -> 401, demoted -> 403 + rotation), expired session row (past
 //! TIMESTAMP) -> 401, wrong `SESSION_SECRET` cookie -> 401 (force re-login),
-//! cookie matrix dev (`connect.sid`, no Secure) vs prod (`__Host-`,
+//! cookie matrix dev (`kanpad.sid`, no Secure) vs prod (`__Host-kanpad.sid`,
 //! Secure+HttpOnly+SameSite=Lax+Path=/, no Domain), deprecated `/api/*`
 //! alias serves the same handlers.
 
@@ -43,15 +43,15 @@ use super::helpers::{app_on_pool_with, assert_problem, cookie_jar, json_of, send
 
 /// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
 /// `create_app` never spawns one), with session-secret / env overrides.
-fn app_with_env(pool: &MySqlPool, session_secret: Option<&str>, node_env: Option<&str>) -> Router {
+fn app_with_env(pool: &MySqlPool, session_secret: Option<&str>, app_env: Option<&str>) -> Router {
     let mut settings = Settings::default();
     if let Some(secret) = session_secret {
         settings.session_secret = SecretString::new(secret.to_string().into_boxed_str());
     }
-    if let Some(env) = node_env {
-        settings.node_env = env.to_string();
+    if let Some(env) = app_env {
+        settings.app_env = env.to_string();
     }
-    if settings.node_env == "production" {
+    if settings.app_env == "production" {
         settings.cors_origins = "https://app.example.com".to_string();
     }
     app_on_pool_with(pool, settings)
@@ -449,7 +449,7 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     let (status, _, bytes) = send(app(), get("/api/auth/me", Some(&alias_jar))).await;
     assert_eq!(status, StatusCode::OK, "alias me: {}", json_of(&bytes));
 
-    // 8. Dev/test cookie matrix: `connect.sid`, HttpOnly + SameSite=Lax +
+    // 8. Dev/test cookie matrix: `kanpad.sid`, HttpOnly + SameSite=Lax +
     //    Path=/, no Secure, no Domain, no `__Host-` prefix.
     let raw_dev = {
         let (_, headers, _) = send(
@@ -465,8 +465,13 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         raw_set_cookies(&headers)
     };
     assert!(
-        raw_dev.contains("connect.sid="),
+        raw_dev.contains("kanpad.sid="),
         "dev cookie name: {raw_dev}"
+    );
+    // Regression guard (T54): the Express default must never come back.
+    assert!(
+        !raw_dev.contains("connect.sid"),
+        "dev must not emit the Express cookie name: {raw_dev}"
     );
     assert!(
         !raw_dev.contains("__Host-"),
@@ -484,7 +489,7 @@ async fn auth_session_full_flow(pool: MySqlPool) {
         "dev must not set Domain: {raw_dev}"
     );
 
-    // 9. Prod cookie matrix: `__Host-connect.sid` + Secure, still
+    // 9. Prod cookie matrix: `__Host-kanpad.sid` + Secure, still
     //    HttpOnly + SameSite=Lax + Path=/, no Domain.
     let prod = app_with_env(&pool, None, Some("production"));
     let (status, headers, bytes) = send(
@@ -500,8 +505,13 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     assert_eq!(status, StatusCode::OK, "prod login: {}", json_of(&bytes));
     let raw_prod = raw_set_cookies(&headers);
     assert!(
-        raw_prod.contains("__Host-connect.sid="),
+        raw_prod.contains("__Host-kanpad.sid="),
         "prod cookie name: {raw_prod}"
+    );
+    // Regression guard (T54): the Express default must never come back.
+    assert!(
+        !raw_prod.contains("connect.sid"),
+        "prod must not emit the Express cookie name: {raw_prod}"
     );
     for attr in ["Secure", "HttpOnly", "SameSite=Lax", "Path=/"] {
         assert!(

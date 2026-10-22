@@ -381,7 +381,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T54 naming (`APP_ENV` + `kanpad.sid`) | (merged, branch deleted) | — | none | **DONE `8b0cef64`** |
 | T55 CI activation + lint-gate repair | (merged, branch deleted) | — | T54 | **DONE `689dc895`** |
 | T57 build & supply chain | (merged, branch deleted) | — | T55 | **DONE `98fb1ce2`** |
-| T63 dead deps | `rs-t63-deps` | — | T57 | pending |
+| T63 dead deps | (merged, branch deleted) | — | T57 | **DONE `85f433f3`** |
 | T65 in-tree session store | `rs-t65-store` | — | T63 | pending |
 | T67 library majors | `rs-t67-libs` | — | T65 | pending |
 | T66 sqlx 0.9 | `rs-t66-sqlx` | — | T67 | pending |
@@ -469,3 +469,22 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **NEXT**: T63 (drop `axum-valid` / `utoipa-axum` / `zeroize` + the 2 dead tower-http features
   — **and delete the 2 advisory ignores it owns**) → T65 (in-tree session store) → T67 (library
   majors — **delete the 3 `zip` ignores**) → {T56, T66 (**delete the `rsa` ignore**)} → …
+
+## Resume 2026-10-22 (T63 done — the dead dependency set is gone)
+
+- **T63 MERGED `85f433f3`** (ff into `dev-rs-local`; worktree + branch deleted).
+- **Removed**: `axum-valid` (0 refs — it dragged a SECOND complete axum 0.7.9 + `validator` 0.18 +
+  a second `garde` 0.20), `utoipa-axum` (0 refs), `zeroize` (only `secrecy` uses it), and the
+  tower-http `timeout` + `limit` features (both unused — the timeout is `tower`'s feature, the
+  body cap is axum's `DefaultBodyLimit`).
+- **Kept (load-bearing)**: `time` (REQUIRED by `tower_sessions::Expiry::OnInactivity`) and
+  `secrecy/serde` (`SecretString: Deserialize` for `envy`).
+- **The deny.toml ignore list SHRANK**: the `idna` + `paste` advisory ignores were DELETED with
+  their crates, and `cargo deny check advisories` is still green without them. **The remaining
+  ignores are T67's 3 × `zip` and T66's `rsa`.**
+- Evidence: `axum@0.7.9` / `axum-core@0.4.5` / `validator` → not found; `garde` → no ambiguity;
+  grep gate → 0 hits; duplicated crate names **33 → 27**; fmt 0 | clippy 0 | lib 60/60 |
+  api 86/86 | prepare --check 0 | cargo deny x3 ok.
+- **NEXT**: T65 (the hinge — the in-tree `SessionStore`; it replaces `tower-sessions-sqlx-store`
+  and is what makes `tower-sessions 0.15` + `sqlx 0.9` reachable) → T67 (library majors —
+  **delete the 3 `zip` advisory ignores**) → {T56, T66 (**delete the `rsa` ignore**)} → …

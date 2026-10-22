@@ -386,7 +386,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T67 library majors | (merged, branch deleted) | — | T65 | **DONE `a0b25543`** |
 | T66 sqlx 0.9 | (merged, branch deleted) | — | T67 | **DONE `afd87c0e`** |
 | T69 frontend types vs the snake_case contract | (merged, branch deleted) | — | T67 | **DONE `93ca7016`** |
-| T56 CSRF + CSP + span redaction | `rs-t56-security` | `wt-t56` | T67 | **IN FLIGHT** (WIP `8968143e`) |
+| T56 CSRF + CSP + span redaction | (merged, branch deleted) | — | T67 | **DONE `ddbcf43b`** |
 | T58 public-API ergonomics | `rs-t58-ergonomics` | — | T56 | pending |
 | T59 shared-kernel DRY + `/ready` in OpenAPI | `rs-t59-dry` | — | T58 | pending |
 | T60 observability (`/metrics` + JSON logs) | `rs-t60-obs` | — | T59 | pending |
@@ -641,3 +641,74 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 - **Spec/status writers:** the orchestrator is the SINGLE writer for `50-tasks.md` ACs,
   `54-rust-idiom-hardening.md`'s status table and this file. Executors must not flip ACs —
   parallel agents editing `50-tasks.md` is how the AC table drifted before.
+
+## PAUSED 2026-10-22 — T56 merged; the security hardening is in
+
+**Resume point: `dev-rs-local` @ `ddbcf43b`, working tree clean, ZERO worktrees.**
+Next task: **T58** (`rs-t58-ergonomics`, worktree `KanPad-wt/wt-t58`).
+
+### What landed this session (T54 → T56 + T69)
+
+| Task | Commit | One line |
+|---|---|---|
+| T54 | `8b0cef64` | `APP_ENV` replaces `NODE_ENV`; cookie `connect.sid` → `kanpad.sid` / `__Host-kanpad.sid` |
+| T55 | `689dc895` | CI moved to the repo root (discoverable at last) + `PUT` in `allow_methods` + the preflight guard |
+| T57 | `98fb1ce2` | edition 2024 + toolchain 1.99.1 + `deny.toml` + `[lints]` + release profile |
+| T63 | `85f433f3` | the three dead direct dependencies (`axum-valid`, `zeroize`, …) |
+| T65 | `55071642` | in-tree `SessionStore` (the hinge: `tower-sessions-sqlx-store` gone) |
+| T67 | `a0b25543` | library majors (tower-http 0.7, tower-sessions 0.15, utoipa 6, argon2 0.6, sha2 0.11) |
+| T66 | `afd87c0e` | sqlx 0.9 + the collation pin (boot-enforced + test-asserted) |
+| T68 | `0b03ea58` | the CI's first-run defect repair (`cargo audit` step deleted, session-schema assert fixed) |
+| T69 | `93ca7016` | the frontend's 15 `tsc` errors → 0 (the generated schema is the contract) |
+| **T56** | **`ddbcf43b`** | **`CsrfLayer` (Go 1.25 CrossOriginProtection) + canonical `CORS_ORIGINS` boot gate + CSP with boot-computed inline-script hashes + span redaction (46 handlers)** |
+
+### T56 verification (replayed by the orchestrator on the REBASED tree, not trusted from the report)
+
+- `cargo fmt --check` **0** | `cargo clippy --workspace --all-targets -- -D warnings -A clippy::pedantic` **0**
+- `cargo test -p backend-rs` → lib **77/77**, api **101/101**, doc 0/0 | `cargo sqlx prepare --check` **0**
+- the **four** grep gates, extracted from the workflow and executed verbatim → all **PASS**
+- `Cargo.lock` **zero diff** (`csrf` is a dependency-free feature) — the T56 contract is one feature name
+- **the CSP hash is genuinely out of band:** the fixture's inline script hashes to `sha256-QMHClxD2…` under an
+  independent `python3 hashlib.sha256` **and** is byte-identical to `frontend/index.html:12-21` (same length,
+  same digest) — so the constant in the test is a real drift gate, not the code agreeing with itself
+- red-proofs (recorded in the T56 bullet of `50-tasks.md`): re-added `instrument(skip(state))` → gate fails
+  **and** the span test prints `title`, `description` and `email`; edited fixture → hash mismatch; accepting a
+  non-canonical origin → boot succeeds; removing `.layer(csrf)` → 404 instead of 403
+
+### The one thing that is still NOT verified
+
+**The GitHub Actions pipeline has never run.** `gh` is not installed and `dev-rs-local` has no remote
+branch, so T55/T68/T62's "green on the PR" ACs stay open. Everything else in them is verified by replaying
+each step by hand. Before the first push, fix the **fourth latent red** (T62 owns it):
+
+- `backend-rs/Dockerfile:29` still does `COPY Cargo.toml Cargo.lock sqlx.toml ./` — T66 **deleted**
+  `sqlx.toml`, so `docker build` (and the `docker-e2e` job) fails immediately. One-line fix, but it belongs
+  to T62 so the Dockerfile has a single owner.
+
+### Next steps, in order (`50-tasks.md` Phase 7)
+
+1. **T58** public-API ergonomics — `Role`/`AppEnv` enums, `AppResult`, `#[non_exhaustive]`,
+   `AppError::Validation(Vec<FieldError>)`. Touch: `config.rs`, `error.rs`, `extract.rs`,
+   `features/auth/{routes,store,types}.rs`, `features/users/store.rs`, `common/ids.rs`.
+2. **T59** shared-kernel DRY — `common::time::format_timestamp` (9 copies → 1), `common::ownership`
+   (the empty stub becomes the real SQL owner), drop `db::with_executor`, `/ready` into `ApiDoc`
+   (+ the `schema.d.ts` regeneration in the same PR).
+3. **{T60 ∥ T61}** observability (`/metrics` on its own `METRICS_PORT`, JSON logs in prod, bounded
+   shutdown) and concurrency/pool tuning. They touch `config.rs` in different regions — a real
+   conflict is unlikely but rebase one at a time.
+4. **T62** coverage gate + CI pins + Docker hardening (**including the `sqlx.toml` Dockerfile red**).
+
+### Working rules that this session proved the hard way
+
+- **ONE backend subagent at a time.** Two in parallel contend for the shared cargo target and hit the free
+  model's rate limits; both died mid-task twice (first "model unavailable", then "insufficient funds" on the
+  paid sibling). Always **WIP-commit before re-dispatch** — the take-over pattern recovered ~15 minutes of
+  work twice, with zero rework.
+- **Free models only:** `opencode/deepseek-v4.1-flash-free`. The configured default
+  (`minimax-m3.1-flash-free`) is **gone from the provider catalogue**, so every dispatch MUST pass
+  `model:` explicitly or it fails instantly.
+- **The orchestrator is the single writer** for `50-tasks.md` ACs, `54`'s status table and this file.
+  Executors are told not to flip ACs — parallel agents editing the AC table is how it drifted before.
+- **Rebase before merge, then re-verify on the rebased tree.** T56 was based on `50a59ef8`; T69 landed in
+  between. The rebase was clean (disjoint halves) and the full gate set was re-run afterwards — the merge
+  commit is the tree that was actually tested, not the branch that was reported.

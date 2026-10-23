@@ -712,3 +712,33 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
 - **Rebase before merge, then re-verify on the rebased tree.** T56 was based on `50a59ef8`; T69 landed in
   between. The rebase was clean (disjoint halves) and the full gate set was re-run afterwards — the merge
   commit is the tree that was actually tested, not the branch that was reported.
+
+## Resume 2026-10-23 — `gh` installed; the pipeline HAS run (T70 fixes its red)
+
+- **`gh` is installed and authenticated** (2.103.0, account `instrumaniak`, keyring, ssh protocol,
+  scopes `repo`/`read:org`). That immediately falsified a claim in this file: **the pipeline is not
+  "never run" — it has run twice on `dev-rs`, both `failure`**:
+  `39795598592` (2026-10-22T14:25Z) and `39817195098` (16:49Z). `dev-rs` == `origin/dev-rs` ==
+  `dev-rs-local` == `396b2d8b`, and the workflow is registered (`backend-rs CI`, id `392991536`).
+- **T70 DONE `7800985c`** (NOT pushed — the user asked for a local commit only): the clippy step now
+  carries `SQLX_OFFLINE: "true"`. Both runs died at step 2 with 90 × `1146 Table 'kanpad_ci.X' doesn't
+  exist` because `clippy` expands the 83 `query!` macros **before** `migrate run` (step 5) and the job
+  had no `SQLX_OFFLINE`. Red/green reproduced locally on an empty DB (90 × 1146, exit 101 → exit 0).
+  Because `web: needs: [backend]` and `docker-e2e: needs: [backend, web]`, **2 of 3 jobs have still
+  never executed** — the frontend gates and the Docker build remain unproven.
+- **PREDICTED NEXT RED (do not chase it before T62):** once clippy is green, `docker-e2e` should fail at
+  `backend-rs/Dockerfile:29` — `COPY Cargo.toml Cargo.lock sqlx.toml ./` for a file **T66 deleted**.
+  T62 owns it (single Dockerfile owner), together with the `.dockerignore`, `HEALTHCHECK`, digest pins
+  and the coverage gate.
+- **Pushing `dev-rs-local`/`dev-rs` is a no-op until the T70 commit is on the pushed ref** — the two
+  existing runs are red at the old commit. `gh run watch` is the loop.
+- **Gates re-verified today on `396b2d8b` + T70** (test DB `kanpad-rs-testdb` restarted and re-migrated,
+  tmpfs → `applied: 2 pending: 0`): `fmt` 0 | `clippy -D warnings -A clippy::pedantic` 0 | lib **77/77** |
+  api **101/101** | `sqlx prepare --check` 0 | `tsc --noEmit` 0 | `gen:api --check` up to date |
+  vitest **723/723 (77 files)** | the four grep gates OK. **Progress: 52/57 deliverables ≈ 91%**
+  (Phase 7: 11/15).
+- **NEXT TASK: T58** (`public-API ergonomics`: `AppEnv`/`Role` enums, `AppResult`,
+  `#[non_exhaustive]`, `AppError::Validation(Vec<FieldError>)`). Worktree `KanPad-wt/wt-t58`,
+  branch `rs-t58-ergonomics`. Then T59 → {T60 ∥ T61, one at a time} → T62.
+  **`src/common/time.rs` does not exist yet, `ownership.rs` is still a 1-line stub, `format_timestamp`
+  is still duplicated 9× — that is T59's whole point, do not "tidy" it during T58.**

@@ -5,11 +5,17 @@ use std::time::Duration;
 
 use sqlx::mysql::MySqlPoolOptions;
 
-/// Canonical pool defaults per 10-architecture.md DB pool.
-pub fn pool_options() -> MySqlPoolOptions {
+use crate::config::Settings;
+
+/// Canonical pool defaults per 10-architecture.md DB pool, with the two
+/// connection counts env-driven: `DB_MAX_CONNECTIONS` (default 10) and
+/// `DB_MIN_CONNECTIONS` (default 1) — a production server's
+/// `max_connections` is not knowable at build time. Validated in
+/// `Settings::validate` (max >= 1, min <= max).
+pub fn pool_options(settings: &Settings) -> MySqlPoolOptions {
     MySqlPoolOptions::new()
-        .max_connections(10)
-        .min_connections(1)
+        .max_connections(settings.db_max_connections)
+        .min_connections(settings.db_min_connections)
         .acquire_timeout(Duration::from_secs(5))
         .idle_timeout(Some(Duration::from_secs(600)))
         .max_lifetime(Some(Duration::from_secs(30 * 60)))
@@ -49,6 +55,23 @@ pub fn is_valid_db_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::is_valid_db_name;
+    use crate::config::Settings;
+
+    #[test]
+    fn pool_options_honour_settings() {
+        let settings = Settings {
+            db_max_connections: 3,
+            db_min_connections: 2,
+            ..Settings::default()
+        };
+        let options = super::pool_options(&settings);
+        assert_eq!(options.get_max_connections(), 3);
+        assert_eq!(options.get_min_connections(), 2);
+
+        let defaults = super::pool_options(&Settings::default());
+        assert_eq!(defaults.get_max_connections(), 10, "default max unchanged");
+        assert_eq!(defaults.get_min_connections(), 1, "default min unchanged");
+    }
 
     #[test]
     fn accepts_identifiers_the_store_accepts() {

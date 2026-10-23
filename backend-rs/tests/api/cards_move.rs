@@ -1,8 +1,12 @@
 //! `PATCH /api/v1/cards/:id` move/reorder + fuzz (T24b).
 //!
-//! Single `#[sqlx::test]` setup on purpose (mirrors T24a): all scenarios run
-//! sequentially in one test with distinct emails. Registers owner + intruder
-//! via `POST /api/v1/auth/register` (real Argon2id hashes, live cookie jars)
+//! The reorder/fuzz flow is ONE `#[sqlx::test]` setup on purpose (mirrors
+//! T24a): all of its scenarios run sequentially in one test with distinct
+//! emails. Two ADDITIONAL per-test-DB fault-injection tests cover T61: an
+//! injected `1213` (deadlock) and an injected `1205` (lock wait, SQLSTATE
+//! `HY000`) must each be retried to `200`, and a performance_schema probe
+//! proves the move tx ran at READ COMMITTED. Registers owner + intruder via
+//! `POST /api/v1/auth/register` (real Argon2id hashes, live cookie jars)
 //! and creates boards via the API; cards are seeded via direct SQL.
 //!
 //! NO session wipe here: the `sessions` store table lives in THIS test's own
@@ -796,4 +800,231 @@ async fn cards_move_reorder_fuzz_flow(pool: MySqlPool) {
 
     // NO TEARDOWN WIPE/DROP (see module docs): the shared store must survive
     // until every suite in this process is done.
+}
+
+// ---------------------------------------------------------------------------
+// T61: transient-lock retry + isolation level, proven with ONE-SHOT faults.
+// ---------------------------------------------------------------------------
+
+/// Create one board (3 default columns) for `jar` and seed four cards
+/// (`A0..A3`) in its first column via direct SQL. Returns the column id and
+/// the card ids in position order.
+async fn seed_move_board(pool: &MySqlPool, jar: &str, name: &str) -> (i64, Vec<i64>) {
+    let (status, _, bytes) = send(
+        app_on_pool(pool),
+        authed_request(
+            "POST",
+            "/api/v1/boards",
+            Some(jar),
+            Some(json_body(&serde_json::json!({ "name": name }))),
+        ),
+    )
+    .await;
+    let created = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED, "board: {created}");
+    let column = created["data"]["columns"][0]["id"]
+        .as_i64()
+        .expect("first column id");
+    for (index, title) in ["A0", "A1", "A2", "A3"].iter().enumerate() {
+        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES (?, ?, ?)")
+            .bind(title)
+            .bind(column)
+            .bind(index as i64)
+            .execute(pool)
+            .await
+            .expect("seed card");
+    }
+    let ids = sqlx::query_scalar::<_, i64>(
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    )
+    .bind(column)
+    .fetch_all(pool)
+    .await
+    .expect("seeded card ids");
+    (column, ids)
+}
+
+/// Install a ONE-SHOT fault injector: a `BEFORE UPDATE` trigger on `cards`
+/// that records the transaction's REAL isolation level and raises `errno`
+/// once, then clears its flag.
+///
+/// Both helper tables are MyISAM ON PURPOSE: MyISAM is not transactional, so
+/// the flag stays consumed after the handler rolls the failed transaction
+/// back. On InnoDB the rollback would resurrect it and every retry would fail
+/// forever.
+///
+/// The isolation probe reads `performance_schema.events_transactions_current`
+/// rather than `@@transaction_isolation`: the latter reports the SESSION
+/// default (verified on MySQL 8.4.11 — a one-shot `SET TRANSACTION …
+/// READ COMMITTED` leaves it reading `REPEATABLE-READ`), while the
+/// performance_schema view reports the transaction's actual level.
+///
+/// Identifiers are test-local literals, never user input; MySQL cannot bind
+/// identifiers, so they are interpolated.
+async fn install_fault_injector(
+    pool: &MySqlPool,
+    fault_table: &str,
+    probe_table: &str,
+    trigger: &str,
+    sqlstate: &str,
+    errno: u16,
+) {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TABLE `{fault_table}` (`fired` TINYINT NOT NULL) ENGINE=MyISAM"
+    )))
+    .execute(pool)
+    .await
+    .expect("fault table");
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO `{fault_table}` VALUES (1)")))
+        .execute(pool)
+        .await
+        .expect("arm the one-shot fault");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TABLE `{probe_table}` (`isolation` VARCHAR(32) NOT NULL) ENGINE=MyISAM"
+    )))
+    .execute(pool)
+    .await
+    .expect("probe table");
+    // CREATE TRIGGER is NOT preparable (MySQL error 1295): `raw_sql` sends one
+    // COM_QUERY, while `query()` would go through COM_STMT_PREPARE.
+    let create = format!(
+        "CREATE TRIGGER `{trigger}` BEFORE UPDATE ON `cards` FOR EACH ROW \
+         BEGIN \
+           IF (SELECT COUNT(*) FROM `{fault_table}`) > 0 THEN \
+             INSERT INTO `{probe_table}` (`isolation`) \
+               SELECT ISOLATION_LEVEL FROM performance_schema.events_transactions_current \
+               WHERE THREAD_ID = PS_CURRENT_THREAD_ID(); \
+             DELETE FROM `{fault_table}`; \
+             SIGNAL SQLSTATE '{sqlstate}' SET MYSQL_ERRNO = {errno}, MESSAGE_TEXT = 'injected'; \
+           END IF; \
+         END"
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(create))
+        .execute(pool)
+        .await
+        .expect("fault trigger");
+}
+
+/// Remaining one-shot discharges (`0` proves the trigger fired and was
+/// consumed) and the isolation levels the trigger recorded (`1` row proves it
+/// fired exactly once).
+async fn fault_rows(pool: &MySqlPool, table: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+        "SELECT CAST(COUNT(*) AS SIGNED) FROM `{table}`"
+    )))
+        .fetch_one(pool)
+        .await
+        .expect("fault rows")
+}
+
+async fn probe_isolation(pool: &MySqlPool, table: &str) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+        "SELECT `isolation` FROM `{table}`"
+    )))
+        .fetch_all(pool)
+        .await
+        .expect("probe rows")
+}
+
+/// A real `1213` (deadlock) injected into the FIRST move attempt: the handler
+/// must roll back, retry, and return 200 — a 500 means the retry is missing.
+#[sqlx::test(migrations = "./migrations")]
+async fn transient_deadlock_1213_is_retried_at_read_committed(pool: MySqlPool) {
+    let (jar, _) = register(app_on_pool(&pool), "t61-deadlock@example.com").await;
+    let (column, cards) = seed_move_board(&pool, &jar, "T61 deadlock").await;
+    install_fault_injector(
+        &pool,
+        "t61_dl_fault",
+        "t61_dl_probe",
+        "t61_dl_trigger",
+        "40001",
+        1213,
+    )
+    .await;
+
+    // A0 0→2 runs `shift_cards_down` over positions 1..=2, so the trigger
+    // fires on the first attempt.
+    let (status, _, bytes) = send(
+        app_on_pool(&pool),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{}", cards[0]),
+            Some(&jar),
+            Some(json_body(&serde_json::json!({ "position": 2 }))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a 1213 must be retried, not surfaced as a 500: {moved}"
+    );
+    assert_eq!(
+        assert_dense(&pool, column, "after the 1213 retry").await,
+        vec![cards[1], cards[2], cards[0], cards[3]],
+        "the retried move wrote the requested order exactly once"
+    );
+    assert_eq!(
+        fault_rows(&pool, "t61_dl_fault").await,
+        0,
+        "the injected 1213 fired (one-shot consumed)"
+    );
+    assert_eq!(
+        probe_isolation(&pool, "t61_dl_probe").await,
+        vec!["READ COMMITTED".to_string()],
+        "the move tx ran at READ COMMITTED, and the trigger fired exactly once"
+    );
+}
+
+/// The retry matcher keys on the error NUMBER, so a `1205` whose SQLSTATE is
+/// `HY000` (NOT `40001`) must retry too. A SQLSTATE-only matcher would miss
+/// it and return 500. The explicit whole-tx ROLLBACK matters here: `1205`
+/// rolls back only the statement, so the tx would otherwise survive
+/// half-applied.
+#[sqlx::test(migrations = "./migrations")]
+async fn transient_lock_wait_1205_is_retried(pool: MySqlPool) {
+    let (jar, _) = register(app_on_pool(&pool), "t61-lockwait@example.com").await;
+    let (column, cards) = seed_move_board(&pool, &jar, "T61 lock wait").await;
+    install_fault_injector(
+        &pool,
+        "t61_lw_fault",
+        "t61_lw_probe",
+        "t61_lw_trigger",
+        "HY000",
+        1205,
+    )
+    .await;
+
+    let (status, _, bytes) = send(
+        app_on_pool(&pool),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{}", cards[0]),
+            Some(&jar),
+            Some(json_body(&serde_json::json!({ "position": 2 }))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a 1205 (SQLSTATE HY000) must be retried too: {moved}"
+    );
+    assert_eq!(
+        assert_dense(&pool, column, "after the 1205 retry").await,
+        vec![cards[1], cards[2], cards[0], cards[3]],
+        "the retried move wrote the requested order exactly once"
+    );
+    assert_eq!(
+        fault_rows(&pool, "t61_lw_fault").await,
+        0,
+        "the injected 1205 fired (one-shot consumed)"
+    );
+    assert_eq!(
+        probe_isolation(&pool, "t61_lw_probe").await,
+        vec!["READ COMMITTED".to_string()],
+        "the move tx ran at READ COMMITTED, and the trigger fired exactly once"
+    );
 }

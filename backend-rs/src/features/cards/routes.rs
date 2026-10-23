@@ -8,6 +8,10 @@ use axum::{
     routing::{get, post, put},
 };
 
+use std::time::Duration;
+
+use sqlx::Connection;
+
 use crate::{
     common::{
         card_summary::CardSummary,
@@ -226,12 +230,44 @@ pub async fn update_card(
     Ok(Json(load_detail(&state.pool, row).await?))
 }
 
+/// Maximum move attempts: the first try plus four transient-lock retries.
+const MOVE_MAX_ATTEMPTS: u32 = 5;
+
+/// How one move attempt finished inside its open transaction.
+enum MoveStep {
+    /// The transaction is ready to commit.
+    Ready,
+    /// The card changed columns under us; restart with fresh values.
+    Restart,
+}
+
+/// Whether an error means "the transaction lost a lock race": MySQL `1213`
+/// (deadlock) or `1205` (lock-wait timeout).
+///
+/// Matched by ERROR NUMBER, never SQLSTATE: `1213` is `40001` but `1205` is
+/// `HY000`, so a `40001`-only matcher silently misses every lock-wait
+/// timeout. sqlx's `DatabaseError::code()` returns the SQLSTATE, so the
+/// MySQL-specific `number()` is reached through a downcast.
+fn is_transient_lock_error(error: &AppError) -> bool {
+    let AppError::Db(sqlx::Error::Database(database)) = error else {
+        return false;
+    };
+    database
+        .as_error()
+        .downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+        .is_some_and(|mysql| matches!(mysql.number(), 1213 | 1205))
+}
+
 /// Move/reorder worker for [`update_card`]: set-based range `UPDATE`s + point
 /// update in a short tx (columns locked ascending, spot re-read locked, tx
 /// restarted when the card changed columns under us — see store docs).
 /// `target_column` is `None` for same-column reorders; `requested` is `None`
 /// for cross-column appends (`max + 1`). Scalar `patch` applies in the same
-/// tx after the move.
+/// tx after the move. The tx runs at `READ COMMITTED` (set before `BEGIN` —
+/// MySQL rejects the statement inside a transaction with error 1568), and
+/// transient lock errors (`1213` deadlock / `1205` lock-wait timeout) are
+/// retried up to [`MOVE_MAX_ATTEMPTS`] with a small linear backoff,
+/// explicitly rolling the whole tx back first.
 async fn move_card(
     pool: &sqlx::MySqlPool,
     user_id: i32,
@@ -243,67 +279,108 @@ async fn move_card(
     // A same-card race (the card changed columns between our read and our
     // locks) restarts the whole tx; bounded — exhaustion is unreachable in
     // practice (it needs a concurrent move of the SAME card on every try).
-    for _ in 0..5 {
-        let mut tx = pool.begin().await.map_err(AppError::Db)?;
-        let owned = fetch_card_owned(&mut *tx, user_id, id).await?;
-        let source = owned.column_id.get();
-        let target = target_column.unwrap_or(source);
-        if target != source {
-            check_column_owned(&mut *tx, user_id, target).await?;
-        }
-        // Stable lock order: `min` column first (opposite-direction moves
-        // serialize instead of deadlocking).
-        let (first, second) = if source <= target {
-            (source, target)
-        } else {
-            (target, source)
-        };
-        let first_locked = lock_cards_for_update(&mut *tx, first).await?;
-        let second_locked = if second == first {
-            Vec::new()
-        } else {
-            lock_cards_for_update(&mut *tx, second).await?
-        };
-        let (fresh_column, fresh_position) =
-            fetch_card_spot_for_update(&mut *tx, user_id, id).await?;
-        if fresh_column != source {
-            // Same-card race: the card left `source` after our read, so our
-            // locks cover the wrong column — roll back and retry with fresh
-            // values rather than writing against an unlocked column.
-            tx.rollback().await.map_err(AppError::Db)?;
-            continue;
-        }
-        if target == source {
-            let upper = i32::try_from(first_locked.len())
-                .map_err(|_| AppError::Internal(Internal))?
-                .saturating_sub(1);
-            let new_position = clamp_position(requested.unwrap_or(fresh_position), upper);
-            if new_position < fresh_position {
-                shift_cards_up(&mut *tx, target, new_position, fresh_position).await?;
-            } else if new_position > fresh_position {
-                shift_cards_down(&mut *tx, target, fresh_position, new_position).await?;
+    for attempt in 0..MOVE_MAX_ATTEMPTS {
+        // `SET TRANSACTION ISOLATION LEVEL` is rejected INSIDE a transaction
+        // (MySQL error 1568) and the `SET SESSION` variant would leak onto
+        // every later transaction on this pooled connection — so acquire the
+        // connection, scope the level to the NEXT transaction only, then
+        // `begin()`. `READ COMMITTED` greatly reduces gap-lock deadlocks; it
+        // does NOT eliminate them (MySQL §17.7.5), hence the retry below.
+        let mut connection = pool.acquire().await.map_err(AppError::Db)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *connection)
+            .await
+            .map_err(AppError::Db)?;
+        let mut tx = connection.begin().await.map_err(AppError::Db)?;
+        let step: Result<MoveStep, AppError> = async {
+            let owned = fetch_card_owned(&mut *tx, user_id, id).await?;
+            let source = owned.column_id.get();
+            let target = target_column.unwrap_or(source);
+            if target != source {
+                check_column_owned(&mut *tx, user_id, target).await?;
             }
-            point_move_card(&mut *tx, id, target, new_position).await?;
-        } else {
-            let target_count = if target == first {
-                first_locked.len()
+            // Stable lock order: `min` column first (opposite-direction moves
+            // serialize instead of deadlocking).
+            let (first, second) = if source <= target {
+                (source, target)
             } else {
-                second_locked.len()
+                (target, source)
             };
-            let target_count =
-                i32::try_from(target_count).map_err(|_| AppError::Internal(Internal))?;
-            close_card_gap(&mut *tx, source, fresh_position).await?;
-            let new_position = requested
-                .map(|position| clamp_position(position, target_count))
-                .unwrap_or(target_count);
-            // Appending (`new == M`) shifts zero rows — the same `UPDATE`
-            // covers both cases, no branch needed.
-            open_card_gap(&mut *tx, target, new_position).await?;
-            point_move_card(&mut *tx, id, target, new_position).await?;
+            let first_locked = lock_cards_for_update(&mut *tx, first).await?;
+            let second_locked = if second == first {
+                Vec::new()
+            } else {
+                lock_cards_for_update(&mut *tx, second).await?
+            };
+            let (fresh_column, fresh_position) =
+                fetch_card_spot_for_update(&mut *tx, user_id, id).await?;
+            if fresh_column != source {
+                // Same-card race: the card left `source` after our read, so our
+                // locks cover the wrong column — roll back and retry with fresh
+                // values rather than writing against an unlocked column.
+                return Ok(MoveStep::Restart);
+            }
+            if target == source {
+                let upper = i32::try_from(first_locked.len())
+                    .map_err(|_| AppError::Internal(Internal))?
+                    .saturating_sub(1);
+                let new_position = clamp_position(requested.unwrap_or(fresh_position), upper);
+                if new_position < fresh_position {
+                    shift_cards_up(&mut *tx, target, new_position, fresh_position).await?;
+                } else if new_position > fresh_position {
+                    shift_cards_down(&mut *tx, target, fresh_position, new_position).await?;
+                }
+                point_move_card(&mut *tx, id, target, new_position).await?;
+            } else {
+                let target_count = if target == first {
+                    first_locked.len()
+                } else {
+                    second_locked.len()
+                };
+                let target_count =
+                    i32::try_from(target_count).map_err(|_| AppError::Internal(Internal))?;
+                close_card_gap(&mut *tx, source, fresh_position).await?;
+                let new_position = requested
+                    .map(|position| clamp_position(position, target_count))
+                    .unwrap_or(target_count);
+                // Appending (`new == M`) shifts zero rows — the same `UPDATE`
+                // covers both cases, no branch needed.
+                open_card_gap(&mut *tx, target, new_position).await?;
+                point_move_card(&mut *tx, id, target, new_position).await?;
+            }
+            apply_card_patch(&mut *tx, id, patch).await?;
+            Ok(MoveStep::Ready)
         }
-        apply_card_patch(&mut *tx, id, patch).await?;
-        tx.commit().await.map_err(AppError::Db)?;
-        return Ok(());
+        .await;
+
+        match step {
+            Ok(MoveStep::Ready) => {
+                tx.commit().await.map_err(AppError::Db)?;
+                return Ok(());
+            }
+            Ok(MoveStep::Restart) => {
+                tx.rollback().await.map_err(AppError::Db)?;
+                continue;
+            }
+            Err(error) => {
+                // 1213 already rolled the WHOLE transaction back, but 1205
+                // rolls back only the CURRENT STATEMENT — the transaction
+                // would survive half-applied — so always ROLLBACK explicitly
+                // before deciding to retry.
+                let _ = tx.rollback().await;
+                if is_transient_lock_error(&error) && attempt + 1 < MOVE_MAX_ATTEMPTS {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MOVE_MAX_ATTEMPTS,
+                        error = %error,
+                        "retrying a card move after a transient lock error"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
+                    continue;
+                }
+                return Err(error);
+            }
+        }
     }
     Err(AppError::Internal(Internal))
 }

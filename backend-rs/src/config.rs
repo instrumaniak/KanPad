@@ -182,6 +182,14 @@ pub struct Settings {
     /// DB parts.
     #[serde(default = "default_db_name")]
     pub db_name: String,
+    /// Maximum pooled MySQL connections (`DB_MAX_CONNECTIONS`, default 10).
+    /// A production server's `max_connections` is not knowable at build time.
+    #[serde(default = "default_db_max_connections")]
+    pub db_max_connections: u32,
+    /// Minimum idle pooled connections (`DB_MIN_CONNECTIONS`, default 1; `0`
+    /// is allowed and means "keep none").
+    #[serde(default = "default_db_min_connections")]
+    pub db_min_connections: u32,
     /// Gates `POST /api/v1/auth/register` (same semantics as Nest).
     #[serde(default = "default_true")]
     pub registration_enabled: bool,
@@ -229,6 +237,14 @@ fn default_db_name() -> String {
     "kanpad".to_string()
 }
 
+fn default_db_max_connections() -> u32 {
+    10
+}
+
+fn default_db_min_connections() -> u32 {
+    1
+}
+
 fn default_true() -> bool {
     true
 }
@@ -265,6 +281,8 @@ impl fmt::Debug for Settings {
             .field("db_username", &self.db_username)
             .field("db_password", &"[redacted]")
             .field("db_name", &self.db_name)
+            .field("db_max_connections", &self.db_max_connections)
+            .field("db_min_connections", &self.db_min_connections)
             .field("registration_enabled", &self.registration_enabled)
             .field("throttle_global_per_min", &self.throttle_global_per_min)
             .field("throttle_auth_per_min", &self.throttle_auth_per_min)
@@ -293,6 +311,8 @@ impl Default for Settings {
             db_username: default_db_username(),
             db_password: default_db_password(),
             db_name: default_db_name(),
+            db_max_connections: default_db_max_connections(),
+            db_min_connections: default_db_min_connections(),
             registration_enabled: true,
             throttle_global_per_min: default_throttle_global(),
             throttle_auth_per_min: default_throttle_auth(),
@@ -520,6 +540,17 @@ impl Settings {
             return Err(ConfigError::Invalid(format!(
                 "database name {db_name:?} is not a valid MySQL identifier: it must start with a \
                  letter or underscore and contain only letters, digits, `_`, or `$`"
+            )));
+        }
+        if self.db_max_connections == 0 {
+            return Err(ConfigError::Invalid(
+                "DB_MAX_CONNECTIONS must be at least 1".to_string(),
+            ));
+        }
+        if self.db_min_connections > self.db_max_connections {
+            return Err(ConfigError::Invalid(format!(
+                "DB_MIN_CONNECTIONS ({}) must not exceed DB_MAX_CONNECTIONS ({})",
+                self.db_min_connections, self.db_max_connections
             )));
         }
         let origins = self.cors_origin_list();
@@ -1166,6 +1197,40 @@ mod tests {
         let vars = with_overrides(&[("METRICS_PORT", "9090")]);
         let settings = Settings::from_pairs(&vars).expect("METRICS_PORT=9090 must load");
         assert_eq!(settings.metrics_port, Some(9090));
+    }
+
+    #[test]
+    fn pool_sizing_defaults_and_env_keys() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.db_max_connections, 10);
+        assert_eq!(defaults.db_min_connections, 1);
+
+        let vars = with_overrides(&[("DB_MAX_CONNECTIONS", "25"), ("DB_MIN_CONNECTIONS", "4")]);
+        let settings = Settings::from_pairs(&vars).expect("valid pool sizing");
+        assert_eq!(settings.db_max_connections, 25);
+        assert_eq!(settings.db_min_connections, 4);
+    }
+
+    #[test]
+    fn pool_sizing_is_validated() {
+        let vars = with_overrides(&[("DB_MAX_CONNECTIONS", "0")]);
+        let zero_max = Settings::from_pairs(&vars)
+            .expect_err("0 max connections is rejected")
+            .to_string();
+        assert!(zero_max.contains("DB_MAX_CONNECTIONS"), "{zero_max}");
+
+        let vars = with_overrides(&[("DB_MAX_CONNECTIONS", "5"), ("DB_MIN_CONNECTIONS", "6")]);
+        let min_above_max = Settings::from_pairs(&vars)
+            .expect_err("min > max is rejected")
+            .to_string();
+        assert!(
+            min_above_max.contains("DB_MIN_CONNECTIONS"),
+            "{min_above_max}"
+        );
+        assert!(
+            min_above_max.contains("DB_MAX_CONNECTIONS"),
+            "{min_above_max}"
+        );
     }
 
     #[test]

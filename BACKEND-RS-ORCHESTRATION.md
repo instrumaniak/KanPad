@@ -387,10 +387,10 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 | T66 sqlx 0.9 | (merged, branch deleted) | — | T67 | **DONE `afd87c0e`** |
 | T69 frontend types vs the snake_case contract | (merged, branch deleted) | — | T67 | **DONE `93ca7016`** |
 | T56 CSRF + CSP + span redaction | (merged, branch deleted) | — | T67 | **DONE `ddbcf43b`** |
-| T58 public-API ergonomics | `rs-t58-ergonomics` | — | T56 | pending |
-| T59 shared-kernel DRY + `/ready` in OpenAPI | `rs-t59-dry` | — | T58 | pending |
-| T60 observability (`/metrics` + JSON logs) | `rs-t60-obs` | — | T59 | pending |
-| T61 concurrency + pool tuning | `rs-t61-concurrency` | — | T59 | pending |
+| T58 public-API ergonomics | (merged, branch deleted) | — | T56 | **DONE `cdc05c48`** |
+| T59 shared-kernel DRY + `/ready` in OpenAPI | (merged, branch deleted) | — | T58 | **DONE `c6f11995`** |
+| T60 observability (`/metrics` + JSON logs) | (merged, branch deleted) | — | T59 | **DONE `dd3ba477`** |
+| T61 concurrency + pool tuning | (merged, branch deleted) | — | T59 | **DONE `aff43567`; cards_move 3/3** |
 | T62 coverage gate + CI pins + Docker hardening | `rs-t62-gates` | — | T60 | pending |
 | T68 CI first-run defect repair | (merged, branch deleted) | — | T63 | **DONE `0b03ea58`** |
 
@@ -842,3 +842,9 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
   `SET SESSION …` leaks onto the pooled connection), env-driven `DB_MAX_CONNECTIONS`/
   `DB_MIN_CONNECTIONS` (10/1), and a test that proves the retry path is TAKEN. Then T62 (the stale
   `Dockerfile:29` `sqlx.toml` COPY is the next guaranteed CI red).
+
+## T61 verified 2026-10-23 — transient lock retry + per-transaction isolation
+
+- T61 was already in the current branch (`81f57106`, `0cb7366f`, `24c5f167`, reconciled by `aff43567`): pool sizing uses `DB_MAX_CONNECTIONS` / `DB_MIN_CONNECTIONS` (defaults 10/1); card moves set one-shot `READ COMMITTED` before `BEGIN`; MySQL error numbers 1213 and 1205 trigger bounded retries after whole-transaction rollback and short backoff.
+- Verification: `cargo test --test api cards_move -- --nocapture` → **3 passed, 0 failed**. The full coverage run also passed `pool_sizing_defaults_and_env_keys` and `pool_options_honour_settings` before it was stopped.
+- T61 acceptance criteria are checked in `50-tasks.md`. The remaining planned task is T62; work stopped here as requested.

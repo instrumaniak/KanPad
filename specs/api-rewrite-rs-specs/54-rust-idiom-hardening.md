@@ -1,15 +1,15 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status: PARTIALLY IMPLEMENTED (updated 2026-10-23 — after T60 merged + T61 WIP).** This file
+> **Status: IN PROGRESS (updated 2026-10-23 — T61 complete; T62 remains).** This file
 > + `50-tasks.md` Phase 7 are the **work order**; executors implement T54–T69
 > and the orchestrator flips each AC as it lands (single writer — parallel
 > agents editing `50-tasks.md` is how the AC table drifts).
-> **Phase 7 core (T54–T67): 11 merged (`T54`–`T57`, `T58`–`T60`, `T63`–`T67`
-> except `T61`/`T62`) + 1 WIP (`T61`) + 1 pending (`T62`)** — see the table
-> below. The banner `"Nine of the fourteen … T58–T62 remain PLAN ONLY"` was
-> stale: `T58` (`bc1e43dd`), `T59` (`aa9cc45e`), `T60` (`63f793fe`) and `T56`
-> (`ddbcf43b`) are all `DONE`. `T61` (`wt-t61`) is active (2 commits, dirty
-> `cards_move.rs`); `T62` (`rs-t62-gates`) has no worktree. `T69` (frontend
+> **Phase 7 core (T54–T67): 12 tasks complete; T62 remains** (T64 is not a task) —
+> see the table below. The banner `"Nine of the fourteen … T58–T62 remain PLAN ONLY"` was
+> stale: `T58` (`cdc05c48`), `T59` (`c6f11995`), `T60` (`dd3ba477`), `T56`
+> (`ddbcf43b`) and T61 are complete. T61's focused API suite passes 3/3,
+> including the fault-injected 1213/1205 retry and isolation probes. T62 remains.
+> `T69` (frontend
 > `tsc`) landed in `93ca7016` and is included in the count.
 >
 > **The tree no longer has** `NODE_ENV` + `connect.sid` (T54), **a workflow

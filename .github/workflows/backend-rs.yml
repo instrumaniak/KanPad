@@ -94,6 +94,19 @@ jobs:
       # -- 2. clippy ------------------------------------------------------
       - name: clippy --workspace --all-targets -D warnings
         working-directory: backend-rs
+        # Compile from the COMMITTED `.sqlx/` cache, not from a live database.
+        # The `query!` macros expand at compile time and clippy runs BEFORE
+        # `migrate run` (step 5), so without this the macros query the empty
+        # `kanpad_ci` service database and the step dies with 90 x
+        # `1146 Table 'kanpad_ci.<table>' doesn't exist` (observed on runs
+        # 39795598592 / 39817195098, both 2026-10-22).
+        #
+        # The offline cache is the right source here: it is committed, it is
+        # what the Docker image builds from, and the later `sqlx prepare
+        # --check` step validates it against the MIGRATED live database —
+        # so a cache that drifted from the schema still fails the job.
+        env:
+          SQLX_OFFLINE: "true"
         # `-A clippy::pedantic` keeps `clippy::pedantic` ADVISORY: the tree
         # carries ~370 pedantic warnings (measured 2026-10-22) and the
         # `cast_*` family among them cannot be fixed without changing

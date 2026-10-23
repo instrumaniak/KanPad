@@ -417,4 +417,20 @@ runbook). Only T02b remains as separate work. Same global DoD.
   - [x] `cargo-deny` is **pinned** in the workflow (`--version 0.20.2`) and `cargo-deny --version` on the dev box is the same version
   - [x] the workflow still parses as YAML (all 3 jobs + the step list intact) and the three grep gates are still green
   - [x] `cargo fmt --check` / `cargo clippy --workspace --all-targets -- -D warnings -A clippy::pedantic` / `cargo test` green (no Rust code is touched, but the gates are replayed)
-  - [ ] the pipeline runs **green on the PR** (a `gh run list` link is the evidence) — **still needs a push to GitHub: `gh` is not installed on the dev box**
+  - [ ] the pipeline runs **green on the PR** (a `gh run list` link is the evidence) — **re-opened 2026-10-23: `gh` is now installed and the workflow HAS run, but it is RED at step 2 — see T70**
+
+* **T70 CI step-order repair: `clippy` compiles from the `.sqlx` cache.** (`54` B1 + the T55 first-run AC; the **third** first-run defect, after T68's two.) With `gh` installed (2026-10-23) the repo's own run history became readable: `dev-rs` had already run the workflow twice — **`39795598592` (2026-10-22T14:25Z, 7m01s) and `39817195098` (16:49Z, 1m38s), both `failure`** — and both died at the **same step**: `clippy --workspace --all-targets`, with
+  ```
+  error: error returned from database: 1146 (42S02):
+         Table 'kanpad_ci.users' doesn't exist          (×90, all 12 tables)
+  error: could not compile `backend-rs` (lib) due to 91 previous errors
+  error: could not compile `backend-rs` (lib test) due to 93 previous errors
+  ```
+  **Root cause — step ORDER, not code.** `clippy` is step 2 and expands the 83 `query!` macros at compile time; `migrate run` is step 5. The job carries `DATABASE_URL` (with the collation pin) but **no `SQLX_OFFLINE`**, so the macros connect to the empty `kanpad_ci` service database. `fmt --check` passed; `clippy` never could. **Blast radius:** `web: needs: [backend]` and `docker-e2e: needs: [backend, web]` — so 2 of 3 jobs were skipped and the frontend gates + Docker build still have never executed.
+  **Fix — compile clippy offline from the committed cache:** add `env: SQLX_OFFLINE: "true"` to the clippy step. The `.sqlx/` cache is committed, it is exactly what the Docker image builds from, and the later `sqlx prepare --check` step still validates that cache against the **migrated live** database — so a cache that drifted from the schema still fails the job. *(Rejected: moving `migrate run` above `clippy` — it couples the fastest gate to a MySQL service container for no extra signal.)*
+  Depends: T68. Blocks: the first green pipeline (and therefore T62's aggregate AC). Touch only: `.github/workflows/backend-rs.yml`, `specs/api-rewrite-rs-specs/50-tasks.md`, `BACKEND-RS-ORCHESTRATION.md`. AC:
+  - [x] the clippy step carries `SQLX_OFFLINE: "true"`; the workflow still parses as YAML (3 jobs, step order intact)
+  - [x] **red-proof reproduced locally on an EMPTY database** (`kanpad_ci_empty`, no `SQLX_OFFLINE`): **90** × `1146 … doesn't exist`, lib **91** / lib-test **93** errors, exit **101** — identical numbers to the CI log, so the diagnosis is the CI's own failure, not a guess
+  - [x] **green-proof under the same empty-database condition** (only `SQLX_OFFLINE=true` added): `cargo clippy … -D warnings -A clippy::pedantic` → **exit 0**
+  - [x] `cargo fmt --check` **0**; the **four** grep gates replayed verbatim from the workflow → all `OK`
+  - [ ] the pipeline runs **green on the PR** — still open, and now expected to advance past clippy into the `web` job and then the `docker-e2e` job, whose first failure is already known: `backend-rs/Dockerfile:29` `COPY … sqlx.toml` for a file T66 deleted (**T62 owns it**)

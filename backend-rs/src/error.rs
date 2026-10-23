@@ -67,8 +67,10 @@ pub struct ProblemDetails {
 pub struct Internal;
 
 /// Shared application error. `thiserror`-only; `anyhow` is allowed solely at
-/// the `main()` boundary, never here.
+/// the `main()` boundary, never here. `#[non_exhaustive]` so new variants
+/// are not a breaking change for downstream matches.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum AppError {
     /// Unknown route under `/api/*` or foreign/not-owned id (no oracle).
     #[error("not found")]
@@ -82,10 +84,13 @@ pub enum AppError {
     /// Wrong-state operation (e.g. deleting an active board).
     #[error("conflict")]
     Conflict,
-    /// garde report from `axum-valid` `Valid<T>` (wired in T08) or the strict
-    /// [`crate::extract::PaginationParams`] extractor (same shape).
+    /// Field-level validation failures (strict
+    /// [`crate::extract::PaginationParams`], the `ValidJson`/`ValidQuery`
+    /// extractors, and hand-built short-circuit helpers — each maps its
+    /// `garde::Report` here through `From`, keeping `garde` out of the
+    /// public API).
     #[error("validation failed")]
-    Validation(garde::Report),
+    Validation(Vec<FieldError>),
     /// Malformed JSON / wrong content-type / over-limit body.
     #[error(transparent)]
     Json(JsonRejection),
@@ -107,6 +112,12 @@ pub enum AppError {
     Internal(Internal),
 }
 
+impl From<garde::Report> for AppError {
+    fn from(report: garde::Report) -> Self {
+        Self::Validation(validation_errors(&report))
+    }
+}
+
 impl From<JsonRejection> for AppError {
     fn from(rejection: JsonRejection) -> Self {
         Self::Json(rejection)
@@ -124,6 +135,9 @@ impl From<axum::extract::rejection::QueryRejection> for AppError {
         Self::Query(rejection)
     }
 }
+
+/// Crate-wide result alias for handlers (`AppResult<Json<T>>`, …).
+pub type AppResult<T> = Result<T, AppError>;
 
 /// Method + path + request id captured per request so every rejection —
 /// including framework rejections that never reach a handler — can render an
@@ -257,15 +271,26 @@ impl IntoResponse for AppError {
                 instance,
                 Vec::new(),
             ),
-            Self::Validation(report) => {
-                let detail = {
-                    let rendered = report.to_string();
-                    let trimmed = rendered.trim();
-                    if trimmed.is_empty() {
-                        "Request validation failed.".to_string()
-                    } else {
-                        trimmed.to_owned()
-                    }
+            Self::Validation(errors) => {
+                // Rebuild the exact `detail` garde's own `Report` Display
+                // produced: one `"<field>: <message>"` per line (`<message>`
+                // alone when the field path is empty), then trimmed.
+                let joined = errors
+                    .iter()
+                    .map(|error| {
+                        if error.field.is_empty() {
+                            error.message.clone()
+                        } else {
+                            format!("{}: {}", error.field, error.message)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let trimmed = joined.trim();
+                let detail = if trimmed.is_empty() {
+                    "Request validation failed.".to_string()
+                } else {
+                    trimmed.to_owned()
                 };
                 problem_response(
                     StatusCode::BAD_REQUEST,
@@ -273,7 +298,7 @@ impl IntoResponse for AppError {
                     "Validation Failed",
                     detail,
                     instance,
-                    validation_errors(&report),
+                    errors,
                 )
             }
             Self::Json(rejection) => {
@@ -560,7 +585,7 @@ mod tests {
             garde::Path::new("title"),
             garde::Error::new("length: must be at most 255"),
         );
-        let (status, _, body) = render(AppError::Validation(report)).await;
+        let (status, _, body) = render(AppError::from(report)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["type"], format!("{PROBLEM_BASE}/validation-error"));
         assert_eq!(

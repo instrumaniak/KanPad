@@ -182,7 +182,7 @@ async fn fail(Query(params): Query<HashMap<String, String>>) -> Result<Json<Valu
                 garde::Path::new("name"),
                 garde::Error::new("length: must be at most 255"),
             );
-            Err(AppError::Validation(report))
+            Err(AppError::from(report))
         }
         _ => Err(AppError::Internal(backend_rs::error::Internal)),
     }

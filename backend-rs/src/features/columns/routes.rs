@@ -224,7 +224,7 @@ pub async fn delete_column(
 fn move_state_error(field: &'static str, message: &'static str) -> AppError {
     let mut report = garde::Report::new();
     report.append(garde::Path::new(field), garde::Error::new(message));
-    AppError::Validation(report)
+    AppError::from(report)
 }
 
 /// `POST /api/v1/columns/{id}/move-cards{target_column_id} → 200

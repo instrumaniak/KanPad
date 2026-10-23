@@ -86,7 +86,7 @@ pub fn check_single_link(
             garde::Path::new("board_id"),
             garde::Error::new("at most one of board_id, project_id, card_id may be set"),
         );
-        return Err(AppError::Validation(report));
+        return Err(AppError::from(report));
     }
     Ok(())
 }

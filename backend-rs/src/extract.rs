@@ -134,7 +134,7 @@ where
         if report.is_empty() {
             Ok(Self { page, limit })
         } else {
-            Err(AppError::Validation(report))
+            Err(AppError::from(report))
         }
     }
 }
@@ -175,7 +175,7 @@ where
         let Json(value) = Json::<T>::from_request(req, state)
             .await
             .map_err(AppError::Json)?;
-        value.validate().map_err(AppError::Validation)?;
+        value.validate().map_err(AppError::from)?;
         Ok(Self(value))
     }
 }
@@ -215,7 +215,7 @@ where
         let Query(value) = Query::<T>::from_request_parts(parts, state)
             .await
             .map_err(AppError::Query)?;
-        value.validate().map_err(AppError::Validation)?;
+        value.validate().map_err(AppError::from)?;
         Ok(Self(value))
     }
 }

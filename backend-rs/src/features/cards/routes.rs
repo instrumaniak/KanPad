@@ -395,7 +395,7 @@ pub async fn attach_card_label_alias(
                 garde::Path::new("label_id"),
                 garde::Error::new("must be present"),
             );
-            return Err(AppError::Validation(report));
+            return Err(AppError::from(report));
         }
     };
     Ok(Json(

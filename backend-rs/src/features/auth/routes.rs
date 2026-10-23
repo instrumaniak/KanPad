@@ -12,7 +12,7 @@ use tower_sessions::Session;
 
 use crate::{
     common::{ids::Role, label_seed::ensure_default_labels, validation::normalize_email},
-    error::{AppError, Internal},
+    error::{AppError, AppResult, Internal},
     extract::AuthSession,
     state::AppState,
 };
@@ -67,12 +67,12 @@ pub async fn register(
     State(state): State<AppState>,
     session: Session,
     Json(mut input): Json<RegisterInput>,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<impl IntoResponse> {
     if !state.settings.registration_enabled {
         return Err(AppError::Forbidden);
     }
     input.email = normalize_email(&input.email);
-    input.validate().map_err(AppError::Validation)?;
+    input.validate().map_err(AppError::from)?;
 
     if find_user_by_email(&state.pool, &input.email)
         .await?
@@ -139,9 +139,9 @@ pub async fn login(
     State(state): State<AppState>,
     session: Session,
     Json(mut input): Json<LoginInput>,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<impl IntoResponse> {
     input.email = normalize_email(&input.email);
-    input.validate().map_err(AppError::Validation)?;
+    input.validate().map_err(AppError::from)?;
 
     let Some(row) = find_auth_row_by_email(&state.pool, &input.email).await? else {
         dummy_verify(state.settings.hash_cost);
@@ -185,7 +185,7 @@ pub async fn login(
     responses((status = 204, description = "User logged out"))
 )]
 #[tracing::instrument(skip(session))]
-pub async fn logout(session: Session) -> Result<impl IntoResponse, AppError> {
+pub async fn logout(session: Session) -> AppResult<impl IntoResponse> {
     session.flush().await.map_err(|_| {
         tracing::error!("logout: failed to destroy session");
         AppError::Internal(Internal)
@@ -213,7 +213,7 @@ pub async fn me(
     State(state): State<AppState>,
     auth: AuthSession,
     session: Session,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<impl IntoResponse> {
     let row = match find_user_by_id(&state.pool, auth.user_id.get()).await {
         Ok(row) => row,
         Err(AppError::Db(sqlx::Error::RowNotFound)) => return Err(AppError::Unauthorized),

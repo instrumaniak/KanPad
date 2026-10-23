@@ -9,7 +9,7 @@ use axum::{
 };
 
 use crate::{
-    common::pagination::Page,
+    common::{ownership::check_project_owned, pagination::Page},
     error::AppError,
     extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
     state::AppState,
@@ -17,8 +17,8 @@ use crate::{
 
 use super::{
     store::{
-        BoardPatch, apply_board_patch, check_project_owned, count_boards, delete_board_row,
-        fetch_board, fetch_board_columns, fetch_board_page, insert_board, insert_default_columns,
+        BoardPatch, apply_board_patch, count_boards, delete_board_row, fetch_board,
+        fetch_board_columns, fetch_board_page, insert_board, insert_default_columns,
         to_list_response, to_response,
     },
     types::{

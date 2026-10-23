@@ -58,29 +58,6 @@ pub struct BoardRow {
     pub updated_at: NaiveDateTime,
 }
 
-/// Assert a project belongs to the caller. Foreign/missing id →
-/// `RowNotFound` → 404 (no oracle, never 403). Runs inside the create tx so
-/// the link check and the insert are atomic.
-#[tracing::instrument(skip(ex))]
-pub async fn check_project_owned<'e, E>(
-    ex: E,
-    user_id: i32,
-    project_id: i32,
-) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "SELECT `id` FROM `projects` WHERE `id` = ? AND `user_id` = ?",
-        project_id,
-        user_id
-    )
-    .fetch_one(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
 /// Insert a board row; returns the new id (`last_insert_id` as `u64` →
 /// `i32::try_from`, never a silent `as` cast per `30-db-schema.md`).
 /// A `1452` FK failure (project deleted between the ownership check and the
@@ -395,7 +372,8 @@ where
 /// Partial board update (T22 `PATCH`): every field optional. `project_id`
 /// mirrors the DTO double `Option` — `None` leaves the link untouched,
 /// `Some(None)` detaches (`NULL`), `Some(Some(..))` relinks (the caller
-/// ownership-checks via [`check_project_owned`] first, so a foreign id never
+/// ownership-checks via [`crate::common::ownership::check_project_owned`] first,
+/// so a foreign id never
 /// reaches the write). An all-`None` patch is a no-op (returns without
 /// emitting `UPDATE`, so empty `{}` bodies stay 200 without touching the
 /// row).

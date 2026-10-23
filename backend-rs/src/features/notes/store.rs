@@ -140,28 +140,6 @@ where
     Ok(())
 }
 
-/// Assert a project belongs to the caller (same 404 rule as
-/// [`check_board_owned`]).
-#[tracing::instrument(skip(ex))]
-pub async fn check_project_owned<'e, E>(
-    ex: E,
-    user_id: i32,
-    project_id: i32,
-) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "SELECT `id` FROM `projects` WHERE `id` = ? AND `user_id` = ?",
-        project_id,
-        user_id
-    )
-    .fetch_one(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
 /// Assert a card belongs to the caller via its grandparent board (cards carry
 /// no `user_id`; same 404 rule as [`check_board_owned`]).
 #[tracing::instrument(skip(ex))]

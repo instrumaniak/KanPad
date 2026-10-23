@@ -9,7 +9,11 @@ use axum::{
 };
 
 use crate::{
-    common::{card_summary::CardSummary, pagination::Page},
+    common::{
+        card_summary::CardSummary,
+        ownership::{check_column_owned, check_label_owned},
+        pagination::Page,
+    },
     error::{AppError, Internal},
     extract::{AuthSession, PaginationParams, ValidJson, ValidPath},
     state::AppState,
@@ -17,12 +21,12 @@ use crate::{
 
 use super::{
     store::{
-        CardPatch, apply_card_patch, check_column_owned, check_label_owned, clamp_position,
-        close_card_gap, count_cards_in_column, delete_card_label_link, delete_card_row,
-        fetch_card_owned, fetch_card_page, fetch_card_spot_for_update, fetch_detail_checklists,
-        fetch_detail_items, fetch_detail_labels, fetch_page_labels, fetch_page_progress,
-        insert_card, insert_card_label_link, lock_cards_for_update, max_position_for_update,
-        open_card_gap, point_move_card, shift_cards_down, shift_cards_up, to_detail, to_summaries,
+        CardPatch, apply_card_patch, clamp_position, close_card_gap, count_cards_in_column,
+        delete_card_label_link, delete_card_row, fetch_card_owned, fetch_card_page,
+        fetch_card_spot_for_update, fetch_detail_checklists, fetch_detail_items,
+        fetch_detail_labels, fetch_page_labels, fetch_page_progress, insert_card,
+        insert_card_label_link, lock_cards_for_update, max_position_for_update, open_card_gap,
+        point_move_card, shift_cards_down, shift_cards_up, to_detail, to_summaries,
     },
     types::{AttachLabelInput, CardBody, CreateCardInput, UpdateCardInput, parse_due_date},
 };

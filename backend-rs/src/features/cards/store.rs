@@ -4,8 +4,8 @@
 //! single-card lookups join `columns` + `boards` with `b.user_id = ?`, so a
 //! foreign or missing id matches zero rows → [`AppError::NotFound`] (via
 //! `RowNotFound`), never a 403 oracle. Column-scoped writes first prove the
-//! column via [`check_column_owned`] inside the caller's tx, so the check and
-//! the write that follows are atomic.
+//! column via [`crate::common::ownership::check_column_owned`] inside the
+//! caller's tx, so the check and the write that follows are atomic.
 //!
 //! Create with an explicit `position` clamps to `[0, max + 1]` then opens a
 //! gap with a single set-based range `UPDATE` (`position + 1` where
@@ -83,28 +83,6 @@ pub struct CardRow {
     pub updated_at: NaiveDateTime,
 }
 
-/// Assert a column belongs to the caller (via its board). Foreign/missing id
-/// → `RowNotFound` → 404 (no oracle, never 403). Returns the owning board id
-/// for callers that need it. Runs inside the caller's tx so the check and the
-/// write that follows are atomic.
-#[tracing::instrument(skip(ex))]
-pub async fn check_column_owned<'e, E>(ex: E, user_id: i32, column_id: i32) -> Result<i32, AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    let row = sqlx::query!(
-        "SELECT c.`board_id` AS \"board_id: i32\" \
-          FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` \
-          WHERE c.`id` = ? AND b.`user_id` = ?",
-        column_id,
-        user_id
-    )
-    .fetch_one(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(row.board_id)
-}
-
 /// Fetch one owned card (join proves ownership: foreign/missing id →
 /// `RowNotFound` → 404, never 403).
 #[tracing::instrument(skip(ex))]
@@ -161,7 +139,8 @@ where
 }
 
 /// Total cards in a column (the list `Page.total` — plain `COUNT(*)`, no join
-/// fanout; the caller proves ownership first via [`check_column_owned`]).
+/// fanout; the caller proves ownership first via
+/// [`crate::common::ownership::check_column_owned`]).
 #[tracing::instrument(skip(ex))]
 pub async fn count_cards_in_column<'e, E>(ex: E, column_id: i32) -> Result<u64, AppError>
 where
@@ -458,27 +437,6 @@ where
         id
     )
     .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
-/// Assert a label belongs to the caller (`WHERE id + user_id` — the same
-/// ownership semantics as the labels feature's `fetch_label`: a foreign or
-/// missing id matches zero rows → `RowNotFound` → 404, never a 403 oracle).
-/// Lives here (not imported from the labels store — features never import
-/// each other's stores per `10-architecture.md`).
-#[tracing::instrument(skip(ex))]
-pub async fn check_label_owned<'e, E>(ex: E, user_id: i32, label_id: i32) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "SELECT `id` FROM `labels` WHERE `id` = ? AND `user_id` = ?",
-        label_id,
-        user_id
-    )
-    .fetch_one(ex)
     .await
     .map_err(AppError::Db)?;
     Ok(())
@@ -788,7 +746,8 @@ pub type PageLabelTuple = (i32, i32, String, String);
 pub type PageProgressTuple = (i32, i64, i64);
 
 /// Page `SELECT` for a column's cards (`position ASC`, TEXT-free). The caller
-/// proves ownership first via [`check_column_owned`]. Built with
+/// proves ownership first via [`crate::common::ownership::check_column_owned`].
+/// Built with
 /// `QueryBuilder` (shared-filter discipline per `30-db-schema.md`; user text
 /// is never `push`ed — only bound ids/limits).
 #[tracing::instrument(skip(ex))]

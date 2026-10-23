@@ -1,9 +1,8 @@
-//! Pool defaults + MySQL identifier rules + canonical executor bound
-//! (T03 skeleton). No `query!` here, so no `.sqlx/` entries.
+//! Pool defaults + MySQL identifier rules (T03 skeleton). No `query!` here,
+//! so no `.sqlx/` entries.
 
 use std::time::Duration;
 
-use sqlx::MySqlExecutor;
 use sqlx::mysql::MySqlPoolOptions;
 
 /// Canonical pool defaults per 10-architecture.md DB pool.
@@ -42,16 +41,6 @@ pub fn is_valid_db_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-}
-
-/// Compile-time proof of the canonical executor bound: every feature store
-/// fn is generic over `sqlx::MySqlExecutor<'e>` (one form everywhere), so the
-/// same fn accepts `&MySqlPool` and `&mut Transaction<'_, MySql>`.
-pub async fn with_executor<'e, E>(_ex: E) -> Result<(), sqlx::Error>
-where
-    E: MySqlExecutor<'e>,
-{
-    Ok(())
 }
 
 #[cfg(test)]

@@ -183,7 +183,7 @@ pub(crate) fn problem_response(
     status: StatusCode,
     error_type: &'static str,
     title: &'static str,
-    detail: String,
+    detail: impl Into<String>,
     instance: String,
     errors: Vec<FieldError>,
 ) -> Response {
@@ -191,7 +191,7 @@ pub(crate) fn problem_response(
         r#type: format!("{PROBLEM_BASE}/{error_type}"),
         title: title.to_string(),
         status: status.as_u16(),
-        detail,
+        detail: detail.into(),
         instance,
         errors,
     };
@@ -317,16 +317,6 @@ impl IntoResponse for AppError {
                         instance,
                         Vec::new(),
                     ),
-                    JsonRejection::JsonDataError(_) | JsonRejection::JsonSyntaxError(_) => {
-                        problem_response(
-                            StatusCode::BAD_REQUEST,
-                            "invalid-json",
-                            "Invalid JSON",
-                            rejection.body_text(),
-                            instance,
-                            Vec::new(),
-                        )
-                    }
                     _ => problem_response(
                         StatusCode::BAD_REQUEST,
                         "invalid-json",

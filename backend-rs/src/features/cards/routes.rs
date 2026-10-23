@@ -583,7 +583,7 @@ mod tests {
         let auth = AuthSession {
             user_id: crate::common::ids::UserId::from(1),
             email: EMAIL.to_string(),
-            role: "user".to_string(),
+            role: crate::common::ids::Role::User,
         };
         let input = ValidJson(CreateCardInput {
             title: TITLE.to_string(),

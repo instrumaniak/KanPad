@@ -1,4 +1,5 @@
-//! Newtype IDs (`UserId`, `BoardId`, …).
+//! Typed scalars: newtype IDs (`UserId`, `BoardId`, …) plus the [`Role`]
+//! user-role enum.
 //!
 //! Every table PK / FK is an `INT`, so IDs are `i32` newtypes: transparent
 //! over the wire (JSON number), transparent in sqlx (bound directly, never
@@ -92,5 +93,38 @@ mod tests {
         assert_eq!(serde_json::from_str::<CardId>("42").unwrap(), CardId(42));
         assert_eq!(UserId::from(3).get(), 3);
         assert_eq!(i32::from(TagId(9)), 9);
+    }
+}
+
+/// `users.role` (`VARCHAR` + `CHK_users_role` CHECK in the baseline).
+///
+/// Wire format is and stays `"user"` / `"admin"` (serde `rename_all`).
+/// Deliberately NOT `ToSchema`: OpenAPI must not gain a `Role` component —
+/// `UserData.role` is declared `#[schema(value_type = String)]` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Regular user (register default; admin only via the T12 CLI).
+    User,
+    /// Administrator (only minted by the T12 `create-admin` CLI).
+    Admin,
+}
+
+impl Role {
+    /// The wire/DB spelling (`"user"` / `"admin"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Admin => "admin",
+        }
+    }
+
+    /// Parse a raw `users.role` value; `None` = unknown (maps to 500).
+    pub fn from_db(raw: &str) -> Option<Self> {
+        match raw {
+            "user" => Some(Self::User),
+            "admin" => Some(Self::Admin),
+            _ => None,
+        }
     }
 }

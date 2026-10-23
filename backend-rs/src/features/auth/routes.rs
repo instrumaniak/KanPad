@@ -11,7 +11,7 @@ use garde::Validate;
 use tower_sessions::Session;
 
 use crate::{
-    common::{label_seed::ensure_default_labels, validation::normalize_email},
+    common::{ids::Role, label_seed::ensure_default_labels, validation::normalize_email},
     error::{AppError, Internal},
     extract::AuthSession,
     state::AppState,
@@ -95,7 +95,7 @@ pub async fn register(
     // struct); only a static message is logged server-side — never session
     // JSON, the password, or its hash. Shared with login-success so the two
     // entry points cannot drift (fixation defense: register logs in).
-    establish_session(&session, &user.email, user.id.get(), &user.role).await?;
+    establish_session(&session, &user.email, user.id.get(), user.role).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -160,7 +160,7 @@ pub async fn login(
         update_password_hash(&state.pool, row.user.id.get(), &upgraded).await?;
     }
 
-    establish_session(&session, &row.user.email, row.user.id.get(), &row.user.role).await?;
+    establish_session(&session, &row.user.email, row.user.id.get(), row.user.role).await?;
 
     Ok(Json(LoginResponse {
         data: UserData {
@@ -243,7 +243,7 @@ async fn establish_session(
     session: &Session,
     email: &str,
     user_id: i32,
-    role: &str,
+    role: Role,
 ) -> Result<(), AppError> {
     session.insert("user_id", user_id).await.map_err(|_| {
         tracing::error!("auth: failed to persist session");

@@ -25,7 +25,7 @@ use axum::{
 };
 use tower::ServiceExt;
 
-use backend_rs::common::ids::UserId;
+use backend_rs::common::ids::{Role, UserId};
 use backend_rs::features::users::store::StoredUser;
 
 use super::helpers::test_app;
@@ -83,13 +83,13 @@ async fn users_routes_are_unmounted() {
 #[test]
 fn users_store_reexports_auth_owner() {
     fn assert_owner_shape(user: StoredUser) -> (i32, String, String) {
-        (user.id.get(), user.email, user.role)
+        (user.id.get(), user.email, user.role.as_str().to_string())
     }
 
     let user = StoredUser {
         id: UserId::from(7),
         email: "t13@example.com".to_string(),
-        role: "user".to_string(),
+        role: Role::User,
     };
     assert_eq!(
         assert_owner_shape(user),

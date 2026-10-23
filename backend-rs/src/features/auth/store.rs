@@ -13,7 +13,7 @@ use argon2::{
 use sqlx::MySqlExecutor;
 
 use crate::{
-    common::ids::UserId,
+    common::ids::{Role, UserId},
     error::{AppError, Internal},
 };
 
@@ -32,7 +32,17 @@ pub struct StoredUser {
     /// Normalized email (`trim` + lowercase).
     pub email: String,
     /// `user` on register (admin only via the T12 CLI).
-    pub role: String,
+    pub role: Role,
+}
+
+/// Map a raw `users.role` (`VARCHAR`, typed `String` by `sqlx::query!`) to
+/// the [`Role`] enum; an unknown value is an integrity violation (the
+/// `CHK_users_role` CHECK forbids it) and maps to 500, never a silent default.
+fn role_from_db(raw: String) -> Result<Role, AppError> {
+    Role::from_db(&raw).ok_or_else(|| {
+        tracing::error!("auth: users.role has an unexpected value");
+        AppError::Internal(Internal)
+    })
 }
 
 /// Login credential row: the [`StoredUser`] projection plus its password
@@ -62,14 +72,19 @@ where
     .fetch_optional(ex)
     .await
     .map_err(AppError::Db)?;
-    Ok(row.map(|row| AuthRow {
-        user: StoredUser {
-            id: UserId::from(row.id),
-            email: row.email,
-            role: row.role,
-        },
-        password_hash: row.password,
-    }))
+    let auth_row = row
+        .map(|row| -> Result<AuthRow, AppError> {
+            Ok(AuthRow {
+                user: StoredUser {
+                    id: UserId::from(row.id),
+                    email: row.email,
+                    role: role_from_db(row.role)?,
+                },
+                password_hash: row.password,
+            })
+        })
+        .transpose()?;
+    Ok(auth_row)
 }
 
 /// Verify a password against an Argon2id PHC hash. Unparseable input (legacy
@@ -178,11 +193,16 @@ where
     .fetch_optional(ex)
     .await
     .map_err(AppError::Db)?;
-    Ok(row.map(|row| StoredUser {
-        id: UserId::from(row.id),
-        email: row.email,
-        role: row.role,
-    }))
+    let user = row
+        .map(|row| -> Result<StoredUser, AppError> {
+            Ok(StoredUser {
+                id: UserId::from(row.id),
+                email: row.email,
+                role: role_from_db(row.role)?,
+            })
+        })
+        .transpose()?;
+    Ok(user)
 }
 
 /// Insert a user row, returning the new `users.id`. Accepts the pool or
@@ -231,7 +251,7 @@ where
     Ok(StoredUser {
         id: UserId::from(row.id),
         email: row.email,
-        role: row.role,
+        role: role_from_db(row.role)?,
     })
 }
 

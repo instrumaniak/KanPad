@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::common::ids::UserId;
+use crate::common::ids::{Role, UserId};
 use crate::common::validation::{
     validate_email, validate_login_password, validate_password_bytes, validate_register_password,
 };
@@ -47,8 +47,12 @@ pub struct UserData {
     pub id: UserId,
     /// Normalized email (`trim` + lowercase).
     pub email: String,
+    // `value_type = String` keeps the OpenAPI shape `type: string` (no
+    // `Role` component — the enum is deliberately not `ToSchema`). The doc
+    // comment must stay verbatim: utoipa copies it into `openapi.json`.
     /// `user` on register (admin only via the T12 CLI).
-    pub role: String,
+    #[schema(value_type = String)]
+    pub role: Role,
 }
 
 /// `POST /api/v1/auth/register → 201` body.

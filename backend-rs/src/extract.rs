@@ -27,7 +27,11 @@ use garde::Validate;
 use serde::{Deserialize, de::DeserializeOwned};
 use tower_sessions::Session;
 
-use crate::{common::ids::UserId, error::AppError, state::AppState};
+use crate::{
+    common::ids::{Role, UserId},
+    error::AppError,
+    state::AppState,
+};
 
 /// Strict pagination query (`?page=&limit=`).
 ///
@@ -278,7 +282,7 @@ pub struct AuthSession {
     /// Normalized session email.
     pub email: String,
     /// Session role (`user` / `admin`).
-    pub role: String,
+    pub role: Role,
 }
 
 impl FromRequestParts<AppState> for AuthSession {
@@ -299,20 +303,19 @@ impl FromRequestParts<AppState> for AuthSession {
             .get("email")
             .await
             .map_err(|_| AppError::Unauthorized)?;
-        let role: Option<String> = session
+        let role: Option<Role> = session
             .get("role")
             .await
             .map_err(|_| AppError::Unauthorized)?;
         match (user_id, email, role) {
-            (Some(id), Some(email), Some(role))
-                if id > 0 && !email.is_empty() && !role.is_empty() =>
-            {
-                Ok(Self {
-                    user_id: UserId::from(id),
-                    email,
-                    role,
-                })
-            }
+            // The enum can no longer be empty (an unknown session value
+            // fails the `Role` deserialize above), so only `id`/`email`
+            // need emptiness guards.
+            (Some(id), Some(email), Some(role)) if id > 0 && !email.is_empty() => Ok(Self {
+                user_id: UserId::from(id),
+                email,
+                role,
+            }),
             _ => Err(AppError::Unauthorized),
         }
     }

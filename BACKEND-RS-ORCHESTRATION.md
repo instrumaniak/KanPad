@@ -742,3 +742,29 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
   branch `rs-t58-ergonomics`. Then T59 → {T60 ∥ T61, one at a time} → T62.
   **`src/common/time.rs` does not exist yet, `ownership.rs` is still a 1-line stub, `format_timestamp`
   is still duplicated 9× — that is T59's whole point, do not "tidy" it during T58.**
+
+## T58 merged 2026-10-23 — the public error API stops leaking `garde` and stringly values
+
+- **Three slices, one branch (`rs-t58-ergonomics`, worktree `KanPad-wt/wt-t58`), FF-merged:**
+  `02bbffcf` `AppEnv` enum (manual `Deserialize` keeps the `APP_ENV must be one of …` boot message;
+  the `validate()` whitelist is gone because the type cannot hold a bad value) →
+  `5d4b4221` `Role { User, Admin }` in `common::ids` (`AuthSession`/`StoredUser`/`UserData`;
+  `UserData.role` keeps `#[schema(value_type = String)]`, so **`openapi.json` is byte-identical** and
+  no `Role` component appears; `role_from_db` turns an unknown VARCHAR into 500) →
+  `cdc05c48` `AppError::Validation(Vec<FieldError>)` + `impl From<garde::Report>` +
+  `AppResult<T>` + `#[non_exhaustive]` (the rendered `detail` is rebuilt exactly as garde's
+  `Report` Display did, so the problem body is unchanged).
+- **Gates:** `fmt` 0 | `clippy … -D warnings -A clippy::pedantic` 0 | lib **77/77** | api **101/101** |
+  `sqlx prepare --check` 0 (**no `.sqlx/` change** — no SQL text moved) | `openapi_snapshot` 3/3
+  (`openapi.json` untouched). `53f477a1` records the four ACs in `50-tasks.md`.
+- **Touch-list deviations (mechanical only):** `tests/api/{helpers,auth_session,users}.rs` fixtures,
+  one `#[cfg(test)]` `AuthSession` literal in `cards/routes.rs`, and the `AppError::Validation(report)`
+  call sites in `extract.rs`, `columns/routes.rs`, `notes/store.rs`, `cards/routes.rs` → `AppError::from`.
+  A public enum variant's type change cannot be contained to the files that name the variant.
+- **Progress:** 53/58 deliverables ≈ **91.4%**; Phase 7 **12/16** (T54–T70, no T64).
+- **NEXT: T59** — shared-kernel DRY (`common/time.rs` owns `format_timestamp`; delete the 8 copies),
+  `common/ownership.rs` owns the 4 `check_*_owned` helpers, delete `db::with_executor`, collapse the
+  duplicate `AppError::Json` arm, `problem_response(impl Into<String>)`, **`/ready` into `ApiDoc`**
+  (the phase's only `openapi.json` + `schema.d.ts` path change), and replace the hand-rolled
+  `_sqlx_migrations` journal in `main.rs` with `sqlx::Migrator`. Slice it: time → ownership → error/db/main
+  → `/ready` + regen.

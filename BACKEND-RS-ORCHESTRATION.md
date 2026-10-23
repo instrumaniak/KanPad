@@ -797,3 +797,48 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
   `lib.rs`, `main.rs`, `state.rs`, `config.rs`. Then T61 (deadlock retry 1213/1205 + READ COMMITTED
   before `BEGIN` + `DB_MAX_CONNECTIONS`) and T62 (coverage floor, SHA pins, `.dockerignore`,
   `HEALTHCHECK`, and the stale `Dockerfile:29` `sqlx.toml` COPY that will be the next CI red).
+
+## T60 merged 2026-10-23 — `/metrics` on its own listener, pattern labels, JSON-in-prod
+
+- **Four commits, one branch (`rs-t60-observability`, worktree `KanPad-wt/wt-t60`), FF-merged:**
+  `4d9be5c9` the registry (`src/metrics.rs`, ~490 lines with 10 unit tests) + `METRICS_PORT`
+  (`Option<u16>`, defaults `None`, `0` rejected) → `4bc888cc` wiring (`AppState.metrics`,
+  `acquire_timed()`, `track_http_metrics`, `metrics_router`, `tests/api/metrics.rs` 5 tests) →
+  `b564d381` the separate listener, the 10 s bounded `pool.close()`, and JSON logs →
+  `dd3ba477` the six ACs recorded in `50-tasks.md`.
+- **No new crate, deliberately.** A process-global recorder (the `metrics` crate's model) cannot be
+  isolated per test — the integration suites build dozens of apps in one process — and it would make
+  the "a scrape does not record itself" AC unprovable. `metrics::Metrics` is a per-`AppState`
+  `BTreeMap` + atomics: request counter keyed by (method, matched pattern, status), two fixed-bucket
+  histograms, an in-flight gauge, a throttle counter, and best-effort `/proc` process series.
+- **The route label is `MatchedPath`, never `Uri::path()`.** `999` and `888` fold into ONE
+  `route="/api/v1/cards/{id}"` series (asserted); an unmatched request is `"unknown"` (a `/*`
+  fallback pattern is filtered too). A raw path would let any client mint unbounded series.
+- **Layer placement is load-bearing.** `track_http_metrics` is the OUTERMOST layer of the shared
+  stack but still applied via `Router::layer` (so routing has already set `MatchedPath`) and it sits
+  OUTSIDE the timeout layer: a timed-out handler future is dropped, so an in-flight increment inside
+  the timeout would never be paired with its decrement.
+- **Fail closed:** `metrics_addr()` is `None` unless `METRICS_PORT` is set; `main.rs` binds a second
+  socket only then. The main app 404s `/metrics` (asserted), and the metrics router has no tracking
+  middleware and is never merged into `create_app`.
+- **Logs:** `tracing-subscriber` gained `json`; `log_json`/`init_tracing`/`init_tracing_from_env`
+  live in the library. `main` picks the format from a LENIENT `APP_ENV` parse BEFORE
+  `Settings::load()` — a bad `DATABASE_URL` must still be logged in the right format — while
+  `Settings::load()` keeps the strict rejection.
+- **Live probes (not just tests):** test env `PORT=13001 METRICS_PORT=19090` → `/health` 200, main
+  `/metrics` 404, `/api/v1/cards/999` 401 recorded as the pattern, `unknown` 404 series, pool gauges,
+  acquire histogram, human logs, `database pool closed`. Production `13002/19091` → **6/6** log lines
+  parse as one JSON object each.
+- **Gates:** `fmt` 0 | `clippy … -D warnings -A clippy::pedantic` 0 | lib **90/90** | api **106/106** |
+  `sqlx prepare --check` 0 (`.sqlx/` unchanged — no SQL text moved).
+- **Touch-list deviations (justified in the ledger):** new `src/metrics.rs`; `src/db.rs` for the
+  `acquire_time_level(Info)` line the spec itself requires; `tests/api/{metrics.rs,api.rs}`.
+  (`log::LevelFilter` has `Info`, not `INFO`; `WithGracefulShutdown` is spawned directly.)
+- **Progress:** 55/60 deliverables ≈ **91.7%**; Phase 7 **14/16**.
+- **NEXT: T61** — `move_card` retry must match MySQL error **NUMBERS** (`1213` AND `1205`; `1205` is
+  SQLSTATE `HY000`, so a `40001`-only match silently misses lock-wait timeouts), explicitly
+  `ROLLBACK` the WHOLE transaction (a `1205` rolls back only the statement), run the move tx at
+  `READ COMMITTED` issued **before** `BEGIN` (`SET TRANSACTION …` inside a tx is error **1568**;
+  `SET SESSION …` leaks onto the pooled connection), env-driven `DB_MAX_CONNECTIONS`/
+  `DB_MIN_CONNECTIONS` (10/1), and a test that proves the retry path is TAKEN. Then T62 (the stale
+  `Dockerfile:29` `sqlx.toml` COPY is the next guaranteed CI red).

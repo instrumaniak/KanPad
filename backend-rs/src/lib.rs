@@ -28,8 +28,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use docs::HealthResponse;
-use error::{AppError, capture_request_context, handle_timeout};
+use docs::{HealthResponse, ReadyResponse};
+use error::{AppError, ProblemDetails, capture_request_context, handle_timeout};
 use secrecy::ExposeSecret;
 use sha2::{Digest, Sha256, Sha512};
 use state::AppState;
@@ -723,6 +723,14 @@ pub async fn health() -> Json<HealthResponse> {
 /// `503` (a wrong password is "not ready", not a 500). Fixed strings only:
 /// driver errors can name users/hosts, so neither the error nor the URL is
 /// interpolated into the body or the logs.
+#[utoipa::path(
+    get,
+    path = "/ready",
+    responses(
+        (status = 200, body = ReadyResponse),
+        (status = 503, body = ProblemDetails, description = "Database unreachable")
+    )
+)]
 #[tracing::instrument(skip(state, headers))]
 pub async fn ready(
     State(state): State<AppState>,

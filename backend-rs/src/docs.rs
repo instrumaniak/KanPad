@@ -30,6 +30,16 @@ pub struct HealthResponse {
     pub status: String,
 }
 
+/// Readiness response body `{status:"ok",db:"up"}` (`503` problem+json when
+/// the database is unreachable).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReadyResponse {
+    /// Always `"ok"` on `200`.
+    pub status: String,
+    /// Always `"up"` on `200`.
+    pub db: String,
+}
+
 /// Aggregated API documentation: every served handler path, every top-level
 /// DTO, the `Page<T>` list envelopes, and the shared problem+json error
 /// schemas. Rendered by `export-openapi` (boots no pool, no sessions) and
@@ -39,6 +49,7 @@ pub struct HealthResponse {
     info(title = "KanPad backend-rs", version = "0.1.0"),
     paths(
         crate::health,
+        crate::ready,
         crate::features::auth::routes::register,
         crate::features::auth::routes::login,
         crate::features::auth::routes::logout,
@@ -89,6 +100,7 @@ pub struct HealthResponse {
     ),
     components(schemas(
         HealthResponse,
+        ReadyResponse,
         ProblemDetails,
         FieldError,
         crate::features::auth::types::RegisterInput,

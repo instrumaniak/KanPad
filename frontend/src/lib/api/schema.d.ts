@@ -764,6 +764,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readiness probe: `SELECT 1` through the pool. `200 {status:"ok",db:"up"}`
+         *     when MySQL answers, `503` problem+json otherwise — ANY pool error maps to
+         *     `503` (a wrong password is "not ready", not a 500). Fixed strings only:
+         *     driver errors can name users/hosts, so neither the error nor the URL is
+         *     interpolated into the body or the logs.
+         */
+        get: operations["ready"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1605,6 +1628,16 @@ export interface components {
             name: string;
             /** @description `updated_at`, same shape. */
             updated_at: string;
+        };
+        /**
+         * @description Readiness response body `{status:"ok",db:"up"}` (`503` problem+json when
+         *     the database is unreachable).
+         */
+        ReadyResponse: {
+            /** @description Always `"up"` on `200`. */
+            db: string;
+            /** @description Always `"ok"` on `200`. */
+            status: string;
         };
         /** @description `POST /api/v1/auth/register` body (T10 handler). */
         RegisterInput: {
@@ -3757,6 +3790,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    ready: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadyResponse"];
+                };
+            };
+            /** @description Database unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

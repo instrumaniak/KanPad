@@ -1556,6 +1556,36 @@
           }
         }
       }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "crate"
+        ],
+        "summary": "Readiness probe: `SELECT 1` through the pool. `200 {status:\"ok\",db:\"up\"}`\nwhen MySQL answers, `503` problem+json otherwise — ANY pool error maps to\n`503` (a wrong password is \"not ready\", not a 500). Fixed strings only:\ndriver errors can name users/hosts, so neither the error nor the URL is\ninterpolated into the body or the logs.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3292,6 +3322,24 @@
           "updated_at": {
             "type": "string",
             "description": "`updated_at`, same shape."
+          }
+        }
+      },
+      "ReadyResponse": {
+        "type": "object",
+        "description": "Readiness response body `{status:\"ok\",db:\"up\"}` (`503` problem+json when\nthe database is unreachable).",
+        "required": [
+          "status",
+          "db"
+        ],
+        "properties": {
+          "db": {
+            "type": "string",
+            "description": "Always `\"up\"` on `200`."
+          },
+          "status": {
+            "type": "string",
+            "description": "Always `\"ok\"` on `200`."
           }
         }
       },

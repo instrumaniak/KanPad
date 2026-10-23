@@ -768,3 +768,32 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
   (the phase's only `openapi.json` + `schema.d.ts` path change), and replace the hand-rolled
   `_sqlx_migrations` journal in `main.rs` with `sqlx::Migrator`. Slice it: time → ownership → error/db/main
   → `/ready` + regen.
+
+## T59 merged 2026-10-23 — one owner for time + ownership, and `/ready` documented
+
+- **Five commits, one branch (`rs-t59-shared-kernel`, worktree `KanPad-wt/wt-t59`), FF-merged:**
+  `a5fe7634` `common::time::format_timestamp` is the single definition (the other 9 copies became
+  `pub use` re-exports, so every `use super::types::{…}` site compiled untouched) →
+  `2464fb92` + `ce5fe500` `common::ownership` now owns **six** `check_*_owned` helpers
+  (board/card/column/label/project/tags): the AC is "none in `src/features/`", so the duplicates in
+  `columns`, `notes` and `checklists` moved as well, not just cards/boards. SQL text identical, so
+  **`.sqlx/` stayed byte-identical** (sqlx normalizes whitespace in the query hash) →
+  `f7e9cde3` deleted `db::with_executor` (zero call sites), collapsed the two identical `Json` arms,
+  widened `problem_response` to `impl Into<String>` → `c6f11995` documented `GET /ready`
+  (`ReadyResponse` 200 / `ProblemDetails` 503) and regenerated `openapi.json` **and**
+  `schema.d.ts` in the same commit.
+- **(g) was already done:** `main.rs` has used `sqlx::migrate!` + `Migrate::list_applied_migrations`
+  since T66 (`afd87c0e`) — the hand-rolled `_sqlx_migrations` journal is gone. Do not re-open it.
+- **Gates:** `fmt` 0 | `clippy … -D warnings -A clippy::pedantic` 0 | lib **78/78** | api **101/101**
+  (snapshot 3/3) | `sqlx prepare --check` 0 | `gen:api --check` "up to date" | `tsc --noEmit` 0.
+  AC greps: `format_timestamp` definitions **1**, `check_*_owned` in `src/features/` **0**.
+- **Progress:** 54/59 deliverables ≈ **91.5%**; Phase 7 **13/16**.
+- **NEXT: T60** — observability. `tracing-subscriber` `json` feature selected by `AppEnv`;
+  `/metrics` (Prometheus text) on a **separate `METRICS_PORT` listener** (unset = no endpoint,
+  fail-closed), route label from `MatchedPath` (never the raw URI; 404/405 → `"unknown"`),
+  no scrape feedback loop, `kanpad_db_pool_*` from `Pool::size()/num_idle()` + our own
+  `acquire_timed()` histogram (sqlx has no pool metrics), throttle-rejection counter, process
+  metrics, and a bounded (10 s default) graceful pool close. Touch: `Cargo.toml`, `Cargo.lock`,
+  `lib.rs`, `main.rs`, `state.rs`, `config.rs`. Then T61 (deadlock retry 1213/1205 + READ COMMITTED
+  before `BEGIN` + `DB_MAX_CONNECTIONS`) and T62 (coverage floor, SHA pins, `.dockerignore`,
+  `HEALTHCHECK`, and the stale `Dockerfile:29` `sqlx.toml` COPY that will be the next CI red).

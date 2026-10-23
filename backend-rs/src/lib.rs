@@ -684,6 +684,48 @@ pub fn metrics_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Whether logs must be one JSON object per line. Production only: a log
+/// shipper parses JSON, while dev/test keep the human `fmt` output.
+pub fn log_json(env: config::AppEnv) -> bool {
+    env == config::AppEnv::Production
+}
+
+/// Init process-wide tracing once: `RUST_LOG` respected, sane `info` default
+/// without it. Re-init (tests) is ignored rather than panicking.
+pub fn init_tracing(env: config::AppEnv) {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("backend_rs=info,tower_http=info"));
+    if log_json(env) {
+        let _ = tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .try_init();
+    } else {
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    }
+}
+
+/// Boot helper: choose the log format from `APP_ENV` BEFORE the rest of the
+/// configuration has been validated — a bad `DATABASE_URL` must still be
+/// reported in the right format. An unset/invalid value falls back to the
+/// `development` default; `Settings::load` then rejects it properly.
+pub fn init_tracing_from_env() {
+    let env = std::env::var("APP_ENV")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or_default();
+    init_tracing(env);
+}
+
+/// Address of the SEPARATE metrics listener, or `None` when `METRICS_PORT` is
+/// unset — fail closed: no metrics endpoint exists at all unless an operator
+/// opts in.
+pub fn metrics_addr(settings: &config::Settings) -> Option<SocketAddr> {
+    settings
+        .metrics_port
+        .map(|port| SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))
+}
+
 /// Render the registry as Prometheus text (version 0.0.4).
 async fn metrics_endpoint(State(state): State<AppState>) -> Response {
     let body = state
@@ -1004,6 +1046,87 @@ mod tests {
                 "path: {path}"
             );
         }
+    }
+
+    /// T60: production is JSON, development/test stay human-readable. Renders
+    /// REAL events through the same builders `init_tracing` selects.
+    #[test]
+    fn production_logs_are_json_development_logs_are_human() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct TestWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for TestWriter {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend_from_slice(buffer);
+                Ok(buffer.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TestWriter {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        fn render_one_event(json: bool) -> String {
+            let writer = TestWriter::default();
+            let buffer = writer.0.clone();
+            if json {
+                let subscriber = tracing_subscriber::fmt()
+                    .json()
+                    .with_writer(writer)
+                    .finish();
+                tracing::subscriber::with_default(subscriber, || tracing::info!("json probe"));
+            } else {
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_writer(writer)
+                    .finish();
+                tracing::subscriber::with_default(subscriber, || tracing::info!("json probe"));
+            }
+            let bytes = buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            String::from_utf8(bytes).expect("logs are UTF-8")
+        }
+
+        assert!(log_json(config::AppEnv::Production));
+        assert!(!log_json(config::AppEnv::Development));
+        assert!(!log_json(config::AppEnv::Test));
+
+        let json_line = render_one_event(true);
+        println!("rendered JSON log line: {json_line}");
+        let parsed: serde_json::Value =
+            serde_json::from_str(json_line.trim()).expect("production line is ONE JSON object");
+        assert_eq!(parsed["level"], "INFO");
+        assert_eq!(parsed["fields"]["message"], "json probe");
+
+        let human_line = render_one_event(false);
+        assert!(
+            serde_json::from_str::<serde_json::Value>(human_line.trim()).is_err(),
+            "development output must stay human-readable, not JSON: {human_line:?}"
+        );
+        assert!(human_line.contains("json probe"), "{human_line:?}");
+    }
+
+    /// T60: the metrics listener does not exist unless opted in.
+    #[test]
+    fn metrics_addr_fails_closed() {
+        assert!(metrics_addr(&config::Settings::default()).is_none());
+        let settings = config::Settings {
+            metrics_port: Some(9090),
+            ..Default::default()
+        };
+        let addr = metrics_addr(&settings).expect("opt-in yields an address");
+        assert_eq!(addr.port(), 9090);
     }
 
     #[tokio::test]

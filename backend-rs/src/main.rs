@@ -2,13 +2,17 @@
 //! `anyhow` lives only here, never in the library.
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use sqlx::{MySqlPool, migrate::Migrate};
 use tower_sessions::session_store::ExpiredDeletion;
 
-use backend_rs::{build_state, config::Settings, create_app_with_csp};
+use backend_rs::{
+    build_state, config::Settings, create_app_with_csp, init_tracing_from_env, metrics_addr,
+    metrics_router,
+};
 
 /// KanPad Rust API server.
 #[derive(Debug, Parser)]
@@ -77,17 +81,13 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Init process-wide tracing once: `RUST_LOG` respected (`RUST_LOG=debug`
-/// raises verbosity), sane `info` default without it. Re-init (tests) is
-/// ignored rather than panicking.
-fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("backend_rs=info,tower_http=info"));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-}
+/// Upper bound on the post-drain pool close: `Pool::close()` waits for
+/// checked-out connections, and one stuck query must not hang shutdown
+/// forever.
+const POOL_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 async fn serve(auto_migrate: bool) -> Result<()> {
-    init_tracing();
+    init_tracing_from_env();
     let settings = Settings::load().context("failed to load settings")?;
     let state = build_state(settings);
     if auto_migrate {
@@ -136,6 +136,31 @@ async fn serve(auto_migrate: bool) -> Result<()> {
         .await
         .with_context(|| format!("failed to bind port {port}"))?;
     tracing::info!(instance_id = %instance_id, port, "backend-rs listening");
+    // Prometheus listener: a SEPARATE socket. `METRICS_PORT` unset means no
+    // metrics endpoint at all (fail closed); the router is never mounted on
+    // the app, so a scrape bypasses auth/CORS/throttling and cannot record
+    // itself.
+    let metrics_server = match metrics_addr(&state.settings) {
+        Some(address) => {
+            let listener = tokio::net::TcpListener::bind(address)
+                .await
+                .with_context(|| format!("failed to bind metrics listener on {address}"))?;
+            tracing::info!(instance_id = %instance_id, %address, "metrics listener bound");
+            let metrics_app = metrics_router(state.clone());
+            Some(tokio::spawn(async move {
+                axum::serve(listener, metrics_app)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await
+            }))
+        }
+        None => {
+            tracing::info!(
+                instance_id = %instance_id,
+                "METRICS_PORT unset: no metrics endpoint is exposed"
+            );
+            None
+        }
+    };
     // `ConnectInfo` feeds the T30 governor's peer-IP key extractor (without
     // it every connection would share the fallback bucket).
     axum::serve(
@@ -145,13 +170,28 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .context("server error")?;
+    if let Some(handle) = metrics_server {
+        handle.abort();
+        let _ = handle.await;
+    }
     // HTTP drained (SIGINT/SIGTERM): close idle MySQL connections cleanly,
     // then log shutdown with the instance id for correlation.
     tracing::info!(
         instance_id = %instance_id,
         "shutdown signal received: draining, then closing pool"
     );
-    state.pool.close().await;
+    match tokio::time::timeout(POOL_CLOSE_TIMEOUT, state.pool.close()).await {
+        Ok(()) => {
+            tracing::info!(instance_id = %instance_id, "database pool closed");
+        }
+        Err(_) => {
+            tracing::warn!(
+                instance_id = %instance_id,
+                timeout_secs = POOL_CLOSE_TIMEOUT.as_secs(),
+                "database pool close timed out; exiting anyway"
+            );
+        }
+    }
     sweeper_handle.abort();
     let _ = sweeper.await;
     tracing::info!(instance_id = %instance_id, "backend-rs shutdown complete");
@@ -185,7 +225,7 @@ async fn applied_versions(
 }
 
 async fn migrate(op: MigrateOp) -> Result<()> {
-    init_tracing();
+    init_tracing_from_env();
     let settings = Settings::load().context("failed to load settings")?;
     let state = build_state(settings);
     let migrator = sqlx::migrate!("./migrations");
@@ -248,7 +288,7 @@ async fn migrate(op: MigrateOp) -> Result<()> {
 /// DB/config) — `process::exit` is deliberate: there is no server to drain.
 async fn create_admin(email: Option<String>, password: Option<String>, force: bool) -> Result<()> {
     use backend_rs::admin::{AdminExit, CreateAdminArgs};
-    init_tracing();
+    init_tracing_from_env();
     let settings = match Settings::load() {
         Ok(settings) => settings,
         Err(err) => {

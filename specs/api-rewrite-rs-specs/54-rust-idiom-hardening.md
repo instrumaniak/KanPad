@@ -1,12 +1,16 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status: PARTIALLY IMPLEMENTED (2026-10-22, updated after T69).** This file
+> **Status: PARTIALLY IMPLEMENTED (updated 2026-10-23 — after T60 merged + T61 WIP).** This file
 > + `50-tasks.md` Phase 7 are the **work order**; executors implement T54–T69
 > and the orchestrator flips each AC as it lands (single writer — parallel
 > agents editing `50-tasks.md` is how the AC table drifts).
-> **Nine of the fourteen tasks have landed** (the table below); T56, T58–T62
-> remain PLAN ONLY, and **T69 (the frontend's 15 `tsc` errors)** was added to
-> Phase 7 after it surfaced as the pipeline's third latent red.
+> **Phase 7 core (T54–T67): 11 merged (`T54`–`T57`, `T58`–`T60`, `T63`–`T67`
+> except `T61`/`T62`) + 1 WIP (`T61`) + 1 pending (`T62`)** — see the table
+> below. The banner `"Nine of the fourteen … T58–T62 remain PLAN ONLY"` was
+> stale: `T58` (`bc1e43dd`), `T59` (`aa9cc45e`), `T60` (`63f793fe`) and `T56`
+> (`ddbcf43b`) are all `DONE`. `T61` (`wt-t61`) is active (2 commits, dirty
+> `cards_move.rs`); `T62` (`rs-t62-gates`) has no worktree. `T69` (frontend
+> `tsc`) landed in `93ca7016` and is included in the count.
 >
 > **The tree no longer has** `NODE_ENV` + `connect.sid` (T54), **a workflow
 > that has never run** (T55 moved it to the repo root — and T68 repaired the
@@ -29,7 +33,9 @@
 > | **T68** | **DONE** | `0b03ea58` | the CI **first-run defect repair**: the `cargo audit` step deleted (it contradicted the committed `deny.toml`) + the SHOW CREATE TABLE assert fixed (it queried the pre-2026-10-19 `tower_sessions` schema) + `cargo-deny` pinned |
 > | **T69** | **DONE** | `93ca7016` | the **frontend** type errors: 15 → **0** `tsc` errors (the Nest-era `boardCount` leftover, the optional-vs-nullable drift from the hand-written `Omit<CardSummary, …>` surgery, the missing `checklists` fixture field, `column_id: number | null`); `npm run build` + `gen:api --check` + vitest **723/723**; **no `schema.d.ts` edit** (the generated type is the contract) |
 > | **T56** | **DONE** | `ddbcf43b` | **security hardening**: `CsrfLayer` (the Go 1.25 `CrossOriginProtection` algorithm — same-origin writes work with an **empty** allowlist instead of 403ing every write), the **canonical `CORS_ORIGINS`** boot gate (a trailing slash / uppercase host / explicit default port / path is a boot error naming the entry, because the layer matches origins **byte-for-byte**), the **CSP** with `connect-src` = `'self'` + the allowlist and `script-src` = `'self'` + a **boot-computed** `sha256-` hash of the SPA's inline theme bootstrap (no `'unsafe-inline'`/`'unsafe-eval'`), and **span redaction** on all **46** handlers (`skip(state)` → `skip(state, auth, input)`) with a new CI grep gate |
-> | T58, T59, T60, T61, T62 | pending | — | see `50-tasks.md` Phase 7 |
+> | T58, T59, T60 | **DONE** | `bc1e43dd` / `aa9cc45e` / `63f793fe` | merged (see git) — table updated |
+> | T61 | **WIP** | `0cb7366f` (worktree `wt-t61`) | 2 commits (`81f57106` pool sizing + `0cb7366f` READ COMMITTED/retry); dirty `cards_move.rs` — active |
+> | T62 | **PENDING** | — (`rs-t62-gates`, no worktree) | aggregate gate (Docker `.dockerignore`, `HEALTHCHECK`, digest pins, `cargo-llvm-cov` floor, `Dockerfile:29` `sqlx.toml` COPY removed by T66) |
 >
 > **The three corrections this file's own text needed** (the verification
 > matrix's clippy command, the "five store files" that are actually **eight**,

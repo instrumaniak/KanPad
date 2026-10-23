@@ -122,12 +122,7 @@ pub struct ProjectBody {
     pub data: ProjectResponse,
 }
 
-/// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
-/// fixed-shape UTC ISO-8601 string (micros always present, lexicographically
-/// sortable). Single owner: the store calls this, handlers never format.
-pub fn format_timestamp(value: &chrono::NaiveDateTime) -> String {
-    value.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
-}
+pub use crate::common::time::format_timestamp;
 
 #[cfg(test)]
 mod tests {

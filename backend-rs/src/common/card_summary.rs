@@ -80,13 +80,7 @@ pub struct CardSummary {
     pub checklist_progress: Option<ChecklistProgress>,
 }
 
-/// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
-/// fixed-shape UTC ISO-8601 string (micros always present — same shape as the
-/// boards/projects helpers, kept per-module so features never import each
-/// other's stores).
-pub fn format_timestamp(value: &chrono::NaiveDateTime) -> String {
-    value.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
-}
+pub use crate::common::time::format_timestamp;
 
 /// One summary row (decodes the [`fetch_board_cards`] select).
 #[derive(Debug, Clone)]

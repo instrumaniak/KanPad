@@ -112,9 +112,4 @@ pub struct ChecklistItemBody {
     pub data: ChecklistItemResponse,
 }
 
-/// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
-/// fixed-shape UTC ISO-8601 string (same shape as the cards/columns helpers;
-/// kept per-feature so features never import each other's stores).
-pub fn format_timestamp(value: &chrono::NaiveDateTime) -> String {
-    value.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
-}
+pub use crate::common::time::format_timestamp;

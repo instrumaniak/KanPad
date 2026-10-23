@@ -193,13 +193,7 @@ pub struct CardBody {
     pub data: CardDetailResponse,
 }
 
-/// Render a `DATETIME(6)` (server pinned UTC per `30-db-schema.md`) as a
-/// fixed-shape UTC ISO-8601 string (micros always present — same shape as the
-/// boards/columns helpers, kept per-feature so features never import each
-/// other's stores).
-pub fn format_timestamp(value: &chrono::NaiveDateTime) -> String {
-    value.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
-}
+pub use crate::common::time::format_timestamp;
 
 /// Parse a validated `due_date` input into the `DATETIME(6)` naive UTC value
 /// stored in `cards.due_date`. Accepts the same shapes as

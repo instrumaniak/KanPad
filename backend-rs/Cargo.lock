@@ -226,6 +226,7 @@ dependencies = [
  "dotenvy",
  "envy",
  "garde",
+ "log",
  "rmp-serde",
  "rpassword",
  "secrecy",

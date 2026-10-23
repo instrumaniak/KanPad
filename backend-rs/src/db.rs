@@ -14,6 +14,9 @@ pub fn pool_options() -> MySqlPoolOptions {
         .idle_timeout(Some(Duration::from_secs(600)))
         .max_lifetime(Some(Duration::from_secs(30 * 60)))
         .test_before_acquire(true)
+        // A slow acquire must also be a tracing event; `log::LevelFilter` is
+        // the type sqlx expects.
+        .acquire_time_level(log::LevelFilter::Info)
 }
 
 /// Whether `name` is usable as a plain database identifier.

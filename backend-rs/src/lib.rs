@@ -24,7 +24,7 @@ use std::{
 use axum::{
     Json, Router,
     error_handling::HandleErrorLayer,
-    extract::{ConnectInfo, Request, State},
+    extract::{ConnectInfo, MatchedPath, Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -435,6 +435,16 @@ pub fn create_app_with_csp(state: AppState, script_hashes: Vec<String>) -> Route
                 }
             },
         ))
+        // [T60] HTTP metrics, OUTERMOST of the shared stack (applied after
+        // routing, so `MatchedPath` is still visible; measured latency
+        // includes timeout/compression work). It must stay outside the
+        // timeout layer: a timed-out handler future is DROPPED, so an
+        // in-flight increment inside the timeout would never be paired with
+        // its decrement.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            track_http_metrics,
+        ))
         .with_state(state);
 
     // [1] prod HSTS, outermost. Omitted outside production (HSTS on
@@ -625,6 +635,68 @@ fn governor_rejection(error: GovernorError) -> Response {
             AppError::Internal(error::Internal).into_response()
         }
     }
+}
+
+/// Record one finished request: counter keyed by (method, MATCHED ROUTE
+/// PATTERN, status), latency histogram, in-flight gauge, and the throttle
+/// counter (the governor is the only producer of 429).
+///
+/// The route label is deliberately `MatchedPath` — never `Uri::path()`: a raw
+/// path would let any client mint an unbounded number of series
+/// (`/api/v1/cards/1`, `/2`, `/3`, …). A request that reached a fallback has
+/// no pattern and is labelled `"unknown"`.
+async fn track_http_metrics(
+    State(state): State<AppState>,
+    matched: Option<MatchedPath>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let method = request.method().clone();
+    let started = std::time::Instant::now();
+    state.metrics.in_flight_inc();
+    let response = next.run(request).await;
+    state.metrics.in_flight_dec();
+    let route = matched
+        .as_ref()
+        .map(MatchedPath::as_str)
+        .filter(|path| !path.starts_with("/*"))
+        .unwrap_or("unknown");
+    state.metrics.observe_request(
+        method.as_str(),
+        route,
+        response.status().as_u16(),
+        started.elapsed(),
+    );
+    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        state.metrics.inc_throttle_rejection();
+    }
+    response
+}
+
+/// The `/metrics` router for the SEPARATE `METRICS_PORT` listener.
+///
+/// It deliberately has NO tracking middleware and is NEVER merged into
+/// `create_app`: a scrape must not record itself, and metrics are exposed
+/// only when an operator sets `METRICS_PORT` (fail closed).
+pub fn metrics_router(state: AppState) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics_endpoint))
+        .with_state(state)
+}
+
+/// Render the registry as Prometheus text (version 0.0.4).
+async fn metrics_endpoint(State(state): State<AppState>) -> Response {
+    let body = state
+        .metrics
+        .render(state.pool.size(), state.pool.num_idle());
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 /// Restrictive CORS from settings: explicit allowlist (no `Any`), cookie

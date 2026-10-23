@@ -53,6 +53,8 @@ mod health;
 mod helpers;
 #[path = "api/labels.rs"]
 mod labels;
+#[path = "api/metrics.rs"]
+mod metrics;
 #[path = "api/notes.rs"]
 mod notes;
 #[path = "api/openapi_snapshot.rs"]

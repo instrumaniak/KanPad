@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use sqlx::MySqlPool;
 
-use crate::{common::session_store::MySqlSessionStore, config::Settings, db};
+use crate::{common::session_store::MySqlSessionStore, config::Settings, db, metrics::Metrics};
 
 /// Composition-root state. Handlers take `State<AppState>`.
 #[derive(Debug, Clone)]
@@ -24,6 +24,8 @@ pub struct AppState {
     /// Per-replica id (`rust-<pid>-<epoch-ms>`), logged at boot/shutdown and
     /// available for log correlation.
     pub instance_id: String,
+    /// Per-state Prometheus registry (`/metrics`, T60).
+    pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
@@ -69,7 +71,23 @@ impl AppState {
             settings: Arc::new(settings),
             sessions,
             instance_id: new_instance_id(),
+            metrics: Arc::new(Metrics::new()),
         }
+    }
+
+    /// Acquire a pooled connection, recording the wait in
+    /// `kanpad_db_pool_acquire_duration_seconds`.
+    ///
+    /// sqlx exposes NO pool metrics type (verified on 0.8.6 and 0.9: there is
+    /// no `PoolMetrics` and no `metrics` feature), so the series is our own.
+    /// `db::pool_options()` pairs this with `acquire_time_level(INFO)`.
+    pub async fn acquire_timed(
+        &self,
+    ) -> Result<sqlx::pool::PoolConnection<sqlx::MySql>, sqlx::Error> {
+        let started = std::time::Instant::now();
+        let connection = self.pool.acquire().await?;
+        self.metrics.record_acquire(started.elapsed());
+        Ok(connection)
     }
 }
 

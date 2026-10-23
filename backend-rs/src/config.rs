@@ -152,6 +152,11 @@ pub struct Settings {
     /// Serve port. `0` is rejected.
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Prometheus metrics port (`METRICS_PORT`). `None` (the default) means
+    /// NO metrics listener at all — nothing is exposed unless an operator
+    /// opts in (fail closed). `0` is rejected.
+    #[serde(default)]
+    pub metrics_port: Option<u16>,
     /// Argon2id `t` cost. Tests pin `t=1` for speed; default `2`.
     #[serde(default = "default_hash_cost")]
     pub hash_cost: u32,
@@ -248,6 +253,7 @@ impl fmt::Debug for Settings {
             .debug_struct("Settings")
             .field("app_env", &self.app_env)
             .field("port", &self.port)
+            .field("metrics_port", &self.metrics_port)
             .field("hash_cost", &self.hash_cost)
             .field("session_secret", &"[redacted]")
             .field(
@@ -276,6 +282,7 @@ impl Default for Settings {
         Self {
             app_env: AppEnv::Test,
             port: 3001,
+            metrics_port: None,
             hash_cost: 1,
             session_secret: SecretString::new(
                 "test-session-secret-that-is-longer-than-32-bytes".into(),
@@ -460,6 +467,11 @@ impl Settings {
     fn validate(&self) -> Result<(), ConfigError> {
         if self.port == 0 {
             return Err(ConfigError::Invalid("PORT must be non-zero".to_string()));
+        }
+        if self.metrics_port == Some(0) {
+            return Err(ConfigError::Invalid(
+                "METRICS_PORT must be non-zero".to_string(),
+            ));
         }
         // The `APP_ENV` value whitelist is gone (T58): an unparseable value
         // can no longer reach `Settings` — `AppEnv`'s `Deserialize` rejects
@@ -1137,6 +1149,23 @@ mod tests {
             .validate()
             .expect("Default test settings must validate");
         assert_eq!(settings.app_env, AppEnv::Test);
+        // Fail closed: no metrics listener unless an operator opts in.
+        assert!(Settings::default().metrics_port.is_none());
+    }
+
+    /// AC (T60): `METRICS_PORT` is opt-in — `None` (unset) means no metrics
+    /// listener at all, and `0` is rejected like `PORT=0`.
+    #[test]
+    fn metrics_port_zero_is_rejected() {
+        let vars = with_overrides(&[("METRICS_PORT", "0")]);
+        let err = Settings::from_pairs(&vars).expect_err("METRICS_PORT=0 must fail boot");
+        assert!(
+            err.to_string().contains("METRICS_PORT"),
+            "the error must name the key: {err}"
+        );
+        let vars = with_overrides(&[("METRICS_PORT", "9090")]);
+        let settings = Settings::from_pairs(&vars).expect("METRICS_PORT=9090 must load");
+        assert_eq!(settings.metrics_port, Some(9090));
     }
 
     #[test]

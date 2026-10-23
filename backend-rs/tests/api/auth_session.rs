@@ -35,7 +35,7 @@ use axum::{
     body::Body,
     http::{HeaderMap, Request, StatusCode, header},
 };
-use backend_rs::config::Settings;
+use backend_rs::config::{AppEnv, Settings};
 use secrecy::SecretString;
 use sqlx::MySqlPool;
 
@@ -43,15 +43,15 @@ use super::helpers::{app_on_pool_with, assert_problem, cookie_jar, json_of, send
 
 /// Build the app on the `#[sqlx::test]` pool (in-process, no sweeper —
 /// `create_app` never spawns one), with session-secret / env overrides.
-fn app_with_env(pool: &MySqlPool, session_secret: Option<&str>, app_env: Option<&str>) -> Router {
+fn app_with_env(pool: &MySqlPool, session_secret: Option<&str>, app_env: Option<AppEnv>) -> Router {
     let mut settings = Settings::default();
     if let Some(secret) = session_secret {
         settings.session_secret = SecretString::new(secret.to_string().into_boxed_str());
     }
     if let Some(env) = app_env {
-        settings.app_env = env.to_string();
+        settings.app_env = env;
     }
-    if settings.app_env == "production" {
+    if settings.app_env == AppEnv::Production {
         settings.cors_origins = "https://app.example.com".to_string();
     }
     app_on_pool_with(pool, settings)
@@ -493,7 +493,7 @@ async fn auth_session_full_flow(pool: MySqlPool) {
 
     // 9. Prod cookie matrix: `__Host-kanpad.sid` + Secure, still
     //    HttpOnly + SameSite=Lax + Path=/, no Domain.
-    let prod = app_with_env(&pool, None, Some("production"));
+    let prod = app_with_env(&pool, None, Some(AppEnv::Production));
     let (status, headers, bytes) = send(
         prod,
         post(

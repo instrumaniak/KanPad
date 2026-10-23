@@ -103,7 +103,11 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use backend_rs::state::AppState;
-use backend_rs::{build_state, config::Settings, create_app};
+use backend_rs::{
+    build_state,
+    config::{AppEnv, Settings},
+    create_app,
+};
 use serde_json::Value;
 use sqlx::MySqlPool;
 use tower::ServiceExt;
@@ -134,7 +138,7 @@ pub(crate) const PROBLEM_BASE: &str = "https://kanpad.dev/problems";
 /// Test settings: `APP_ENV=test`, minimal Argon2 cost for speed.
 pub(crate) fn test_settings() -> Settings {
     Settings {
-        app_env: "test".to_string(),
+        app_env: AppEnv::Test,
         hash_cost: 1,
         port: 3001,
         // T05 added Settings fields with `Default` (compile-compat only).

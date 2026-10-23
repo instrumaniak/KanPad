@@ -76,12 +76,79 @@ pub const SESSION_COOKIE_NAME: &str = "kanpad.sid";
 /// `docs/data-migration-live.md` therefore needs the un-prefixed name.
 pub const HOST_COOKIE_PREFIX: &str = "__Host-";
 
+/// Runtime mode read from the `APP_ENV` env var (`development|test|
+/// production`). The wire format is UNCHANGED: the same three lowercase
+/// strings are accepted (and rejected with the same message) as before —
+/// only the in-memory representation is now a type, so an unknown value
+/// cannot exist past deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppEnv {
+    /// Local development (the `APP_ENV` default when unset).
+    #[default]
+    Development,
+    /// Automated tests.
+    Test,
+    /// Production hardening (Secure cookies, `__Host-` prefix, HSTS, CORS
+    /// deny-all default).
+    Production,
+}
+
+impl AppEnv {
+    /// The canonical lowercase spelling — the value `APP_ENV` accepts.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::Test => "test",
+            Self::Production => "production",
+        }
+    }
+}
+
+/// Renders the canonical lowercase spelling (`"production"`, …).
+impl fmt::Display for AppEnv {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Parses the canonical lowercase spelling; anything else is rejected with
+/// the SAME message the old string-whitelist `validate()` produced, so the
+/// boot error still names `APP_ENV` and its allowed set.
+impl std::str::FromStr for AppEnv {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "development" => Ok(Self::Development),
+            "test" => Ok(Self::Test),
+            "production" => Ok(Self::Production),
+            other => Err(format!(
+                "APP_ENV must be one of development|test|production, got {other:?}"
+            )),
+        }
+    }
+}
+
+/// Deserializes a string and runs it through [`AppEnv::from_str`] — this is
+/// what keeps the BOOT error (via `envy`) naming `APP_ENV` and the allowed
+/// set, exactly as the deleted whitelist block did.
+impl<'de> serde::Deserialize<'de> for AppEnv {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Application settings. Precedence: real environment > `.env` > defaults.
 #[derive(Clone, Deserialize)]
 pub struct Settings {
-    /// One of `development|test|production`.
-    #[serde(default = "default_app_env")]
-    pub app_env: String,
+    /// One of `development|test|production` (`APP_ENV`); defaults to
+    /// [`AppEnv::Development`] when the variable is unset.
+    #[serde(default)]
+    pub app_env: AppEnv,
     /// Serve port. `0` is rejected.
     #[serde(default = "default_port")]
     pub port: u16,
@@ -127,10 +194,6 @@ pub struct Settings {
     /// default = never trust it (spoof defense; honored in T30).
     #[serde(default)]
     pub trusted_proxies: String,
-}
-
-fn default_app_env() -> String {
-    "development".to_string()
 }
 
 fn default_port() -> u16 {
@@ -207,11 +270,11 @@ impl fmt::Debug for Settings {
 
 /// Test/dev convenience defaults (never used at boot — `main` always calls
 /// [`Settings::load`]). Keeps integration-test construction one line:
-/// `Settings { app_env: "test".into(), ..Default::default() }`.
+/// `Settings { app_env: AppEnv::Test, ..Default::default() }`.
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            app_env: "test".to_string(),
+            app_env: AppEnv::Test,
             port: 3001,
             hash_cost: 1,
             session_secret: SecretString::new(
@@ -376,7 +439,7 @@ impl Settings {
     /// Production predicate (secure cookies, `__Host-` prefix, HSTS, CORS
     /// deny-all default).
     pub fn is_production(&self) -> bool {
-        self.app_env == "production"
+        self.app_env == AppEnv::Production
     }
 
     /// Session cookie name by env (`10-architecture.md` Sessions/Cookie):
@@ -395,18 +458,13 @@ impl Settings {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
-        match self.app_env.as_str() {
-            "development" | "test" | "production" => {}
-            other => {
-                return Err(ConfigError::Invalid(format!(
-                    "APP_ENV must be one of development|test|production, got {other:?}"
-                )));
-            }
-        }
         if self.port == 0 {
             return Err(ConfigError::Invalid("PORT must be non-zero".to_string()));
         }
-        if self.app_env == "production" && self.hash_cost < 2 {
+        // The `APP_ENV` value whitelist is gone (T58): an unparseable value
+        // can no longer reach `Settings` — `AppEnv`'s `Deserialize` rejects
+        // it at deserialization with the same message the old block built.
+        if self.app_env == AppEnv::Production && self.hash_cost < 2 {
             return Err(ConfigError::Invalid(
                 "HASH_COST must be >= 2 in production".to_string(),
             ));
@@ -601,6 +659,8 @@ fn parse_port(raw: &str) -> Result<u16, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     // NOTE: the tests build a KEY/VALUE MAP and load from it
@@ -1076,7 +1136,7 @@ mod tests {
         settings
             .validate()
             .expect("Default test settings must validate");
-        assert_eq!(settings.app_env, "test");
+        assert_eq!(settings.app_env, AppEnv::Test);
     }
 
     #[test]
@@ -1093,13 +1153,15 @@ mod tests {
                 with_overrides(&[("APP_ENV", env)])
             };
             let settings = Settings::from_pairs(&vars).expect("env must load");
+            let parsed = AppEnv::from_str(env).expect("loop env is a valid AppEnv");
+            assert_eq!(settings.app_env, parsed, "env: {env}");
             assert_eq!(settings.session_cookie_name(), name, "env: {env}");
-            assert_eq!(settings.is_production(), env == "production");
+            assert_eq!(settings.is_production(), parsed == AppEnv::Production);
         }
         // Struct-level (no env): same rule.
         let mut settings = Settings::default();
         assert_eq!(settings.session_cookie_name(), "kanpad.sid");
-        settings.app_env = "production".to_string();
+        settings.app_env = AppEnv::Production;
         assert_eq!(settings.session_cookie_name(), "__Host-kanpad.sid");
     }
 }

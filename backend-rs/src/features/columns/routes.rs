@@ -9,9 +9,12 @@ use axum::{
 };
 
 use crate::{
-    common::card_summary::{
-        CardSummary, assemble_summaries, fetch_board_card_labels, fetch_board_card_progress,
-        fetch_board_cards,
+    common::{
+        card_summary::{
+            CardSummary, assemble_summaries, fetch_board_card_labels, fetch_board_card_progress,
+            fetch_board_cards,
+        },
+        ownership::check_board_owned,
     },
     error::{AppError, Internal},
     extract::{AuthSession, ValidJson, ValidPath},
@@ -20,8 +23,8 @@ use crate::{
 
 use super::{
     store::{
-        check_board_owned, close_column_gap, delete_column_row, fetch_card_ids_for_sort,
-        fetch_column_owned, fetch_columns, fetch_source_card_ids_for_update, insert_column,
+        close_column_gap, delete_column_row, fetch_card_ids_for_sort, fetch_column_owned,
+        fetch_columns, fetch_source_card_ids_for_update, insert_column,
         max_card_position_for_update, max_position_for_update, move_cards_into, rename_column,
         rewrite_card_positions, to_response, to_response_one,
     },

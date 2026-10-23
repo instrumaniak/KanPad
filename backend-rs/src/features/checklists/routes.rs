@@ -9,6 +9,7 @@ use axum::{
 };
 
 use crate::{
+    common::ownership::check_card_owned,
     error::AppError,
     extract::{AuthSession, ValidJson, ValidPath},
     state::AppState,
@@ -16,7 +17,7 @@ use crate::{
 
 use super::{
     store::{
-        ItemPatch, apply_item_patch, check_card_owned, delete_checklist_row, delete_item_row,
+        ItemPatch, apply_item_patch, delete_checklist_row, delete_item_row,
         fetch_card_checklist_items, fetch_checklist_items, fetch_checklist_owned,
         fetch_checklists_for_card, fetch_item_owned, insert_checklist, insert_item,
         max_item_position_for_update, rename_checklist, to_item_response, to_list, to_response,

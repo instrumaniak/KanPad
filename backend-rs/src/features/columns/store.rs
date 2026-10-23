@@ -47,25 +47,6 @@ pub struct ColumnRow {
     pub updated_at: NaiveDateTime,
 }
 
-/// Assert a board belongs to the caller. Foreign/missing id → `RowNotFound` →
-/// 404 (no oracle, never 403). Runs inside the caller's tx so the check and
-/// the write that follows are atomic.
-#[tracing::instrument(skip(ex))]
-pub async fn check_board_owned<'e, E>(ex: E, user_id: i32, board_id: i32) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "SELECT `id` FROM `boards` WHERE `id` = ? AND `user_id` = ?",
-        board_id,
-        user_id
-    )
-    .fetch_one(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
 /// Fetch one owned column (join proves ownership: foreign/missing id →
 /// `RowNotFound` → 404, never 403).
 #[tracing::instrument(skip(ex))]
@@ -97,7 +78,7 @@ where
 
 /// Fetch a board's columns, `position ASC` (nested unpaginated in the list
 /// body — cards attach separately). The caller proves board ownership first
-/// via [`check_board_owned`].
+/// via [`crate::common::ownership::check_board_owned`].
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_columns<'e, E>(ex: E, board_id: i32) -> Result<Vec<ColumnRow>, AppError>
 where

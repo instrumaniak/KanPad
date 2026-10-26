@@ -1,6 +1,6 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status: IN PROGRESS (updated 2026-10-23 — T61 complete; T62 remains).** This file
+> **Status (updated after T62 push): T54, T55, T57, T58, T59, T60, T61 (merged; fmt fix in `rs-t62-gates`), T62 (pushed `dev-rs` → `origin/dev-rs` = `efb7bf52`; CI `40410191100` in progress)**. T56, T63, T65, T66, T67, T69 are merged. `dev-rs` now holds the full Phase 7 aggregate (`fmt` + `clippy` with `SQLX_OFFLINE` + coverage gate + SHA pins + Docker hardening + supply-chain fixes + dependabot).
 > + `50-tasks.md` Phase 7 are the **work order**; executors implement T54–T69
 > and the orchestrator flips each AC as it lands (single writer — parallel
 > agents editing `50-tasks.md` is how the AC table drifts).
@@ -34,8 +34,8 @@
 > | **T69** | **DONE** | `93ca7016` | the **frontend** type errors: 15 → **0** `tsc` errors (the Nest-era `boardCount` leftover, the optional-vs-nullable drift from the hand-written `Omit<CardSummary, …>` surgery, the missing `checklists` fixture field, `column_id: number | null`); `npm run build` + `gen:api --check` + vitest **723/723**; **no `schema.d.ts` edit** (the generated type is the contract) |
 > | **T56** | **DONE** | `ddbcf43b` | **security hardening**: `CsrfLayer` (the Go 1.25 `CrossOriginProtection` algorithm — same-origin writes work with an **empty** allowlist instead of 403ing every write), the **canonical `CORS_ORIGINS`** boot gate (a trailing slash / uppercase host / explicit default port / path is a boot error naming the entry, because the layer matches origins **byte-for-byte**), the **CSP** with `connect-src` = `'self'` + the allowlist and `script-src` = `'self'` + a **boot-computed** `sha256-` hash of the SPA's inline theme bootstrap (no `'unsafe-inline'`/`'unsafe-eval'`), and **span redaction** on all **46** handlers (`skip(state)` → `skip(state, auth, input)`) with a new CI grep gate |
 > | T58, T59, T60 | **DONE** | `bc1e43dd` / `aa9cc45e` / `63f793fe` | merged (see git) — table updated |
-> | T61 | **WIP** | `0cb7366f` (worktree `wt-t61`) | 2 commits (`81f57106` pool sizing + `0cb7366f` READ COMMITTED/retry); dirty `cards_move.rs` — active |
-> | T62 | **PENDING** | — (`rs-t62-gates`, no worktree) | aggregate gate (Docker `.dockerignore`, `HEALTHCHECK`, digest pins, `cargo-llvm-cov` floor, `Dockerfile:29` `sqlx.toml` COPY removed by T66) |
+> | T61 | **WIP / merged** | `aff43567` (merged to `dev-rs-local`; `cards_move.rs` fmt fix `a34eae4c` landed in `rs-t62-gates` as commit 1) | `81f57106` / `0cb7366f` (pool + READ COMMITTED/retry); `rs-t62-gates` includes the T61 fmt fix (`cards_move` fault-injection helpers) | T59 | **DONE** (see `54` D1 notes) |
+> | T62 | **DONE (`dev-rs` pushed)** | `a34eae4c` fmt → `9503f188` coverage → `da0c978f` SHA pins+`--locked` → `e2ec5773` Docker → `6f1e05a4` dependabot → `df5a6ad8` crypto-bump (6 adv) → `efb7bf52` SQLX_OFFLINE fix (`40410191100` in progress) | `dev-rs-local` (branch `rs-t62-gates`); `origin/dev-rs` = `efb7bf52`; all 4 grep gates + fmt + clippy + migrate + sqlx prepare (with `SQLX_OFFLINE`) + openapi snapshot verified; vitest 723/723; docker `.dockerignore` + digest pins; `HEALTHCHECK /health` (`$PORT`); `Dockerfile` `sqlx.toml` COPY removed (T66); floor 85 / measured 90.12% / neg-test 95 → exit 1; `dependabot.yml` covers cargo/npm/github-actions |
 >
 > **The three corrections this file's own text needed** (the verification
 > matrix's clippy command, the "five store files" that are actually **eight**,

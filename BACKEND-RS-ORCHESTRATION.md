@@ -726,17 +726,33 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
   had no `SQLX_OFFLINE`. Red/green reproduced locally on an empty DB (90 × 1146, exit 101 → exit 0).
   Because `web: needs: [backend]` and `docker-e2e: needs: [backend, web]`, **2 of 3 jobs have still
   never executed** — the frontend gates and the Docker build remain unproven.
-- **PREDICTED NEXT RED (do not chase it before T62):** once clippy is green, `docker-e2e` should fail at
-  `backend-rs/Dockerfile:29` — `COPY Cargo.toml Cargo.lock sqlx.toml ./` for a file **T66 deleted**.
-  T62 owns it (single Dockerfile owner), together with the `.dockerignore`, `HEALTHCHECK`, digest pins
-  and the coverage gate.
-- **Pushing `dev-rs-local`/`dev-rs` is a no-op until the T70 commit is on the pushed ref** — the two
-  existing runs are red at the old commit. `gh run watch` is the loop.
-- **Gates re-verified today on `396b2d8b` + T70** (test DB `kanpad-rs-testdb` restarted and re-migrated,
-  tmpfs → `applied: 2 pending: 0`): `fmt` 0 | `clippy -D warnings -A clippy::pedantic` 0 | lib **77/77** |
-  api **101/101** | `sqlx prepare --check` 0 | `tsc --noEmit` 0 | `gen:api --check` up to date |
-  vitest **723/723 (77 files)** | the four grep gates OK. **Progress: 52/57 deliverables ≈ 91%**
-  (Phase 7: 11/15).
+- **NEXT: T62 IS DONE (`efb7bf52`, pushed `dev-rs` → `origin/dev-rs`; `gh run`
+  `40410191100` in progress).** The `sqlx prepare --check` red (first CI
+  execution of this gate ever — recovered by T62's `SQLX_OFFLINE: "true"`) was
+  the **DB-binding trap**: sqlx 0.9 binds `.sqlx/` query files to DB-qualified
+  table names (`kanpad.` dev / `kanpad_ci.` CI); without `SQLX_OFFLINE`, the
+  gate regenerates against `kanpad_ci.` then fails against the committed
+  `kanpad.` files. Fix: `env: SQLX_OFFLINE: "true"` on the step (restores the
+  gate's original intent). Evidence listed in `50-tasks.md`. `docker-e2e` and
+  `web` still need their first execution (they were always skipped because
+  `backend` failed first).
+
+- **PREDICTED NEXT RED (recovered by T62):** `docker-e2e` — once backend is
+  green — the `Dockerfile:29` `COPY ... sqlx.toml` (file deleted by T66) is
+  fixed by T62 (commit `e2ec5773` removes the line). `HEALTHCHECK /health`
+  (DB-free; uses `$PORT`) and digest-pinned bases (`rust` + `debian-slim`)
+  also land with T62 (`e2ec5773`). `.dockerignore` excludes `target/`
+  (1.2 GB context reduction) and `.env`, keeps `.sqlx/` + `tests/` + `public/`.
+
+- **Gates re-verified today on `396b2d8b` + T70 + T62** (DB `kanpad-rs-testdb`
+  restarted, tmpfs → `applied: 2 pending: 0`): `fmt` 0 | `clippy -D warnings -A
+  clippy::pedantic` 0 | lib **93/93** (post-dep-bump, `crypto-bigint` 0.7.10 +
+  `ctutils` 0.4.6) | api **108/108** | 4 grep gates OK | `sqlx prepare --check`
+  0 (`SQLX_OFFLINE` set) | `migrate info` applied: 2 pending: 0 | openapi snapshot 0
+  diffs; vitest **723/723** (77 test files, 70.97s); `dockerignore` verified
+  (context shrinks from 1.2 GB → 1.6 MB, excludes `target/`, `.env*`, keeps
+  build inputs); `dependabot.yml` covers cargo/npm/github-actions.
+
 - **NEXT TASK: T58** (`public-API ergonomics`: `AppEnv`/`Role` enums, `AppResult`,
   `#[non_exhaustive]`, `AppError::Validation(Vec<FieldError>)`). Worktree `KanPad-wt/wt-t58`,
   branch `rs-t58-ergonomics`. Then T59 → {T60 ∥ T61, one at a time} → T62.

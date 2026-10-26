@@ -11,9 +11,9 @@
 #
 # Step order is normative (T06 AC): fmt -> clippy -D warnings -> migrate run +
 # migrate info (pending=0) -> SHOW CREATE TABLE assert (T02 gate) ->
-# sqlx prepare --check (canonical form) -> test -> openapi snapshot ->
-# gen:api --check -> tsc -> docker build (SQLX_OFFLINE=true) ->
-# vitest / playwright pinned to :3001.
+# sqlx prepare --check (canonical form) -> test + coverage floor (T62) ->
+# openapi snapshot -> gen:api --check -> tsc -> docker build (SQLX_OFFLINE=true)
+# -> vitest / playwright pinned to :3001.
 #
 # .sqlx/ commit rule (enforced by the prepare --check step): any `query!`
 # change must run `cargo sqlx prepare --workspace --all -- --all-targets` and
@@ -56,7 +56,7 @@ env:
 jobs:
   # ---------------------------------------------------------------- backend
   backend:
-    name: backend (fmt -> clippy -> migrate -> prepare --check -> test -> snapshot)
+    name: backend (fmt -> clippy -> migrate -> prepare --check -> test+coverage -> snapshot)
     runs-on: ubuntu-latest
     services:
       mysql:
@@ -350,10 +350,49 @@ jobs:
         working-directory: backend-rs
         run: cargo sqlx prepare --check --workspace --all -- --all-targets
 
-      # -- 6. test ---------------------------------------------------------
-      - name: cargo test --workspace --all-targets
+      # -- 6. test + coverage floor (T62) -----------------------------------
+      # A coverage run IS a test run: `cargo llvm-cov` compiles the same
+      # `--workspace --all-targets` targets and executes the SAME suite
+      # (`cargo test`'s exact output appears in the log), so this step
+      # REPLACES the old `cargo test --workspace --all-targets` — running both
+      # would execute the whole api suite twice for no extra signal.
+      #
+      # `--fail-under-lines 85` is the floor, deliberately BELOW the measured
+      # value (90.12% measured 2026-10-27 on this tree). A gate set at today's
+      # number blocks every refactor; 85 only catches real regressions.
+      #
+      # The floor VERIFIES BOTH DIRECTIONS (2026-10-27):
+      #   * floor 85 -> exit 0, full per-file summary printed (TOTAL 90.12%);
+      #   * floor 95 -> exit 1 (the NEGATIVE test — a gate that cannot fail is
+      #     not a gate). Note the failure prints the same summary table and
+      #     exits 1 WITHOUT a separate prose error line, so the diagnostic is
+      #     the TOTAL row: read it before assuming a mis-configured gate.
+      #
+      # `llvm-tools-preview` is installed by THIS step: `cargo-llvm-cov` needs
+      # the llvm-cov binary, and `rust-toolchain.toml`'s component list (T57)
+      # is `clippy,rustfmt` only. The CLI itself is cached like sqlx-cli.
+      - name: Cache cargo-llvm-cov
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: cargo-llvm-cov-0.9.1-${{ runner.os }}
+
+      - name: Install cargo-llvm-cov 0.9.1 + llvm-tools-preview
+        # working-directory matters for `rustup component add`: inside
+        # backend-rs/ rustup reads rust-toolchain.toml and adds the component
+        # to the PINNED 1.99.1 toolchain (outside, it would hit the default).
         working-directory: backend-rs
-        run: cargo test --workspace --all-targets
+        run: |
+          set -euo pipefail
+          rustup component add llvm-tools-preview
+          if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+            cargo install --locked cargo-llvm-cov --version 0.9.1
+          fi
+          cargo llvm-cov --version
+
+      - name: cargo llvm-cov --workspace --all-targets --fail-under-lines 85
+        working-directory: backend-rs
+        run: cargo llvm-cov --workspace --all-targets --fail-under-lines 85
 
       # -- supply-chain ----------------------------------------------------
       # T68: the separate `cargo audit` step is REMOVED. It was a SECOND

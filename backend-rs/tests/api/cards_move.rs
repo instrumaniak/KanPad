@@ -875,10 +875,12 @@ async fn install_fault_injector(
     .execute(pool)
     .await
     .expect("fault table");
-    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO `{fault_table}` VALUES (1)")))
-        .execute(pool)
-        .await
-        .expect("arm the one-shot fault");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO `{fault_table}` VALUES (1)"
+    )))
+    .execute(pool)
+    .await
+    .expect("arm the one-shot fault");
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE `{probe_table}` (`isolation` VARCHAR(32) NOT NULL) ENGINE=MyISAM"
     )))
@@ -912,18 +914,18 @@ async fn fault_rows(pool: &MySqlPool, table: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
         "SELECT CAST(COUNT(*) AS SIGNED) FROM `{table}`"
     )))
-        .fetch_one(pool)
-        .await
-        .expect("fault rows")
+    .fetch_one(pool)
+    .await
+    .expect("fault rows")
 }
 
 async fn probe_isolation(pool: &MySqlPool, table: &str) -> Vec<String> {
     sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
         "SELECT `isolation` FROM `{table}`"
     )))
-        .fetch_all(pool)
-        .await
-        .expect("probe rows")
+    .fetch_all(pool)
+    .await
+    .expect("probe rows")
 }
 
 /// A real `1213` (deadlock) injected into the FIRST move attempt: the handler

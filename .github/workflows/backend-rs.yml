@@ -362,6 +362,16 @@ jobs:
       # -- 5. sqlx prepare --check (canonical exact form) ------------------
       - name: sqlx prepare --check --workspace --all -- --locked --all-targets
         working-directory: backend-rs
+        # T62: SQLX_OFFLINE=true is MANDATORY here. sqlx 0.9's `.sqlx/` cache
+        # binds the DB-qualified table names (`kanpad.<table>` for the dev/test
+        # DB, `kanpad_ci.<table>` for CI's service DB) — the two never match.
+        # Without this env, `prepare --check` connects to the live DB (step's
+        # `DATABASE_URL` is `kanpad_ci`), regenerates the cache for that DB,
+        # then rejects the committed `kanpad`-named files. The gate's purpose is
+        # "does the committed `.sqlx/` match the committed SQL?" (not "does it
+        # match this CI's service DB name?"), so the check must read offline.
+        env:
+          SQLX_OFFLINE: "true"
         run: cargo sqlx prepare --check --workspace --all -- --locked --all-targets
 
       # -- 6. test + coverage floor (T62) -----------------------------------

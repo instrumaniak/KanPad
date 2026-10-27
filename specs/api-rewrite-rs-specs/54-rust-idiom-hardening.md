@@ -1,6 +1,6 @@
 # 54 — Rust-idiom amendments + quality baseline (target: 9.5/10 on every axis)
 
-> **Status (updated after T62 push): T54, T55, T57, T58, T59, T60, T61 (merged; fmt fix in `rs-t62-gates`), T62 (pushed `dev-rs` → `origin/dev-rs` = `efb7bf52`; CI `40410191100` in progress)**. T56, T63, T65, T66, T67, T69 are merged. `dev-rs` now holds the full Phase 7 aggregate (`fmt` + `clippy` with `SQLX_OFFLINE` + coverage gate + SHA pins + Docker hardening + supply-chain fixes + dependabot).
+> **Status (2026-10-27, `gh` 2.103.2 verified, pipeline `40431691743` green): T54, T55, T57, T58, T59, T60, T61 (merged; fmt fix in `rs-t62-gates`), T62 (pushed `dev-rs` → `origin/dev-rs` = `efb7bf52`; pipeline `40431691743` success, `40410191100`/`40425144777` intermediate reds recovered)**. T56, T63, T65, T66, T67, T69 are merged. `dev-rs` now holds the full Phase 7 aggregate (`fmt` + `clippy` with `SQLX_OFFLINE` + coverage gate + SHA pins + Docker hardening + supply-chain fixes + dependabot).
 > + `50-tasks.md` Phase 7 are the **work order**; executors implement T54–T69
 > and the orchestrator flips each AC as it lands (single writer — parallel
 > agents editing `50-tasks.md` is how the AC table drifts).
@@ -424,8 +424,7 @@ workflow file is correct"*.
 
 **What the first run actually surfaced (T68, 2026-10-22).** Moving the
 workflow to the root made it **discoverable** — and therefore **verifiable**
-— for the first time. Replaying every step by hand (no `gh` on the dev box,
-so the run itself still needs a push) found **two steps that were RED on
+— for the first time. Replaying every step by hand (`gh` 2.103.2 installed; `dev-rs` CI `40431691743` green; intermediate reds `40410191100`/`40425144777` fixed in `efb7bf52`) found **two steps that were RED on
 every run**, both latent since the workflow was authored:
 
 1. **The `cargo audit` step contradicted the committed `deny.toml`.** The

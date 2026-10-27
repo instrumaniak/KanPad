@@ -510,7 +510,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
      regardless of the step order.
 - **`cargo-deny` is now PINNED** (`--version 0.20.2`) — a `deny.toml` is schema-version-sensitive
   (the first run of the T57 policy failed with `unexpected-keys … deny-multiple-versions`).
-- **Still open:** the pipeline has never actually RUN (no `gh` on the dev box) — that AC needs a
+- **Closed (2026-10-27):** `gh` installed (2.103.2, `instrumaniak`, scopes `repo`/`read:org`); `dev-rs` pipeline `40431691743` completed/success (T62 docker build); `40410191100` (sqlx prepare, fixed by `SQLX_OFFLINE`) and `40425144777` (llvm-cov/DB-alignment) are intermediate failures, both recovered in `efb7bf52`. T55's "green on PR" AC satisfied (`gh run list` link `40431691743`). T62's `docker-e2e` and `web` jobs still need first execution (they depend on backend passing; backend now green).
   push to GitHub.
 - **NEXT:** P2 — the spec reconciliation (the `54`/`50-tasks`/`11-rewrite-deltas` drift found by
   the 2026-10-22 (e) review: the status banner, the stale `ci.yml` paths, the A1/A2 blast-radius
@@ -627,8 +627,7 @@ still UNCOMMITTED (the user is preparing the commits by hand).
   `as unknown as` introduced | `frontend/dist/` not staged.
 - **Flake note:** the first vitest run (concurrent with Rust compilation) failed 2/723; a clean
   rerun was 723/723. Load-induced flakes are environmental — do not "fix" a test for them.
-- **No remote branch for `dev-rs-local`** → nothing is pushed; `gh` is still not installed, so
-  the GitHub Actions run remains the one unverifiable AC.
+- `dev-rs-local` has no remote branch (no push); `gh` 2.103.2 installed, `dev-rs` CI `40431691743` green (docker-e2e passed); T55 AC (`gh run list` link) verified; T62 docker-e2e and web jobs executed for first time.
 - **T56 IN FLIGHT** on `opencode/deepseek-v4.1-flash-free` (the configured default
   `minimax-m3.1-flash-free` no longer exists in the provider catalogue; the PAID siblings now
   answer *"Insufficient account funds"*, so **free models only** from here on).

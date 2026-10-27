@@ -3,11 +3,18 @@
 # Build context is backend-rs/ (see compose.yaml `rust` service), so only
 # backend-rs/ files are addressable here.
 #
-# Offline/SQL contract:
+# SQL/network contract — two DIFFERENT axes, do not conflate them:
 #   * SQLX_OFFLINE=true (builder ENV) + committed .sqlx/ query cache
-#     (COPY .sqlx) — the build needs NO database.
-#   * --locked --offline with the committed Cargo.lock — reproducible,
-#     network-free Rust build.
+#     (COPY .sqlx) — the build needs NO database. `query!` macros compile
+#     against the committed cache instead of a live server. This one is
+#     genuinely offline and must stay.
+#   * `cargo build --locked` with the committed Cargo.lock — reproducible
+#     dependency set, NOT a network-free build. A fresh builder ships
+#     CARGO_HOME=/usr/local/cargo with an EMPTY registry/, so cargo
+#     `--offline` fails at dependency RESOLUTION (`error: no matching package
+#     named anyhow found`, exit 101 — CI run 40425148777) long before it
+#     compiles anything. Reproducibility comes from the lockfile's per-crate
+#     checksums + the digest-pinned bases below, not from cutting the network.
 #   * DATABASE_URL is NEVER baked in (no ARG/ENV for it anywhere below);
 #     it is a runtime-only env (compose.yaml / CI `docker run -e`).
 #
@@ -43,7 +50,10 @@ COPY migrations ./migrations
 COPY openapi.json ./openapi.json
 COPY src ./src
 
-RUN cargo build --locked --offline --release
+# Network-ENABLED, lock-pinned (see the header contract): the fresh builder
+# has no crate registry to resolve against, so `--offline` can only ever fail
+# here. Cargo verifies every fetched .crate against Cargo.lock's checksums.
+RUN cargo build --locked --release
 
 # T62: digest-pinned like the builder (manifest-list digest).
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime

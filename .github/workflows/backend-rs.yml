@@ -33,6 +33,21 @@
 #     publishes per-version BRANCHES, not tags, so its pin is a branch-tip SHA.
 #   * Every dependency-resolving cargo invocation carries `--locked`, so a
 #     `Cargo.lock` drift fails the build instead of silently re-resolving.
+#
+# 2026-10-27 — `cargo --offline` is NOT a Docker contract (CI run 40425148777):
+# the docker-build step used to require `RUN cargo build --locked --offline`,
+# and that build had never run. It cannot ever work: `rust:1.99-bookworm` is a
+# bare image (`CARGO_HOME=/usr/local/cargo`, EMPTY `registry/`) and the build
+# context ships no vendored crates, so offline cargo dies at dependency
+# RESOLUTION — `error: no matching package named 'anyhow' found`, exit 101 —
+# before compiling anything. The Dockerfile therefore builds with `--locked`
+# only (network enabled; integrity = committed Cargo.lock checksums +
+# digest-pinned bases), and the contract gate now FAILS if `--offline`
+# reappears. `SQLX_OFFLINE=true` is a different axis and stays: it makes
+# `query!` compile from the committed `.sqlx/` cache with no database. The
+# `--offline` below in the openapi-snapshot step is legitimate because THAT job
+# restores `~/.cargo/registry` (Swatinem/rust-cache) and already compiled the
+# deps in clippy — do not copy it into the image build.
 
 name: backend-rs CI
 
@@ -513,7 +528,7 @@ jobs:
 
   # --------------------------------------- docker build + :3001 e2e (pinned)
   docker-e2e:
-    name: docker build (offline) + vitest + playwright pinned to :3001
+    name: docker build + vitest + playwright pinned to :3001
     runs-on: ubuntu-latest
     needs: [backend, web]
     services:
@@ -538,18 +553,34 @@ jobs:
           name: frontend-dist
           path: backend-rs/public
 
-      - name: Dockerfile contract gates (no DATABASE_URL, offline flags)
+      - name: Dockerfile contract gates (no DATABASE_URL, locked build)
         working-directory: backend-rs
         run: |
           set -euo pipefail
-          if grep -v '^[[:space:]]*#' Dockerfile | grep -n 'DATABASE_URL'; then
+          # EVERY assertion below reads the NON-COMMENT lines only. A comment
+          # that mentions a token must never satisfy a gate about CODE — this
+          # step used to pass because its HEADER COMMENT contained the literal
+          # `--locked --offline` it was grepping for, so it "verified" the exact
+          # command that could never work (CI 40425148777).
+          CODE=$(grep -v '^[[:space:]]*#' Dockerfile)
+          if printf '%s\n' "$CODE" | grep -n 'DATABASE_URL'; then
             echo 'FAIL: Dockerfile must never reference DATABASE_URL outside comments (runtime env only)'
             exit 1
           fi
-          grep -q 'SQLX_OFFLINE=true' Dockerfile || { echo 'FAIL: Dockerfile must set SQLX_OFFLINE=true'; exit 1; }
-          grep -q -- '--locked --offline' Dockerfile || { echo 'FAIL: Dockerfile build must use --locked --offline'; exit 1; }
-          grep -q 'COPY .sqlx' Dockerfile || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
-          grep -Eq 'COPY .*public/' Dockerfile || { echo 'FAIL: Dockerfile must COPY public/ (SPA fallback)'; exit 1; }
+          printf '%s\n' "$CODE" | grep -q 'SQLX_OFFLINE=true' || { echo 'FAIL: Dockerfile must set SQLX_OFFLINE=true'; exit 1; }
+          # Lock-pinned, network-ENABLED. A fresh builder's CARGO_HOME has an
+          # EMPTY registry/, so `cargo build --offline` dies at resolution
+          # (`error: no matching package named anyhow found`, exit 101 — CI run
+          # 40425148777). SQLX_OFFLINE=true above is a DIFFERENT axis: it makes
+          # `query!` compile from the committed .sqlx/ cache with no DB.
+          printf '%s\n' "$CODE" | grep -Eq 'cargo build .*--locked' \
+            || { echo 'FAIL: Dockerfile cargo build must carry --locked'; exit 1; }
+          if printf '%s\n' "$CODE" | grep -Eq 'cargo build .*--offline'; then
+            echo 'FAIL: Dockerfile must NOT use cargo --offline (the builder has no crate registry; see the comment above)'
+            exit 1
+          fi
+          printf '%s\n' "$CODE" | grep -q 'COPY .sqlx' || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
+          printf '%s\n' "$CODE" | grep -Eq 'COPY .*public/' || { echo 'FAIL: Dockerfile must COPY public/ (SPA fallback)'; exit 1; }
           echo 'OK: Dockerfile contract gates pass'
 
       - name: Set up Docker Buildx

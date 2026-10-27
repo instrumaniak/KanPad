@@ -1,0 +1,82 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id`, `name`, `color`, `created_at` FROM `tags` WHERE `user_id` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.tags",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 200
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.tags",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "color",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "collation": 224,
+          "max_size": 80
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.tags",
+            "name": "color"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.tags",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e32d221efa6e916c43b4365db29423f1792821af57ab2a137e32e1e2c4c03964"
+}

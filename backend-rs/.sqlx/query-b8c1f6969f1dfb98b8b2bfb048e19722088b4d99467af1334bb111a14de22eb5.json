@@ -1,0 +1,26 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM `sessions` WHERE `id` = ?)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "EXISTS(SELECT 1 FROM `sessions` WHERE `id` = ?)",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 1
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b8c1f6969f1dfb98b8b2bfb048e19722088b4d99467af1334bb111a14de22eb5"
+}

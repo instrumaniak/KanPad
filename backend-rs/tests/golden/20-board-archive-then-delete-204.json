@@ -1,0 +1,58 @@
+{
+ "capture": {},
+ "capture_jar": false,
+ "deviation": "VERB-ROUTE BREAK: PATCH /:id/archive|/restore deleted; archive/restore are idempotent PATCH {is_archived} flips. Archived board deletes directly with 204 (no body).",
+ "name": "board-archive-then-delete-204",
+ "nest": {
+  "body": {
+   "data": {
+    "id": 5,
+    "isArchived": true
+   }
+  },
+  "status": 200
+ },
+ "request": {
+  "auth": "owner",
+  "body": {
+   "is_archived": true
+  },
+  "method": "PATCH",
+  "path": "/api/v1/boards/{board_id}"
+ },
+ "rust": {
+  "absent": [
+   "message"
+  ],
+  "location_contains": null,
+  "ordering": null,
+  "problem": null,
+  "require_errors": false,
+  "shape": {
+   "data": {
+    "background_color": "@string",
+    "columns": [
+     {
+      "id": "@int",
+      "name": "@string",
+      "position": "@int"
+     }
+    ],
+    "created_at": "@string",
+    "id": "@int",
+    "is_archived": "@bool",
+    "name": "@string",
+    "project": {
+     "id": "@int",
+     "name": "@string"
+    },
+    "project_id": "@int",
+    "updated_at": "@string",
+    "view_mode": "@string"
+   }
+  },
+  "status": 200
+ },
+ "seq": 20,
+ "source": "spec-derived; Nest :3000 unreachable (curl 000, 2026-10-12). Follow-up DELETE asserted inline in golden.rs (204 + re-GET 404 + columns cascade SELECT). Columns may be [] here only if cards flow cleaned up; runner tolerates any columns array via item schema."
+}

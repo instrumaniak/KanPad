@@ -4,13 +4,16 @@ import {
   createProject as createProjectApi,
   updateProject as updateProjectApi,
   deleteProject as deleteProjectApi,
-  type Project,
+  resolveProjectsQuery,
+  type ProjectsPage,
+  type ProjectsQuery,
 } from './projects.api';
 
-export function useProjects() {
+export function useProjects(query: ProjectsQuery = {}) {
+  const resolved = resolveProjectsQuery(query);
   return useQuery({
-    queryKey: ['projects'],
-    queryFn: fetchProjects,
+    queryKey: ['projects', resolved],
+    queryFn: () => fetchProjects(resolved),
     staleTime: 5 * 60 * 1000,
   });
 }
@@ -33,9 +36,9 @@ export function useUpdateProject() {
     mutationFn: ({ id, name }: { id: number; name: string }) => updateProjectApi(id, name),
     onMutate: async ({ id, name }) => {
       await queryClient.cancelQueries({ queryKey: ['projects'] });
-      const previous = queryClient.getQueryData<{ data: Project[]; total: number }>(['projects']);
+      const previous = queryClient.getQueriesData<ProjectsPage>({ queryKey: ['projects'] });
 
-      queryClient.setQueryData<{ data: Project[]; total: number }>(['projects'], (old) => {
+      queryClient.setQueriesData<ProjectsPage>({ queryKey: ['projects'] }, (old) => {
         if (!old) return old;
         return {
           ...old,
@@ -47,7 +50,9 @@ export function useUpdateProject() {
     },
     onError: (_err, _vars, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(['projects'], context.previous);
+        for (const [key, data] of context.previous) {
+          queryClient.setQueryData(key, data);
+        }
       }
     },
     onSettled: async () => {

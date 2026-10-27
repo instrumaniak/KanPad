@@ -1,0 +1,48 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT k.`column_id` AS \"column_id: i32\", k.`position` FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE k.`id` = ? AND b.`user_id` = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "column_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "column_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "position",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "position"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "fecc7e0bebfe442debb3efaf3f51704b562b17516a1663e0b21daf704a64561a"
+}

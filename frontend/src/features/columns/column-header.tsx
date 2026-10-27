@@ -117,7 +117,7 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
   const handleMoveAll = async (targetColumnId: number) => {
     try {
       const result = await moveMutation.mutateAsync({ sourceColumnId: column.id, targetColumnId });
-      showSuccess(`${result.data.movedCount} cards moved`);
+      showSuccess(`${result.data.moved_count} cards moved`);
       setShowMoveMenu(false);
       setShowMenu(false);
     } catch (err) {

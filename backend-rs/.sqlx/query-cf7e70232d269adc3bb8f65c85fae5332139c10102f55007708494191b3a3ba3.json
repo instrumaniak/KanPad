@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `labels` WHERE `id` = ? AND `user_id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cf7e70232d269adc3bb8f65c85fae5332139c10102f55007708494191b3a3ba3"
+}

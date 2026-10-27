@@ -7,21 +7,28 @@ import {
   fetchCard,
   assignLabelToCard,
   removeLabelFromCard,
+  sanitizeCardListParams,
   type CreateCardData,
   type UpdateCardData,
   type Card,
+  type CardDetail,
+  type CardSummary,
 } from './cards.api';
 
 const cardKeys = {
-  byColumn: (columnId: number) => ['cards', columnId] as const,
+  byColumn: (columnId: number, page?: number, limit?: number) => {
+    const params = sanitizeCardListParams(page, limit);
+    return ['cards', columnId, params.page, params.limit] as const;
+  },
   byId: (cardId: number) => ['card', cardId] as const,
   all: () => ['cards'] as const,
 };
 
-export function useCards(columnId: number) {
+export function useCards(columnId: number, page?: number, limit?: number) {
+  const params = sanitizeCardListParams(page, limit);
   return useQuery({
-    queryKey: cardKeys.byColumn(columnId),
-    queryFn: () => fetchCards(columnId).then((res) => res.data),
+    queryKey: cardKeys.byColumn(columnId, params.page, params.limit),
+    queryFn: () => fetchCards(columnId, params.page, params.limit).then((res) => res.data),
     enabled: !!columnId,
   });
 }
@@ -67,7 +74,10 @@ export function useMoveCard() {
       const previousCards: Record<number, Card[] | undefined> = {};
       const targetColumnId = data.column_id;
 
-      if (targetColumnId === undefined) return { previousCards };
+      // The generated `UpdateCardInput.column_id` is `number | null | undefined`
+      // (an explicit `null` clears it server-side). A move needs a real
+      // target column, so both "absent" and "null" mean "no move" here.
+      if (targetColumnId === undefined || targetColumnId === null) return { previousCards };
 
       // Find source column and card
       const allCardsQueries = queryClient.getQueriesData<Card[]>({ queryKey: ['cards'] });
@@ -225,7 +235,7 @@ export function useRemoveCardLabel() {
   });
 }
 
-export type { Card };
+export type { Card, CardDetail, CardSummary };
 
 export interface DragData {
   cardId: number;

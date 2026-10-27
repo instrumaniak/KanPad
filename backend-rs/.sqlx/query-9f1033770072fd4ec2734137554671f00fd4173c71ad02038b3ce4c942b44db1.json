@@ -1,0 +1,65 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT l.`id` AS \"label_id: i32\", l.`name`, l.`color` FROM `card_labels` cl JOIN `labels` l ON l.`id` = cl.`label_id` WHERE cl.`card_id` = ? ORDER BY l.`id` ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "label_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.labels",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 200
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.labels",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "color",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 80
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.labels",
+            "name": "color"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9f1033770072fd4ec2734137554671f00fd4173c71ad02038b3ce4c942b44db1"
+}

@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `data` FROM `sessions` WHERE `id` = ? AND `expiry_date` > ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "data",
+        "type_info": {
+          "type": "Blob",
+          "flags": "NOT_NULL | BLOB | BINARY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 65535
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.sessions",
+            "name": "data"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "246dd1022752e8892e453058aac2cf6ef3660df3b1da3517e954b345f2ae2f9d"
+}

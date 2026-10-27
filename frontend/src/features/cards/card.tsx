@@ -73,6 +73,9 @@ export function Card({ card, index, isNew }: CardProps) {
   };
 
   const handleDelete = () => {
+    // Board-cache cards are summaries (no TEXT); the snapshot keeps the
+    // board-card read for the undo payload (`description` is undefined at
+    // runtime here, so the restore omits it exactly as before).
     const deletedCard = { ...card };
     setShowDeleteDialog(false);
     setIsPanelOpen(false);

@@ -1,0 +1,82 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT cl.`card_id` AS \"card_id: i32\", l.`id` AS \"label_id: i32\", l.`name`, l.`color` FROM `card_labels` cl JOIN `labels` l ON l.`id` = cl.`label_id` JOIN `cards` k ON k.`id` = cl.`card_id` WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) ORDER BY cl.`card_id` ASC, l.`id` ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "card_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.card_labels",
+            "name": "card_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "label_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.labels",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 200
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.labels",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "color",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 80
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.labels",
+            "name": "color"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ef1f402ca2090837edd620d253e9035a045ae39142abf480c729e8f88e42ea32"
+}

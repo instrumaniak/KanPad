@@ -1,0 +1,133 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at`, i.`updated_at` FROM `checklist_items` i JOIN `checklists` cl ON cl.`id` = i.`checklist_id` JOIN `cards` k ON k.`id` = cl.`card_id` JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE i.`id` = ? AND b.`user_id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "text",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "is_completed",
+        "type_info": {
+          "type": "Tiny",
+          "flags": "NOT_NULL",
+          "collation": 63,
+          "max_size": 1
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "is_completed"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "checklist_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "checklist_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "position",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "098942e5885d9b9782387814f814d7b37a96b471dcf0d79f18e8dd8f53efe42f"
+}

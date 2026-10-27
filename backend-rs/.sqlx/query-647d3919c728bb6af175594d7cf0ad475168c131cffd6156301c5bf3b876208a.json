@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `columns` (`name`, `position`, `board_id`) VALUES ('To Do', 0, ?), ('In Progress', 1, ?), ('Done', 2, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "647d3919c728bb6af175594d7cf0ad475168c131cffd6156301c5bf3b876208a"
+}

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { components } from '@/lib/api/schema';
+import { BASE, ApiError, apiFetch, apiFetchVoid } from '@/lib/api/client';
+
 import {
   createChecklist,
   fetchChecklist,
@@ -7,21 +10,34 @@ import {
   createChecklistItem,
   updateChecklistItem,
   deleteChecklistItem,
-  type Checklist,
-  type ChecklistItem,
 } from './checklists.api';
 
-global.fetch = vi.fn();
+vi.mock('@/lib/api/client', () => ({
+  BASE: '',
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+  apiFetch: vi.fn(),
+  apiFetchVoid: vi.fn(),
+}));
 
-const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+const mockApiFetch = apiFetch as ReturnType<typeof vi.fn>;
+const mockApiFetchVoid = apiFetchVoid as ReturnType<typeof vi.fn>;
+
+type Checklist = components['schemas']['ChecklistResponse'];
+type ChecklistItem = components['schemas']['ChecklistItemResponse'];
 
 const mockChecklist: Checklist = {
   id: 1,
   title: 'My Checklist',
   card_id: 10,
   items: [],
-  created_at: '2024-01-01T00:00:00Z',
-  updated_at: '2024-01-01T00:00:00Z',
+  created_at: '2024-01-01T00:00:00.000000Z',
+  updated_at: '2024-01-01T00:00:00.000000Z',
 };
 
 const mockChecklistItem: ChecklistItem = {
@@ -30,8 +46,8 @@ const mockChecklistItem: ChecklistItem = {
   is_completed: false,
   checklist_id: 1,
   position: 0,
-  created_at: '2024-01-01T00:00:00Z',
-  updated_at: '2024-01-01T00:00:00Z',
+  created_at: '2024-01-01T00:00:00.000000Z',
+  updated_at: '2024-01-01T00:00:00.000000Z',
 };
 
 describe('checklists.api', () => {
@@ -41,201 +57,137 @@ describe('checklists.api', () => {
 
   describe('createChecklist', () => {
     it('creates a checklist for a card', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: mockChecklist, message: 'Checklist created' }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: mockChecklist });
 
       const result = await createChecklist({ title: 'My Checklist', card_id: 10 });
-      expect(mockFetch).toHaveBeenCalledWith('/api/cards/10/checklists', {
-        credentials: 'include',
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/cards/10/checklists`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'My Checklist' }),
       });
-      expect(result).toEqual({ data: mockChecklist, message: 'Checklist created' });
+      expect(result).toEqual({ data: mockChecklist });
     });
 
-    it('throws error on failure', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
+    it('propagates errors with status', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(404, 'Card not found'));
+
+      await expect(createChecklist({ title: 'X', card_id: 999 })).rejects.toMatchObject({
         status: 404,
-        json: () => Promise.resolve({ message: 'Card not found' }),
       });
-
-      await expect(createChecklist({ title: 'X', card_id: 999 })).rejects.toThrow('Card not found');
-    });
-
-    it('throws fallback message when no error body', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        json: () => Promise.reject(new Error('parse failed')),
-      });
-
-      await expect(createChecklist({ title: 'X', card_id: 1 })).rejects.toThrow('Request failed with status 500');
     });
   });
 
   describe('fetchChecklist', () => {
     it('fetches a checklist by id', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: mockChecklist }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: mockChecklist });
 
       const result = await fetchChecklist(1);
-      expect(mockFetch).toHaveBeenCalledWith('/api/checklists/1', { credentials: 'include' });
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/checklists/1`);
       expect(result).toEqual({ data: mockChecklist });
     });
 
-    it('throws error on not found', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Checklist not found' }),
-      });
+    it('propagates not-found errors', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(404, 'Checklist not found'));
 
-      await expect(fetchChecklist(999)).rejects.toThrow('Checklist not found');
+      await expect(fetchChecklist(999)).rejects.toMatchObject({ status: 404 });
     });
   });
 
   describe('updateChecklist', () => {
     it('updates a checklist title', async () => {
       const updated = { ...mockChecklist, title: 'Updated Checklist' };
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: updated }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: updated });
 
       const result = await updateChecklist(1, { title: 'Updated Checklist' });
-      expect(mockFetch).toHaveBeenCalledWith('/api/checklists/1', {
-        credentials: 'include',
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/checklists/1`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'Updated Checklist' }),
       });
       expect(result).toEqual({ data: updated });
     });
 
-    it('throws on validation error', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 422,
-        json: () => Promise.resolve({ message: 'Validation failed' }),
-      });
+    it('propagates validation errors', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(400, 'Validation failed'));
 
-      await expect(updateChecklist(1, { title: '' })).rejects.toThrow('Validation failed');
+      await expect(updateChecklist(1, { title: '' })).rejects.toMatchObject({ status: 400 });
     });
   });
 
   describe('deleteChecklist', () => {
-    it('deletes a checklist (204 no content)', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 204,
-      });
+    it('deletes a checklist (204 void)', async () => {
+      mockApiFetchVoid.mockResolvedValueOnce(undefined);
 
       const result = await deleteChecklist(1);
-      expect(mockFetch).toHaveBeenCalledWith('/api/checklists/1', {
-        credentials: 'include',
+      expect(mockApiFetchVoid).toHaveBeenCalledWith(`${BASE}/api/v1/checklists/1`, {
         method: 'DELETE',
       });
       expect(result).toBeUndefined();
     });
 
-    it('throws error on failed delete', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Checklist not found' }),
-      });
+    it('propagates delete errors', async () => {
+      mockApiFetchVoid.mockRejectedValueOnce(new ApiError(404, 'Checklist not found'));
 
-      await expect(deleteChecklist(999)).rejects.toThrow('Checklist not found');
+      await expect(deleteChecklist(999)).rejects.toMatchObject({ status: 404 });
     });
   });
 
   describe('createChecklistItem', () => {
     it('creates a checklist item', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: mockChecklistItem }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: mockChecklistItem });
 
       const result = await createChecklistItem(1, { text: 'Task 1', position: 0 });
-      expect(mockFetch).toHaveBeenCalledWith('/api/checklists/1/items', {
-        credentials: 'include',
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/checklists/1/items`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: 'Task 1', position: 0 }),
       });
       expect(result).toEqual({ data: mockChecklistItem });
     });
 
-    it('throws on create failure', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Checklist not found' }),
-      });
+    it('propagates create errors', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(404, 'Checklist not found'));
 
-      await expect(createChecklistItem(999, { text: 'X' })).rejects.toThrow('Checklist not found');
+      await expect(createChecklistItem(999, { text: 'X' })).rejects.toMatchObject({
+        status: 404,
+      });
     });
   });
 
   describe('updateChecklistItem', () => {
     it('updates a checklist item', async () => {
       const updated = { ...mockChecklistItem, is_completed: true };
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: updated }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: updated });
 
       const result = await updateChecklistItem(1, { is_completed: true });
-      expect(mockFetch).toHaveBeenCalledWith('/api/checklist-items/1', {
-        credentials: 'include',
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/checklist-items/1`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_completed: true }),
       });
       expect(result).toEqual({ data: updated });
     });
 
-    it('throws on failure', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Item not found' }),
-      });
+    it('propagates update errors', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(404, 'Item not found'));
 
-      await expect(updateChecklistItem(999, { text: 'X' })).rejects.toThrow('Item not found');
+      await expect(updateChecklistItem(999, { text: 'X' })).rejects.toMatchObject({
+        status: 404,
+      });
     });
   });
 
   describe('deleteChecklistItem', () => {
-    it('deletes a checklist item (204 no content)', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 204,
-      });
+    it('deletes a checklist item (204 void)', async () => {
+      mockApiFetchVoid.mockResolvedValueOnce(undefined);
 
       const result = await deleteChecklistItem(1);
-      expect(mockFetch).toHaveBeenCalledWith('/api/checklist-items/1', {
-        credentials: 'include',
+      expect(mockApiFetchVoid).toHaveBeenCalledWith(`${BASE}/api/v1/checklist-items/1`, {
         method: 'DELETE',
       });
       expect(result).toBeUndefined();
     });
 
-    it('throws on delete failure', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Item not found' }),
-      });
+    it('propagates delete errors', async () => {
+      mockApiFetchVoid.mockRejectedValueOnce(new ApiError(404, 'Item not found'));
 
-      await expect(deleteChecklistItem(999)).rejects.toThrow('Item not found');
+      await expect(deleteChecklistItem(999)).rejects.toMatchObject({ status: 404 });
     });
   });
 });

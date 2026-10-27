@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id` FROM `projects` WHERE `id` = ? AND `user_id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.projects",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "838f2873872ba26fd0b26242716d2e5874e54e42954c049bb43799c598839b7d"
+}

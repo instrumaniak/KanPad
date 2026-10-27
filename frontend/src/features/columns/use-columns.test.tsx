@@ -86,7 +86,7 @@ describe('useDeleteColumn', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('deletes a column and invalidates queries', async () => {
-    (deleteColumn as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ message: 'Deleted' });
+    (deleteColumn as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
     const { result } = renderHook(() => useDeleteColumn(), { wrapper: createWrapper() });
     result.current.mutate(1);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -123,7 +123,7 @@ describe('useMoveAllCards', () => {
 
   it('moves all cards and invalidates queries', async () => {
     (moveAllCards as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: { movedCount: 3 },
+      data: { moved_count: 3 },
     });
     const { result } = renderHook(() => useMoveAllCards(), { wrapper: createWrapper() });
     result.current.mutate({ sourceColumnId: 1, targetColumnId: 2 });

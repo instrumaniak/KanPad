@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT c.`board_id` AS \"board_id: i32\" FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` WHERE c.`id` = ? AND b.`user_id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "board_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.columns",
+            "name": "board_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "78f0da1278f140728c2c91900dd71f0bb715968ae26c4a71535005c09478693a"
+}

@@ -1,0 +1,47 @@
+# T62 — build-context allowlist for backend-rs/.
+#
+# WHY: the Dockerfile's build context is backend-rs/ (see compose.yaml `rust`
+# service). Without this file the context shipped `target/` — the shared cargo
+# target dir is tens of GB (orchestration log records a 6.4 GB cache; the
+# current shared target is ~44 GB) — so every `docker build` first had to TAR
+# and upload gigabytes the image never reads. Excluding it is the single
+# biggest CI/local build-speed win in this task.
+#
+# The COPY lines that MATTER (Dockerfile) are:
+#   Cargo.toml, Cargo.lock, .sqlx/, migrations/, openapi.json, src/, public/
+#
+# SCOPE DISCIPLINE: this file excludes only what is LARGE or SENSITIVE.
+# `tests/` is DELIBERATELY NOT excluded even though `cargo build --release`
+# never compiles it — Cargo.toml declares `[[test]] name = "api" path =
+# "tests/api.rs"`, and cargo resolves an EXPLICIT target's path at manifest
+# load, so a context without tests/ can fail the build. The bytes it saves
+# are not worth the risk; target/ is the actual problem.
+
+# --- never an image input, and large or inert -------------------------------
+target/
+docker-compose.test.yml
+
+# --- secrets / env (never bake; Settings validates at boot) ----------------
+# The Dockerfile contract gate greps for DATABASE_URL; nothing here reaches
+# the image because COPY lists files explicitly, but keep them out of the
+# context tarball too (defence in depth).
+.env
+.env.*
+
+# --- editor/OS noise --------------------------------------------------------
+*.swp
+*.swo
+.DS_Store
+
+# --- KEEP (do not exclude) --------------------------------------------------
+# .sqlx/      committed offline query cache — the build needs NO database.
+# migrations/ compile-time inputs (sqlx::migrate! embed).
+# openapi.json include_str! embed (served + printed).
+# public/     frontend dist copied in by CI BEFORE `docker build`
+#             (the SPA fallback contract; not in git).
+# src/        the crate.
+# tests/      see SCOPE DISCIPLINE above — kept for the explicit [[test]] path.
+#
+# Note: `!` re-includes are unnecessary because none of the exclusion patterns
+# above can match these names. If a future pattern is added (e.g. `*.json`),
+# re-check that openapi.json and public/ survive it.

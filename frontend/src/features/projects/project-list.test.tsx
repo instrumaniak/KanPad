@@ -10,12 +10,19 @@ const mockCreateProject = vi.fn();
 const mockUpdateProject = vi.fn();
 const mockDeleteProject = vi.fn();
 
-vi.mock('./projects.api', () => ({
-  fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
-  createProject: (...args: unknown[]) => mockCreateProject(...args),
-  updateProject: (...args: unknown[]) => mockUpdateProject(...args),
-  deleteProject: (...args: unknown[]) => mockDeleteProject(...args),
-}));
+const mockRecreateProject = vi.fn();
+
+vi.mock('./projects.api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./projects.api')>();
+  return {
+    ...actual,
+    fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
+    createProject: (...args: unknown[]) => mockCreateProject(...args),
+    updateProject: (...args: unknown[]) => mockUpdateProject(...args),
+    deleteProject: (...args: unknown[]) => mockDeleteProject(...args),
+    recreateProject: (...args: unknown[]) => mockRecreateProject(...args),
+  };
+});
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -40,7 +47,7 @@ describe('ProjectList', () => {
   });
 
   it('renders the page title', async () => {
-    mockFetchProjects.mockResolvedValue({ data: [], total: 0 });
+    mockFetchProjects.mockResolvedValue({ data: [], page: 1, limit: 50, total: 0 });
     render(<ProjectList />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -49,7 +56,7 @@ describe('ProjectList', () => {
   });
 
   it('shows empty state when no projects', async () => {
-    mockFetchProjects.mockResolvedValue({ data: [], total: 0 });
+    mockFetchProjects.mockResolvedValue({ data: [], page: 1, limit: 50, total: 0 });
     render(<ProjectList />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -61,9 +68,11 @@ describe('ProjectList', () => {
   it('renders project list with projects', async () => {
     mockFetchProjects.mockResolvedValue({
       data: [
-        { id: 1, name: 'Project Alpha', boardCount: 2, created_at: '2026-01-01', updated_at: '2026-01-01' },
-        { id: 2, name: 'Project Beta', boardCount: 0, created_at: '2026-01-02', updated_at: '2026-01-02' },
+        { id: 1, name: 'Project Alpha', board_count: 2, created_at: '2026-01-01', updated_at: '2026-01-01' },
+        { id: 2, name: 'Project Beta', board_count: 0, created_at: '2026-01-02', updated_at: '2026-01-02' },
       ],
+      page: 1,
+      limit: 50,
       total: 2,
     });
     render(<ProjectList />, { wrapper: createWrapper() });
@@ -78,7 +87,9 @@ describe('ProjectList', () => {
 
   it('shows Create Project button when projects exist', async () => {
     mockFetchProjects.mockResolvedValue({
-      data: [{ id: 1, name: 'Project', boardCount: 0, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      data: [{ id: 1, name: 'Project', board_count: 0, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      page: 1,
+      limit: 50,
       total: 1,
     });
     render(<ProjectList />, { wrapper: createWrapper() });
@@ -90,7 +101,9 @@ describe('ProjectList', () => {
 
   it('shows inline create form when clicking Create Project', async () => {
     mockFetchProjects.mockResolvedValue({
-      data: [{ id: 1, name: 'Project', boardCount: 0, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      data: [{ id: 1, name: 'Project', board_count: 0, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      page: 1,
+      limit: 50,
       total: 1,
     });
     render(<ProjectList />, { wrapper: createWrapper() });
@@ -105,9 +118,9 @@ describe('ProjectList', () => {
   });
 
   it('creates a project via inline form', async () => {
-    mockFetchProjects.mockResolvedValue({ data: [], total: 0 });
+    mockFetchProjects.mockResolvedValue({ data: [], page: 1, limit: 50, total: 0 });
     mockCreateProject.mockResolvedValue({
-      data: { id: 1, name: 'New Project', boardCount: 0 },
+      data: { id: 1, name: 'New Project', board_count: 0 },
       message: 'Project created',
     });
 
@@ -131,7 +144,9 @@ describe('ProjectList', () => {
 
   it('cancels inline create form on Escape', async () => {
     mockFetchProjects.mockResolvedValue({
-      data: [{ id: 1, name: 'Project', boardCount: 0, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      data: [{ id: 1, name: 'Project', board_count: 0, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      page: 1,
+      limit: 50,
       total: 1,
     });
     render(<ProjectList />, { wrapper: createWrapper() });
@@ -150,7 +165,9 @@ describe('ProjectList', () => {
 
   it('singular board count for 1 board', async () => {
     mockFetchProjects.mockResolvedValue({
-      data: [{ id: 1, name: 'Solo Project', boardCount: 1, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      data: [{ id: 1, name: 'Solo Project', board_count: 1, created_at: '2026-01-01', updated_at: '2026-01-01' }],
+      page: 1,
+      limit: 50,
       total: 1,
     });
     render(<ProjectList />, { wrapper: createWrapper() });

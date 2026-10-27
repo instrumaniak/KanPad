@@ -1,0 +1,76 @@
+name: kanpad
+
+# T01 contract-freeze compose pin (normative for T02/T50/T51).
+# mysql:8.4 + nest:3000 + rust:3001, named volume, mysqladmin-ping healthcheck.
+# The `client.ts` BASE switch itself lands in T40b — compose + Vite proxy only here.
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
+      MYSQL_DATABASE: ${DB_NAME:-kanbanflow_dev}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-changeme}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  nest:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PORT: "3000"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-kanbanflow_dev}
+      NODE_ENV: ${NODE_ENV:-development}
+
+  rust:
+    build:
+      context: ./backend-rs
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PORT: "3001"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-kanbanflow_dev}
+      # APP_ENV, not NODE_ENV: the Rust service is not a Node service (T54).
+      # The Nest service above keeps NODE_ENV — separate container, separate
+      # runtime. Passing NODE_ENV to the Rust service now FAILS its boot.
+      APP_ENV: ${APP_ENV:-development}
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - nest
+    environment:
+      # T51 cutover: default target is now Rust (:3001).
+      # Set VITE_API_URL=http://localhost:3000 for a one-line app rollback.
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+
+volumes:
+  mysql-data:

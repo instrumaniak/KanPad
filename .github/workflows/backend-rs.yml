@@ -58,13 +58,13 @@ permissions:
   contents: read
 
 env:
-  CI_DB_NAME: kanpad_ci
+  CI_DB_NAME: kanpad
   MYSQL_ROOT_PASSWORD: ci_root_pw
   # 10-architecture.md: DATABASE_URL always carries ?charset=utf8mb4 AND the
   # collation pin (`54` Part C §C6): sqlx 0.9 sends only `SET NAMES utf8mb4`
   # and lets the server pick the collation — MySQL 8's default is
   # `utf8mb4_0900_ai_ci`, NOT this schema's `utf8mb4_unicode_ci`.
-  DATABASE_URL: mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4&collation=utf8mb4_unicode_ci
+  DATABASE_URL: mysql://root:ci_root_pw@127.0.0.1:3306/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -77,7 +77,7 @@ jobs:
         image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: ci_root_pw
-          MYSQL_DATABASE: kanpad_ci
+          MYSQL_DATABASE: kanpad
         ports:
           - '3306:3306'
         options: >-
@@ -99,6 +99,8 @@ jobs:
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: backend-rs -> backend-rs/target
 
       # -- 1. fmt ---------------------------------------------------------
       - name: fmt --check
@@ -360,18 +362,12 @@ jobs:
           esac
 
       # -- 5. sqlx prepare --check (canonical exact form) ------------------
+      # The `.sqlx/` cache binds DB-qualified table names. With the DB names
+      # aligned (`kanpad` in both committed cache and CI DB), the check runs
+      # against the live DB and verifies the committed SQL matches the committed
+      # metadata directly — no `SQLX_OFFLINE` offset needed.
       - name: sqlx prepare --check --workspace --all -- --locked --all-targets
         working-directory: backend-rs
-        # T62: SQLX_OFFLINE=true is MANDATORY here. sqlx 0.9's `.sqlx/` cache
-        # binds the DB-qualified table names (`kanpad.<table>` for the dev/test
-        # DB, `kanpad_ci.<table>` for CI's service DB) — the two never match.
-        # Without this env, `prepare --check` connects to the live DB (step's
-        # `DATABASE_URL` is `kanpad_ci`), regenerates the cache for that DB,
-        # then rejects the committed `kanpad`-named files. The gate's purpose is
-        # "does the committed `.sqlx/` match the committed SQL?" (not "does it
-        # match this CI's service DB name?"), so the check must read offline.
-        env:
-          SQLX_OFFLINE: "true"
         run: cargo sqlx prepare --check --workspace --all -- --locked --all-targets
 
       # -- 6. test + coverage floor (T62) -----------------------------------
@@ -416,7 +412,7 @@ jobs:
 
       - name: cargo llvm-cov --workspace --all-targets --fail-under-lines 85
         working-directory: backend-rs
-        run: cargo llvm-cov --locked --workspace --all-targets --fail-under-lines 85
+        run: cargo llvm-cov --locked --workspace --all-targets --fail-under-lines 85 --summary-only
 
       # -- supply-chain ----------------------------------------------------
       # T68: the separate `cargo audit` step is REMOVED. It was a SECOND

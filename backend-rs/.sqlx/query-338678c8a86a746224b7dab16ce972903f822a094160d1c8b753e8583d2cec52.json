@@ -1,0 +1,65 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id`, `email`, `role` FROM `users` WHERE `id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "role",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "collation": 224,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.users",
+            "name": "role"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "338678c8a86a746224b7dab16ce972903f822a094160d1c8b753e8583d2cec52"
+}

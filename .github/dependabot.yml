@@ -1,0 +1,54 @@
+# T62 — dependabot: keep the supply-chain pins CURRENT.
+#
+# WHY THIS FILE EXISTS: every `uses:` in .github/workflows/backend-rs.yml is
+# pinned to a commit SHA (immutability — a tag is a pointer upstream can move).
+# The cost of that immutability is that NOTHING updates a SHA by itself, so
+# without this file the pins rot: a pinned action silently misses every
+# security fix upstream ships. Dependabot is the mechanism that keeps SHA pins
+# alive — it opens version-bump PRs, each of which re-runs the full CI gate.
+#
+# THE NUANCE (recorded per T62's spec): dependabot "will not create alerts for
+# actions pinned to SHA values" — security ALERTS only cover semver-tagged
+# actions. So SHA-pinned actions rely on dependabot's version-bump PRs, NOT on
+# alerts. That is the accepted trade for immutability, and it is why the
+# github-actions ecosystem entry below is load-bearing rather than optional.
+#
+# Three ecosystems, one PR each, weekly (low-noise cadence for a solo repo).
+version: 2
+updates:
+  # GitHub Actions: the SHA-pinned workflow refs (actions/*, docker/*,
+  # dtolnay/rust-toolchain, Swatinem/rust-cache).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Group the action bumps into ONE PR — a green CI run proves them
+    # together, and 9 separate PRs for one workflow is pure review noise.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Cargo: backend-rs. Dependabot reads Cargo.lock, so `--locked` in CI means
+  # a bump PR is exactly the diff that goes green or red — no silent
+  # re-resolution at build time.
+  - package-ecosystem: cargo
+    directory: /backend-rs
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # npm: frontend. Same reasoning — the lockfile is the contract.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch

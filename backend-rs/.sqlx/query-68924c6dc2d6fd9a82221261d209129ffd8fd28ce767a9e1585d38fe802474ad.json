@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `cards` WHERE `id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "68924c6dc2d6fd9a82221261d209129ffd8fd28ce767a9e1585d38fe802474ad"
+}

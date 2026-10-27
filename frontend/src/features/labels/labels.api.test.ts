@@ -1,20 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { LabelColor } from '../cards/cards.api';
+import type { components } from '@/lib/api/schema';
+import { BASE, ApiError, apiFetch, apiFetchVoid } from '@/lib/api/client';
 
 import {
   fetchLabels,
   createLabel,
   updateLabel,
   deleteLabel,
-  type CreateLabelData,
-  type UpdateLabelData,
 } from './labels.api';
 
-global.fetch = vi.fn();
+vi.mock('@/lib/api/client', () => ({
+  BASE: '',
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+  apiFetch: vi.fn(),
+  apiFetchVoid: vi.fn(),
+}));
 
-const mockFetch = global.fetch as ReturnType<typeof vi.fn>;
+const mockApiFetch = apiFetch as ReturnType<typeof vi.fn>;
+const mockApiFetchVoid = apiFetchVoid as ReturnType<typeof vi.fn>;
 
-const mockLabel = { id: 1, name: 'Bug', color: '#ff0000', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' };
+type Label = components['schemas']['LabelResponse'];
+
+const mockLabel: Label = {
+  id: 1,
+  name: 'Bug',
+  color: 'red',
+  created_at: '2024-01-01T00:00:00.000000Z',
+  updated_at: '2024-01-01T00:00:00.000000Z',
+};
 
 describe('labels.api', () => {
   beforeEach(() => {
@@ -22,145 +41,96 @@ describe('labels.api', () => {
   });
 
   describe('fetchLabels', () => {
-    it('fetches all labels', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: [mockLabel] }),
-      });
+    it('fetches the label page (paginated envelope)', async () => {
+      const page = { data: [mockLabel], page: 1, limit: 50, total: 1 };
+      mockApiFetch.mockResolvedValueOnce(page);
 
       const result = await fetchLabels();
-      expect(mockFetch).toHaveBeenCalledWith('/api/labels', { credentials: 'include' });
-      expect(result).toEqual({ data: [mockLabel] });
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/labels`);
+      expect(result).toEqual(page);
     });
 
-    it('throws network error when fetch fails', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('sends valid page/limit', async () => {
+      mockApiFetch.mockResolvedValueOnce({ data: [], page: 2, limit: 10, total: 0 });
 
-      await expect(fetchLabels()).rejects.toThrow('Network error — please check your connection');
+      await fetchLabels(2, 10);
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/labels?page=2&limit=10`);
     });
 
-    it('throws error from API response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: () => Promise.resolve({ message: 'Server error' }),
-      });
+    it('omits invalid page/limit instead of sending garbage (newly-strict audit)', async () => {
+      mockApiFetch.mockResolvedValueOnce({ data: [mockLabel], page: 1, limit: 50, total: 1 });
 
-      await expect(fetchLabels()).rejects.toThrow('Server error');
+      await fetchLabels(0, 500);
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/labels`);
+
+      await fetchLabels(Number.NaN, undefined);
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/labels`);
+    });
+
+    it('propagates ApiError with status', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(401, 'Not authenticated'));
+
+      await expect(fetchLabels()).rejects.toMatchObject({ status: 401 });
     });
   });
 
   describe('createLabel', () => {
     it('creates a new label', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: mockLabel, message: 'Label created' }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: mockLabel });
 
-      const data: CreateLabelData = { name: 'Bug', color: '#ff0000' };
+      const data: components['schemas']['CreateLabelInput'] = { name: 'Bug', color: 'red' };
       const result = await createLabel(data);
-      expect(mockFetch).toHaveBeenCalledWith('/api/labels', {
-        credentials: 'include',
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/labels`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      expect(result).toEqual({ data: mockLabel, message: 'Label created' });
+      expect(result).toEqual({ data: mockLabel });
     });
 
-    it('throws network error when fetch fails', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('propagates validation errors with status', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(400, 'Validation failed'));
 
-      await expect(createLabel({ name: 'X', color: '#fff' })).rejects.toThrow('Network error — please check your connection');
-    });
-
-    it('throws array error message joined', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 422,
-        json: () => Promise.resolve({ message: ['Name is required', 'Color is invalid'] }),
+      await expect(createLabel({ name: '', color: 'red' })).rejects.toMatchObject({
+        status: 400,
       });
-
-      await expect(createLabel({ name: '', color: '' as unknown as LabelColor })).rejects.toThrow('Name is required, Color is invalid');
     });
   });
 
   describe('updateLabel', () => {
     it('updates a label name', async () => {
       const updated = { ...mockLabel, name: 'Critical' };
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: updated }),
-      });
+      mockApiFetch.mockResolvedValueOnce({ data: updated });
 
-      const data: UpdateLabelData = { name: 'Critical' };
-      const result = await updateLabel(1, data);
-      expect(mockFetch).toHaveBeenCalledWith('/api/labels/1', {
-        credentials: 'include',
+      const result = await updateLabel(1, { name: 'Critical' });
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/labels/1`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ name: 'Critical' }),
       });
       expect(result).toEqual({ data: updated });
     });
 
-    it('updates a label color', async () => {
-      const updated = { ...mockLabel, color: '#00ff00' };
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: updated }),
-      });
+    it('propagates not-found errors', async () => {
+      mockApiFetch.mockRejectedValueOnce(new ApiError(404, 'Label not found'));
 
-      const result = await updateLabel(1, { color: '#00ff00' });
-      expect(result.data.color).toBe('#00ff00');
-    });
-
-    it('throws network error when fetch fails', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(updateLabel(1, { name: 'X' })).rejects.toThrow('Network error — please check your connection');
-    });
-
-    it('throws error on not found', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Label not found' }),
-      });
-
-      await expect(updateLabel(999, { name: 'X' })).rejects.toThrow('Label not found');
+      await expect(updateLabel(999, { name: 'X' })).rejects.toMatchObject({ status: 404 });
     });
   });
 
   describe('deleteLabel', () => {
-    it('deletes a label (204 no content)', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 204,
-      });
+    it('deletes a label (204 void)', async () => {
+      mockApiFetchVoid.mockResolvedValueOnce(undefined);
 
       const result = await deleteLabel(1);
-      expect(mockFetch).toHaveBeenCalledWith('/api/labels/1', {
-        credentials: 'include',
+      expect(mockApiFetchVoid).toHaveBeenCalledWith(`${BASE}/api/v1/labels/1`, {
         method: 'DELETE',
       });
       expect(result).toBeUndefined();
     });
 
-    it('throws network error when fetch fails', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    it('propagates delete errors', async () => {
+      mockApiFetchVoid.mockRejectedValueOnce(new ApiError(404, 'Label not found'));
 
-      await expect(deleteLabel(999)).rejects.toThrow('Network error — please check your connection');
-    });
-
-    it('throws error on failed delete', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ message: 'Label not found' }),
-      });
-
-      await expect(deleteLabel(999)).rejects.toThrow('Label not found');
+      await expect(deleteLabel(999)).rejects.toMatchObject({ status: 404 });
     });
   });
 });

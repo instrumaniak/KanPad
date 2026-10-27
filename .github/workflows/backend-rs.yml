@@ -1,0 +1,661 @@
+# KanPad backend-rs CI (T06 docker/CI contract; RELOCATED to the repo root by
+# T55).
+#
+# LOCATION: this file now lives at the REPO ROOT `.github/workflows/` — GitHub
+# Actions discovers workflows ONLY there. It used to live at
+# `backend-rs/.github/workflows/ci.yml`, one directory deep, which means it had
+# **NEVER RUN**: every gate in it (fmt, clippy, the `unwrap` grep gate, the
+# `prepare --check`, `cargo deny`, the openapi diff, the docker build,
+# the e2e suites) was unverified. T55 moved it here (a pure path rename — the
+# body already used repo-root-relative paths and `working-directory: backend-rs`).
+#
+# Step order is normative (T06 AC): fmt -> clippy -D warnings -> migrate run +
+# migrate info (pending=0) -> SHOW CREATE TABLE assert (T02 gate) ->
+# sqlx prepare --check (canonical form) -> test + coverage floor (T62) ->
+# openapi snapshot -> gen:api --check -> tsc -> docker build (SQLX_OFFLINE=true)
+# -> vitest / playwright pinned to :3001.
+#
+# .sqlx/ commit rule (enforced by the prepare --check step): any `query!`
+# change must run `cargo sqlx prepare --workspace --all -- --all-targets` and
+# commit the result. Never bake DATABASE_URL into the image; never set
+# SQLX_OFFLINE in dev .env (only the Dockerfile builder sets it).
+#
+# T62 — action pinning + `--locked`:
+#   * EVERY `uses:` ref is pinned to a commit SHA (not a moving tag), with the
+#     tag/branch kept as a trailing comment. A tag is a pointer that upstream
+#     can move; a SHA cannot. `.github/dependabot.yml` (github-actions ecosystem)
+#     keeps the pins current via version-bump PRs.
+#   * Nuance: dependabot "will not create alerts for actions pinned to SHA
+#     values" — alerts only cover semver-tagged actions. SHA-pinned actions
+#     therefore rely on dependabot's bump PRs, NOT on security alerts. That is
+#     the accepted trade for immutability.
+#   * `dtolnay/rust-toolchain` is the one exception in KIND (not in policy): it
+#     publishes per-version BRANCHES, not tags, so its pin is a branch-tip SHA.
+#   * Every dependency-resolving cargo invocation carries `--locked`, so a
+#     `Cargo.lock` drift fails the build instead of silently re-resolving.
+#
+# 2026-10-27 — `cargo --offline` is NOT a Docker contract (CI run 40425148777):
+# the docker-build step used to require `RUN cargo build --locked --offline`,
+# and that build had never run. It cannot ever work: `rust:1.99-bookworm` is a
+# bare image (`CARGO_HOME=/usr/local/cargo`, EMPTY `registry/`) and the build
+# context ships no vendored crates, so offline cargo dies at dependency
+# RESOLUTION — `error: no matching package named 'anyhow' found`, exit 101 —
+# before compiling anything. The Dockerfile therefore builds with `--locked`
+# only (network enabled; integrity = committed Cargo.lock checksums +
+# digest-pinned bases), and the contract gate now FAILS if `--offline`
+# reappears. `SQLX_OFFLINE=true` is a different axis and stays: it makes
+# `query!` compile from the committed `.sqlx/` cache with no database. The
+# `--offline` below in the openapi-snapshot step is legitimate because THAT job
+# restores `~/.cargo/registry` (Swatinem/rust-cache) and already compiled the
+# deps in clippy — do not copy it into the image build.
+
+name: backend-rs CI
+
+on:
+  push:
+    paths:
+      - 'backend-rs/**'
+      - 'frontend/**'
+      # A change to THIS workflow must trigger it (T55) — otherwise the gate
+      # file can drift without anything noticing.
+      - '.github/workflows/backend-rs.yml'
+  pull_request:
+    paths:
+      - 'backend-rs/**'
+      - 'frontend/**'
+      - '.github/workflows/backend-rs.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI_DB_NAME: kanpad
+  MYSQL_ROOT_PASSWORD: ci_root_pw
+  # 10-architecture.md: DATABASE_URL always carries ?charset=utf8mb4 AND the
+  # collation pin (`54` Part C §C6): sqlx 0.9 sends only `SET NAMES utf8mb4`
+  # and lets the server pick the collation — MySQL 8's default is
+  # `utf8mb4_0900_ai_ci`, NOT this schema's `utf8mb4_unicode_ci`.
+  DATABASE_URL: mysql://root:ci_root_pw@127.0.0.1:3306/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- backend
+  backend:
+    name: backend (fmt -> clippy -> migrate -> prepare --check -> test+coverage -> snapshot)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_pw
+          MYSQL_DATABASE: kanpad
+        ports:
+          - '3306:3306'
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pci_root_pw"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+          --health-start-period=20s
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Rust toolchain (stable + clippy + rustfmt)
+        # The toolchain is PINNED by backend-rs/rust-toolchain.toml (1.99.1).
+        # The `dtolnay/rust-toolchain@stable` action exported RUSTUP_TOOLCHAIN,
+        # which OVERRIDES that file — so the pin was silently ignored by CI.
+        # This action now installs the SAME pinned channel (T57).
+        uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # branch 1.99.1
+        with:
+          components: clippy, rustfmt
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: backend-rs -> backend-rs/target
+
+      # -- 1. fmt ---------------------------------------------------------
+      - name: fmt --check
+        working-directory: backend-rs
+        run: cargo fmt --check
+
+      # -- 2. clippy ------------------------------------------------------
+      - name: clippy --workspace --all-targets -D warnings
+        working-directory: backend-rs
+        # Compile from the COMMITTED `.sqlx/` cache, not from a live database.
+        # The `query!` macros expand at compile time and clippy runs BEFORE
+        # `migrate run` (step 5), so without this the macros query the empty
+        # `kanpad_ci` service database and the step dies with 90 x
+        # `1146 Table 'kanpad_ci.<table>' doesn't exist` (observed on runs
+        # 39795598592 / 39817195098, both 2026-10-22).
+        #
+        # The offline cache is the right source here: it is committed, it is
+        # what the Docker image builds from, and the later `sqlx prepare
+        # --check` step validates it against the MIGRATED live database —
+        # so a cache that drifted from the schema still fails the job.
+        env:
+          SQLX_OFFLINE: "true"
+        # `-A clippy::pedantic` keeps `clippy::pedantic` ADVISORY: the tree
+        # carries ~370 pedantic warnings (measured 2026-10-22) and the
+        # `cast_*` family among them cannot be fixed without changing
+        # runtime semantics. The lints table still enables it at `warn` as
+        # a to-do list for a local `cargo clippy`.
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic
+
+      # -- lint grep gates (10-architecture.md code policy) ---------------
+      # unwrap()/expect() are allowed ONLY at the main() boundary
+      # (src/main.rs, anyhow boundary) and inside #[cfg(test)] modules
+      # ("allowed in tests only"). The awk filter strips #[cfg(test)]
+      # module bodies (brace-aware) before matching.
+      - name: grep gate — no unwrap()/expect() outside main.rs and #[cfg(test)]
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(find src -name '*.rs' ! -name 'main.rs' | while read -r f; do
+            awk '
+              /^[[:space:]]*#\[cfg\(test\)\]/ { skip=1; depth=0; seen=0; next }
+              skip {
+                line=$0
+                opens = gsub(/\{/, "&", line)
+                closes = gsub(/\}/, "&", line)
+                if (opens > 0) { seen=1 }
+                depth += opens - closes
+                if (seen && depth <= 0) { skip=0 }
+                next
+              }
+              { print FILENAME ":" FNR ":" $0 }
+            ' "$f"
+          done | grep -E '\.(unwrap|expect)\(' || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: unwrap()/expect() outside src/main.rs and #[cfg(test)]:'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: no unwrap()/expect() outside src/main.rs and #[cfg(test)]'
+
+      # The OTHER panic spellings in a request path (54 B2, 3rd decision).
+      # NOTE: `unwrap_or_else` is deliberately NOT matched — it is not a panic
+      # spelling (it is used benignly 6x on the tree).
+      #
+      # ALLOWLIST: **none** since T65. It used to exempt `src/state.rs`, whose
+      # session-store identifier guards were the one documented fail-fast (a
+      # BOOT-time invariant, never per request). T65 replaced the store with an
+      # IN-TREE one that interpolates no schema name, so there is no
+      # identifier to validate, the guards are gone, and the allow-list entry
+      # with them. An allow-list entry that outlives its reason is a hole.
+      - name: grep gate — no panic!/todo!/unimplemented! outside main.rs and #[cfg(test)]
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(find src -name '*.rs' ! -name 'main.rs' | while read -r f; do
+            awk '
+              /^[[:space:]]*#\[cfg\(test\)\]/ { skip=1; depth=0; seen=0; next }
+              skip {
+                line=$0
+                opens = gsub(/\{/, "&", line)
+                closes = gsub(/\}/, "&", line)
+                if (opens > 0) { seen=1 }
+                depth += opens - closes
+                if (seen && depth <= 0) { skip=0 }
+                next
+              }
+              { print FILENAME ":" FNR ":" $0 }
+            ' "$f"
+          done | grep -E '\b(panic!|todo!|unimplemented!)\(' || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: panic!/todo!/unimplemented! outside src/main.rs and #[cfg(test)]:'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: no panic!/todo!/unimplemented! outside src/main.rs and #[cfg(test)]'
+
+      # Handlers must skip the request body + the session from their span
+      # (54 B4, T56). `#[tracing::instrument(skip(state))]` records EVERY
+      # argument it is not told to skip, via that argument's `Debug` impl —
+      # so `auth: AuthSession` records the session's EMAIL (PII) and
+      # `input: ValidJson<CreateCardInput>` records the card TITLE and
+      # DESCRIPTION (up to 10 000 chars) into the span, which lands in the
+      # log sink. The auth handlers already skip correctly
+      # (`skip(state, session, input)`) — the resource handlers were the
+      # oversight.
+      - name: grep gate — no instrument(skip(state)) in src/
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(grep -rn 'instrument(skip(state))' src/ || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: handlers must skip the session and the request body — the span would log the body:'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: every handler skips its session + request body from the span'
+
+      # format!-interpolated SQL is banned in store.rs (SQL must be fully
+      # parameterized `?` bindings; see 00-overview.md constitution).
+      #
+      # T55: this gate had NEVER RUN (the workflow was undiscoverable), and
+      # it failed on the current tree for two reasons — both of them the
+      # gate's fault, not the code's:
+      #   1. a DOC COMMENT mentioning "never `format!` of input" was matched
+      #      as if it were code;
+      #   2. `notes::escape_like_pattern` builds a BOUND VALUE
+      #      (`format!("%{escaped}%")`, passed to `push_bind`) — that is the
+      #      sanctioned LIKE-escape pattern (30-db-schema.md: "LIKE patterns
+      #      built in Rust + push_bind only"), NOT SQL text.
+      # The gate's real intent is "no `format!` may BUILD SQL". So it now
+      # (a) skips comment lines and (b) accumulates each `format!(...)` call
+      # and flags it only when the built text carries a SQL keyword.
+      - name: grep gate — no format! in store.rs
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          hits="$(find src -name 'store.rs' | while read -r f; do
+            awk '
+              # skip comment lines (a doc comment mentioning format! is not code)
+              { line = $0 }
+              line ~ /^[[:space:]]*(\/\/|\/\*|\*)/ { next }
+              {
+                if (!in_fmt && line ~ /format!\(/) { in_fmt=1; buf=line; depth=0 }
+                else if (in_fmt) { buf = buf " " line }
+                if (in_fmt) {
+                  opens = gsub(/\(/, "&", line)
+                  closes = gsub(/\)/, "&", line)
+                  depth += opens - closes
+                  if (depth <= 0) {
+                    if (buf ~ /SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|VALUES|JOIN|ORDER BY|LIMIT/) {
+                      print FILENAME ":" FNR ":" buf
+                    }
+                    in_fmt=0; buf=""
+                  }
+                }
+              }
+            ' "$f"
+          done || true)"
+          if [ -n "$hits" ]; then
+            echo 'FAIL: format! builds SQL in store.rs (SQL must use ? bindings):'
+            echo "$hits"
+            exit 1
+          fi
+          echo 'OK: no format!-built SQL in store.rs'
+
+      # -- 3. migrate run + migrate info (pending=0) -----------------------
+      # sqlx-cli pinned exactly as T02 specifies (NOT the backend-rs binary:
+      # its `migrate` subcommand is still the T03 stub until wired later).
+      - name: Cache sqlx-cli
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/sqlx
+          key: sqlx-cli-0.9.0-${{ runner.os }}
+
+      - name: Install sqlx-cli 0.9.0
+        run: |
+          set -euo pipefail
+          if ! command -v sqlx >/dev/null 2>&1; then
+            # T66: the CLI moves with the driver — a 0.8.6 CLI cannot
+            # regenerate or validate a 0.9 `.sqlx/` cache.
+            cargo install --locked sqlx-cli --version 0.9.0 --no-default-features --features mysql,rustls
+          fi
+          cargo sqlx --version
+
+      - name: migrate run
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          cargo sqlx database create
+          cargo sqlx migrate run
+          cargo sqlx migrate info
+
+      # pending=0 cross-check that does not depend on `migrate info` output
+      # formatting: applied rows in the sqlx journal must equal migration files.
+      - name: migrate info asserts pending=0
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mysql-client
+          applied="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B \
+            -e 'SELECT COUNT(*) FROM _sqlx_migrations;' "$CI_DB_NAME")"
+          files="$(ls backend-rs/migrations/*.sql | wc -l)"
+          echo "applied=$applied files=$files"
+          [ "$applied" -eq "$files" ] || { echo 'FAIL: pending migrations remain'; exit 1; }
+          echo 'OK: pending=0'
+
+      # -- 4. SHOW CREATE TABLE assert (T02 gate enforcement) --------------
+      # Baseline rule (30-db-schema.md): app tables are explicit
+      # ENGINE=InnoDB + utf8mb4/utf8mb4_unicode_ci (fail fast, no IF NOT EXISTS).
+      #
+      # T68: the store-owned session table used to get a SPECIAL CASE here,
+      # because it lived in a separate `tower_sessions` schema and kept the
+      # store's own DDL verbatim (no explicit ENGINE/CHARSET/COLLATE). BOTH
+      # premises are gone since the 2026-10-19 store change:
+      #   * the session table now lives in the APP database (`sessions`, named
+      #     by the baseline migration — `migrations/0001_baseline.sql`), and
+      #   * the baseline creates it with the SAME explicit
+      #     `ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+      #     as every other app table.
+      # The special case therefore queried a schema that no longer exists
+      # (`tower_sessions`), returned an empty row, and the `case` treated that
+      # as a FAILURE — the step was RED on every run (T68 red-proof).
+      # The general query below now covers `sessions` with no exception.
+      #
+      # Excluded from the general query:
+      #   * `_sqlx_migrations` — sqlx-owned tooling, not app DDL.
+      #   * `_sqlx_test_databases` — sqlx's `#[sqlx::test]` harness tracking
+      #     table. It lives in the BASE database and inherits the SERVER
+      #     default collation (utf8mb4_0900_ai_ci on MySQL 8), so it would
+      #     violate the rule. It is created when the tests run, so excluding
+      #     it keeps this assert correct regardless of the step order.
+      - name: SHOW CREATE TABLE engine/charset/collation assert
+        run: |
+          set -euo pipefail
+          app_bad="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e \
+            "SELECT CONCAT(TABLE_NAME, ' ', ENGINE, ' ', TABLE_COLLATION)
+             FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = '$CI_DB_NAME'
+               AND TABLE_TYPE = 'BASE TABLE'
+               AND TABLE_NAME NOT IN ('_sqlx_migrations', '_sqlx_test_databases')
+               AND (ENGINE <> 'InnoDB' OR TABLE_COLLATION <> 'utf8mb4_unicode_ci');")"
+          if [ -n "$app_bad" ]; then
+            echo 'FAIL: app tables violating InnoDB/utf8mb4_unicode_ci:'
+            echo "$app_bad"
+            exit 1
+          fi
+          echo 'OK: all app tables are InnoDB/utf8mb4_unicode_ci'
+          # The store-owned session table is an APP table now (`sessions`), so
+          # the query above already asserted it. Print it for the log so a
+          # regression that moves it out of the app DB is visible.
+          session_row="$(mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e \
+            "SELECT CONCAT(TABLE_NAME, ' ', ENGINE, ' ', TABLE_COLLATION)
+             FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = '$CI_DB_NAME' AND TABLE_NAME = 'sessions';")"
+          echo "store-owned session table (app DB): $session_row"
+          case "$session_row" in
+            'sessions InnoDB utf8mb4_unicode_ci') echo 'OK: session table InnoDB + utf8mb4_unicode_ci' ;;
+            *) echo 'FAIL: the session table must live in the app DB as InnoDB/utf8mb4_unicode_ci'; exit 1 ;;
+          esac
+
+      # -- 5. sqlx prepare --check (canonical exact form) ------------------
+      # The `.sqlx/` cache binds DB-qualified table names. With the DB names
+      # aligned (`kanpad` in both committed cache and CI DB), the check runs
+      # against the live DB and verifies the committed SQL matches the committed
+      # metadata directly — no `SQLX_OFFLINE` offset needed.
+      - name: sqlx prepare --check --workspace --all -- --locked --all-targets
+        working-directory: backend-rs
+        run: cargo sqlx prepare --check --workspace --all -- --locked --all-targets
+
+      # -- 6. test + coverage floor (T62) -----------------------------------
+      # A coverage run IS a test run: `cargo llvm-cov` compiles the same
+      # `--workspace --all-targets` targets and executes the SAME suite
+      # (`cargo test`'s exact output appears in the log), so this step
+      # REPLACES the old `cargo test --workspace --all-targets` — running both
+      # would execute the whole api suite twice for no extra signal.
+      #
+      # `--fail-under-lines 85` is the floor, deliberately BELOW the measured
+      # value (90.12% measured 2026-10-27 on this tree). A gate set at today's
+      # number blocks every refactor; 85 only catches real regressions.
+      #
+      # The floor VERIFIES BOTH DIRECTIONS (2026-10-27):
+      #   * floor 85 -> exit 0, full per-file summary printed (TOTAL 90.12%);
+      #   * floor 95 -> exit 1 (the NEGATIVE test — a gate that cannot fail is
+      #     not a gate). Note the failure prints the same summary table and
+      #     exits 1 WITHOUT a separate prose error line, so the diagnostic is
+      #     the TOTAL row: read it before assuming a mis-configured gate.
+      #
+      # `llvm-tools-preview` is installed by THIS step: `cargo-llvm-cov` needs
+      # the llvm-cov binary, and `rust-toolchain.toml`'s component list (T57)
+      # is `clippy,rustfmt` only. The CLI itself is cached like sqlx-cli.
+      - name: Cache cargo-llvm-cov
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: cargo-llvm-cov-0.9.1-${{ runner.os }}
+
+      - name: Install cargo-llvm-cov 0.9.1 + llvm-tools-preview
+        # working-directory matters for `rustup component add`: inside
+        # backend-rs/ rustup reads rust-toolchain.toml and adds the component
+        # to the PINNED 1.99.1 toolchain (outside, it would hit the default).
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          rustup component add llvm-tools-preview
+          if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+            cargo install --locked cargo-llvm-cov --version 0.9.1
+          fi
+          cargo llvm-cov --version
+
+      - name: cargo llvm-cov --workspace --all-targets --fail-under-lines 85
+        working-directory: backend-rs
+        run: cargo llvm-cov --locked --workspace --all-targets --fail-under-lines 85 --summary-only
+
+      # -- supply-chain ----------------------------------------------------
+      # T68: the separate `cargo audit` step is REMOVED. It was a SECOND
+      # advisory gate with a DIFFERENT policy: `cargo-audit` reads
+      # `.cargo/audit.toml` (absent) and therefore never saw the four
+      # task-bound ignores in `deny.toml` — so it failed on exactly the
+      # advisories the project had deliberately, and with a reason, accepted
+      # (red-proof: `error: 4 vulnerabilities found!`, exit 1).
+      # `cargo deny check advisories` reads the SAME RustSec advisory DB and
+      # additionally checks yanked crates, honours the task-bound ignores,
+      # and its policy is the committed artefact. One policy, one gate, one
+      # source of truth — a second ignore list can only drift.
+
+      # T57: the supply-chain policy is a COMMITTED artefact
+      # (backend-rs/deny.toml), derived from a real `cargo deny` run — not a
+      # generated default. The old `cargo deny init` fallback is GONE on
+      # purpose: it silently checked a DIFFERENT policy than the one the
+      # project declares. A missing deny.toml must fail the build.
+      - name: cargo deny check (committed deny.toml)
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          if ! command -v cargo-deny >/dev/null 2>&1; then
+            # T68: PINNED. A `deny.toml` is schema-version-sensitive: an
+            # unpinned cargo-deny release can reject a valid policy with
+            # `unexpected-keys`, turning a dependency bump into a red build
+            # for a reason that has nothing to do with the dependency. The
+            # version is the one the policy was DERIVED against.
+            cargo install --locked cargo-deny --version 0.20.2
+          fi
+          if [ ! -f deny.toml ]; then
+            echo 'FAIL: backend-rs/deny.toml is missing — the supply-chain policy must be committed'
+            exit 1
+          fi
+          cargo deny check advisories
+          cargo deny check licenses
+          cargo deny check bans
+
+      # -- 7. openapi snapshot (ACTIVE; T40a fills DTO coverage) -----------
+      # export-openapi boots NO pool/sessions, so this also proves the
+      # binary builds offline. SQLX_OFFLINE=true here mirrors the Dockerfile.
+      - name: openapi snapshot — export matches committed openapi.json
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          SQLX_OFFLINE=true cargo run --locked --offline -- export-openapi > /tmp/openapi.ci.json
+          diff -u openapi.json /tmp/openapi.ci.json
+
+  # ------------------------------------------------------------------ web
+  # gen:api --check -> tsc -> vite build (dist feeds the docker image).
+  web:
+    name: web (gen:api --check -> tsc -> vite build)
+    runs-on: ubuntu-latest
+    needs: [backend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      # T40b owns `gen:api` (openapi-typescript regen from
+      # backend-rs/openapi.json). Until then this step is a live placeholder:
+      # it runs the real --check when the script exists, otherwise it still
+      # fails the job on an unparseable openapi.json (never silently green).
+      - name: gen:api --check (placeholder until T40b wires typegen)
+        run: |
+          set -euo pipefail
+          if npm run --prefix frontend | grep -q 'gen:api'; then
+            npm run --prefix frontend gen:api -- --check
+          else
+            echo 'gen:api not wired yet (T40b owns it); validating openapi.json parses'
+            node -e "JSON.parse(require('fs').readFileSync('backend-rs/openapi.json','utf8')); console.log('openapi.json parses OK')"
+          fi
+
+      - name: tsc --noEmit
+        working-directory: frontend
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: vite build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Upload frontend dist (feeds docker public/)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+
+  # --------------------------------------- docker build + :3001 e2e (pinned)
+  docker-e2e:
+    name: docker build + vitest + playwright pinned to :3001
+    runs-on: ubuntu-latest
+    needs: [backend, web]
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_pw
+          MYSQL_DATABASE: kanpad_ci
+        ports:
+          - '3306:3306'
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pci_root_pw"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+          --health-start-period=20s
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Populate backend-rs/public from frontend dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: frontend-dist
+          path: backend-rs/public
+
+      - name: Dockerfile contract gates (no DATABASE_URL, locked build)
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          # EVERY assertion below reads the NON-COMMENT lines only. A comment
+          # that mentions a token must never satisfy a gate about CODE — this
+          # step used to pass because its HEADER COMMENT contained the literal
+          # `--locked --offline` it was grepping for, so it "verified" the exact
+          # command that could never work (CI 40425148777).
+          CODE=$(grep -v '^[[:space:]]*#' Dockerfile)
+          if printf '%s\n' "$CODE" | grep -n 'DATABASE_URL'; then
+            echo 'FAIL: Dockerfile must never reference DATABASE_URL outside comments (runtime env only)'
+            exit 1
+          fi
+          printf '%s\n' "$CODE" | grep -q 'SQLX_OFFLINE=true' || { echo 'FAIL: Dockerfile must set SQLX_OFFLINE=true'; exit 1; }
+          # Lock-pinned, network-ENABLED. A fresh builder's CARGO_HOME has an
+          # EMPTY registry/, so `cargo build --offline` dies at resolution
+          # (`error: no matching package named anyhow found`, exit 101 — CI run
+          # 40425148777). SQLX_OFFLINE=true above is a DIFFERENT axis: it makes
+          # `query!` compile from the committed .sqlx/ cache with no DB.
+          printf '%s\n' "$CODE" | grep -Eq 'cargo build .*--locked' \
+            || { echo 'FAIL: Dockerfile cargo build must carry --locked'; exit 1; }
+          if printf '%s\n' "$CODE" | grep -Eq 'cargo build .*--offline'; then
+            echo 'FAIL: Dockerfile must NOT use cargo --offline (the builder has no crate registry; see the comment above)'
+            exit 1
+          fi
+          printf '%s\n' "$CODE" | grep -q 'COPY .sqlx' || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
+          printf '%s\n' "$CODE" | grep -Eq 'COPY .*public/' || { echo 'FAIL: Dockerfile must COPY public/ (SPA fallback)'; exit 1; }
+          echo 'OK: Dockerfile contract gates pass'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # SQLX_OFFLINE=true comes from the Dockerfile ENV (backed by the
+      # committed .sqlx/ cache + Cargo.lock); no DATABASE_URL is passed here.
+      - name: docker build backend-rs
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./backend-rs
+          tags: kanpad-rust:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image must not bake DATABASE_URL
+        run: |
+          set -euo pipefail
+          if docker inspect kanpad-rust:ci --format '{{.Config.Env}}' | grep -q 'DATABASE_URL'; then
+            echo 'FAIL: image bakes DATABASE_URL'
+            exit 1
+          fi
+          echo 'OK: image carries no DATABASE_URL'
+
+      # Serve :3001 smoke. SESSION_SECRET is runtime-only (test value, >=32
+      # bytes per boot validation); DB migrations are unnecessary for this
+      # smoke because /health is liveness (DB-free) and /api-docs serves the
+      # embedded openapi.json. T05 adds the /ready + SPA-fallback asserts.
+      - name: Serve :3001 + smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name kanpad-rust-ci --network host \
+            -e PORT=3001 \
+            -e APP_ENV=test \
+            -e SESSION_SECRET=ci-test-secret-that-is-longer-than-32-bytes \
+            -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_ci?charset=utf8mb4&collation=utf8mb4_unicode_ci' \
+            kanpad-rust:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3001/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          echo "E2E_BASE_URL=http://localhost:3001" >> "$GITHUB_ENV"
+          curl -fsS http://localhost:3001/health | grep -q '"status":"ok"'
+          echo 'OK: GET /health -> {status: ok}'
+          curl -fsS http://localhost:3001/api-docs/openapi.json > /tmp/openapi.3001.json
+          diff -u backend-rs/openapi.json /tmp/openapi.3001.json
+          echo 'OK: /api-docs/openapi.json matches committed openapi.json'
+          docker exec kanpad-rust-ci test -f /app/public/index.html
+          echo 'OK: SPA index present at /app/public/index.html'
+          docker stop kanpad-rust-ci && docker rm kanpad-rust-ci
+
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: vitest vs :3001 config (unit; needs no server)
+        working-directory: frontend
+        run: npm run test
+
+      # Playwright is PINNED here, wired fully in T41/T50: browsers install
+      # (cached) + the :3001 smoke above prove the target; the spec files
+      # still boot Nest :3000 via webServer (playwright.config.ts), so
+      # `playwright test` itself must NOT run until T41/T50 retarget it.
+      - name: playwright pinned (browsers installed; full run in T41/T50)
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --only-shell
+          npx playwright --version
+          echo 'PIN: e2e target is http://localhost:3001 (full `playwright test` wired in T41/T50)'

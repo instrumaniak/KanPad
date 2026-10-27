@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `data` FROM `sessions` WHERE `id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "data",
+        "type_info": {
+          "type": "Blob",
+          "flags": "NOT_NULL | BLOB | BINARY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 65535
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.sessions",
+            "name": "data"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a78954a9723e9cd94813867f9dc273fb02d41482e0aefee7469595df83561690"
+}

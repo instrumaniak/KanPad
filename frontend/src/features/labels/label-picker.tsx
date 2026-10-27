@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Label, Card, LabelColor } from '../cards/cards.api';
+import type { Card, LabelColor } from '../cards/cards.api';
+import type { Label } from './labels.api';
 import { useLabels, useCreateLabel } from './use-labels';
 import { useAssignCardLabel, useRemoveCardLabel } from '../cards/use-cards';
 import { useToastHelpers } from '@/lib/toast-helpers';
@@ -13,7 +14,8 @@ interface LabelPickerProps {
 }
 
 export function LabelPicker({ card }: LabelPickerProps) {
-  const { data: labels, isLoading } = useLabels();
+  const { data: labelsPage, isLoading } = useLabels();
+  const labels = labelsPage?.data ?? [];
   const assignLabel = useAssignCardLabel();
   const removeLabel = useRemoveCardLabel();
   const createLabel = useCreateLabel();

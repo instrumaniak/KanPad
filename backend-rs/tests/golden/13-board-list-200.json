@@ -1,0 +1,59 @@
+{
+ "capture": {},
+ "capture_jar": false,
+ "deviation": "PAGINATION BREAK (CONTRACT-CHANGES \u00a71): Nest `GET /api/boards` -> `{data,total=data.length}`; Rust -> `Page{data,page,limit,total}` via count query. Gate compares the `data` ITEMS only (order-insensitive); `page/limit/total` envelope excluded per contract breakage.",
+ "name": "board-list-200",
+ "nest": {
+  "body": {
+   "data": [
+    {
+     "backgroundColor": "#0079BF",
+     "id": 5,
+     "isArchived": false,
+     "name": "Golden board"
+    }
+   ],
+   "total": 1
+  },
+  "status": 200
+ },
+ "request": {
+  "auth": "owner",
+  "body": null,
+  "method": "GET",
+  "path": "/api/v1/boards"
+ },
+ "rust": {
+  "absent": [
+   "message"
+  ],
+  "location_contains": null,
+  "ordering": null,
+  "problem": null,
+  "require_errors": false,
+  "shape": {
+   "data": [
+    {
+     "background_color": "@string",
+     "created_at": "@string",
+     "id": "@int",
+     "is_archived": "@bool",
+     "name": "@string",
+     "project": {
+      "id": "@int",
+      "name": "@string"
+     },
+     "project_id": "@int",
+     "updated_at": "@string",
+     "view_mode": "@string"
+    }
+   ],
+   "limit": "@int",
+   "page": "@int",
+   "total": "@int"
+  },
+  "status": 200
+ },
+ "seq": 13,
+ "source": "spec-derived; Nest :3000 unreachable (curl 000, 2026-10-12)."
+}

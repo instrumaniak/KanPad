@@ -1,0 +1,26 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT COUNT(*) AS \"total: i64\" FROM `labels` WHERE `user_id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total: i64",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 21
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b79f1bf5a95f015b84d813e0227ad279f0d6a1bc3ab3bc1d0a26c57933f53b5e"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos: i64\" FROM `checklist_items` WHERE `checklist_id` = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max_pos: i64",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e86aaab3d77af31bfbb7cde5a00b3b8bfd0a812514542e658111ef0406031666"
+}

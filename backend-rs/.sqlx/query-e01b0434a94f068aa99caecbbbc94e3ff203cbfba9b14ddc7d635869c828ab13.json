@@ -1,0 +1,99 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id`, `title`, `card_id` AS \"card_id: i32\", `created_at`, `updated_at` FROM `checklists` WHERE `card_id` = ? ORDER BY `id` ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklists",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklists",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "card_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklists",
+            "name": "card_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklists",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklists",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e01b0434a94f068aa99caecbbbc94e3ff203cbfba9b14ddc7d635869c828ab13"
+}

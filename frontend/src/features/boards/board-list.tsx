@@ -132,7 +132,7 @@ export function BoardList() {
         }}
         initialBoard={
           editingBoard
-            ? { id: editingBoard.id, name: editingBoard.name, project_id: editingBoard.project_id }
+            ? { id: editingBoard.id, name: editingBoard.name, project_id: editingBoard.project_id ?? null }
             : null
         }
       />

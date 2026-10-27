@@ -1,94 +1,64 @@
-import type { Label, LabelColor } from '../cards/cards.api';
+import type { components } from '@/lib/api/schema';
+import {
+  apiFetch,
+  apiFetchVoid,
+  type ApiResponse,
+  type Page,
+} from '@/lib/api/client';
 
-interface ApiResponse<T> {
-  data: T;
-  message?: string;
+/** Wire label (T25 `LabelResponse` — timestamps are UTC ISO-8601 strings). */
+export type Label = components['schemas']['LabelResponse'];
+
+/**
+ * Label color. Resolves the old `LabelColor` union-vs-`string` drift to the
+ * generated schema: the wire type is `string` (the 6-value enum is enforced
+ * server-side with a 400 on violation — see `20-api-contract.md` labels).
+ */
+export type LabelColor = Label['color'];
+
+export type CreateLabelData = components['schemas']['CreateLabelInput'];
+export type UpdateLabelData = components['schemas']['UpdateLabelInput'];
+
+/**
+ * Newly-strict input audit (T41e): `page`/`limit` are strict server-side
+ * (`page >= 1`, `1 <= limit <= 100`, garbage → 400 problem+json). Only
+ * defined-and-valid values are sent; anything else is omitted so the
+ * backend defaults (`page=1, limit=50`) apply instead of 400ing on
+ * `undefined`/`NaN` from uninitialized state.
+ */
+function pageQuery(page?: number, limit?: number): string {
+  const params = new URLSearchParams();
+  if (Number.isInteger(page) && (page as number) >= 1) {
+    params.set('page', String(page));
+  }
+  if (Number.isInteger(limit) && (limit as number) >= 1 && (limit as number) <= 100) {
+    params.set('limit', String(limit));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }
 
-const FETCH_OPTIONS: RequestInit = { credentials: 'include' };
-
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let message = 'Request failed';
-    try {
-      const error = await response.json();
-      message = Array.isArray(error.message) ? error.message.join(', ') : error.message;
-    } catch {
-      message = response.statusText || 'Request failed';
-    }
-    throw new Error(message);
-  }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  try {
-    return await response.json();
-  } catch {
-    throw new Error('Unexpected response format');
-  }
-}
-
-export async function fetchLabels(): Promise<ApiResponse<Label[]>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/labels', FETCH_OPTIONS);
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
-}
-
-export interface CreateLabelData {
-  name: string;
-  color: LabelColor;
+export async function fetchLabels(page?: number, limit?: number): Promise<Page<Label>> {
+  return apiFetch<Page<Label>>(`/api/v1/labels${pageQuery(page, limit)}`);
 }
 
 export async function createLabel(data: CreateLabelData): Promise<ApiResponse<Label>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/labels', {
-      ...FETCH_OPTIONS,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
-}
-
-export interface UpdateLabelData {
-  name?: string;
-  color?: LabelColor;
+  return apiFetch<ApiResponse<Label>>('/api/v1/labels', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function updateLabel(id: number, data: UpdateLabelData): Promise<ApiResponse<Label>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/labels/${id}`, {
-      ...FETCH_OPTIONS,
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+  return apiFetch<ApiResponse<Label>>(`/api/v1/labels/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 }
 
-export async function deleteLabel(id: number): Promise<ApiResponse<void>> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/labels/${id}`, {
-      ...FETCH_OPTIONS,
-      method: 'DELETE',
-    });
-  } catch {
-    throw new Error('Network error — please check your connection');
-  }
-  return handleResponse(response);
+/** Deletes are `204` — void via `apiFetchVoid` (signature change expected). */
+export async function deleteLabel(id: number): Promise<void> {
+  return apiFetchVoid(`/api/v1/labels/${id}`, {
+    method: 'DELETE',
+  });
 }
-
-export type { ApiResponse, Label };

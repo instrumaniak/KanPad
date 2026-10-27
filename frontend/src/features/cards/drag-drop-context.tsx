@@ -167,8 +167,9 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
               const movedCard = {
                 ...activeData.card,
                 // Columns-cache cards always carry the flag (backend source of
-                // truth); DragData types it optional, so default for the type.
-                // Runtime behavior is unchanged (undefined was already falsy).
+                // truth); keep the defensive default for a card that arrives
+                // without it. Runtime behavior is unchanged (undefined was
+                // already falsy).
                 has_description: activeData.card.has_description ?? false,
                 column_id: targetColumnId,
                 position: insertIndex,
@@ -301,8 +302,9 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
             const movedCard = {
               ...activeData.card,
               // Columns-cache cards always carry the flag (backend source of
-              // truth); DragData types it optional, so default for the type.
-              // Runtime behavior is unchanged (undefined was already falsy).
+              // truth); keep the defensive default for a card that arrives
+              // without it. Runtime behavior is unchanged (undefined was
+              // already falsy).
               has_description: activeData.card.has_description ?? false,
               column_id: targetColumnId,
               position: insertIndex,

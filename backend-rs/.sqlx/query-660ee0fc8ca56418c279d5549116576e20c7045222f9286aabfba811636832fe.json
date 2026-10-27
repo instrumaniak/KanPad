@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE `cards` SET `position` = `position` - 1 WHERE `column_id` = ? AND `position` > ? AND `position` <= ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "660ee0fc8ca56418c279d5549116576e20c7045222f9286aabfba811636832fe"
+}

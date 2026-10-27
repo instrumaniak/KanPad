@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `sessions` WHERE `expiry_date` < UTC_TIMESTAMP(6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "f95ffd7da57762cb4ceda8fabcbb640602919e21bed04e237b4f91d3f27e9113"
+}

@@ -354,9 +354,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
 
       {detailCard && (
         <CardDetailPanel
-          card={
-            detailCard as unknown as React.ComponentProps<typeof CardDetailPanel>['card']
-          }
+          card={detailCard}
           open={!!detailCard}
           onOpenChange={(o) => !o && setDetailCard(null)}
         />

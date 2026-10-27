@@ -17,7 +17,7 @@ export interface DueDateBadge {
   className: string;
 }
 
-export function getDueDateBadge(dueDate: string | null): DueDateBadge | null {
+export function getDueDateBadge(dueDate: string | null | undefined): DueDateBadge | null {
   if (!dueDate) return null;
 
   const date = parseDate(dueDate);
@@ -45,7 +45,7 @@ export function getDueDateBadge(dueDate: string | null): DueDateBadge | null {
   };
 }
 
-export function formatDueDate(dueDate: string | null): string | null {
+export function formatDueDate(dueDate: string | null | undefined): string | null {
   if (!dueDate) return null;
 
   const date = parseDate(dueDate);

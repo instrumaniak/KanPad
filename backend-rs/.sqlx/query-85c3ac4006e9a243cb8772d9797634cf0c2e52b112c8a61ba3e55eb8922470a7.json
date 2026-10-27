@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `created_at` ASC, `id` ASC FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "85c3ac4006e9a243cb8772d9797634cf0c2e52b112c8a61ba3e55eb8922470a7"
+}

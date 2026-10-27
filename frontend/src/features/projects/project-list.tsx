@@ -209,13 +209,13 @@ function DeleteDialog({
 function ProjectCard({
   id,
   name,
-  boardCount,
+  board_count,
   onEdit,
   onDelete,
 }: {
   id: number;
   name: string;
-  boardCount: number;
+  board_count: number;
   onEdit: (id: number, name: string) => void;
   onDelete: (id: number, name: string) => void;
 }) {
@@ -226,7 +226,7 @@ function ProjectCard({
         <div>
           <p className="font-medium">{name}</p>
           <p className="text-sm text-muted-foreground">
-            {boardCount} {boardCount === 1 ? 'board' : 'boards'}
+            {board_count} {board_count === 1 ? 'board' : 'boards'}
           </p>
         </div>
       </div>
@@ -357,7 +357,7 @@ export function ProjectList() {
               key={project.id}
               id={project.id}
               name={project.name}
-              boardCount={project.boardCount}
+              board_count={project.board_count}
               onEdit={handleEdit}
               onDelete={handleDelete}
             />

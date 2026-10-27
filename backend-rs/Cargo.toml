@@ -1,0 +1,129 @@
+[package]
+name = "backend-rs"
+version = "0.1.0"
+edition = "2024"
+# A service crate: it is never published to crates.io. `publish = false` also
+# tells `cargo deny` to skip our own (unpublished) package in the licence
+# check — the project's licence is still undecided (root README checklist).
+publish = false
+license = "UNLICENSED"
+description = "KanPad API — board, column and card service (Axum + sqlx + MySQL)."
+repository = "https://github.com/instrumaniak/KanPad"
+rust-version = "1.99"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
+# sqlx 0.9 (T66): `runtime-tokio-rustls` was REMOVED -> `runtime-tokio` +
+# `tls-rustls-ring-native-roots`. `mysql-rsa` is now OPT-IN and is required
+# here: the MySQL `caching_sha2_password` handshake needs the server's RSA
+# public key on a PLAINTEXT connection (which is what the dev/test database
+# is) — without it, sqlx cannot complete the auth handshake.
+sqlx = { version = "0.9", features = ["mysql", "mysql-rsa", "runtime-tokio", "tls-rustls-ring-native-roots", "chrono", "migrate", "macros"] }
+tower = { version = "0.5", features = ["timeout"] }
+# `timeout` and `limit` are NOT enabled: the request timeout is
+# `tower::ServiceBuilder::timeout` (the `tower` crate's feature) and the 2 MiB
+# body cap is axum's `DefaultBodyLimit`. Neither tower-http layer is used.
+# tower-http 0.7 splits the compression features, and `compression-full`
+# would pull `zstd-sys`/`libz-sys` (a C build) for a codec **no browser
+# accepts**. The API serves JSON to browsers: `gzip` is universal and `br` is
+# supported by every browser in use — so the pair is the whole practical
+# surface, and it drops the C-toolchain requirement.
+#
+# `csrf` (T56) provides `CsrfLayer`, which implements the Go 1.25
+# `CrossOriginProtection` algorithm step for step (the cross-origin check on
+# mutating requests). The feature is **dependency-free** (an empty feature
+# list), so enabling it does not move `Cargo.lock`.
+tower-http = { version = "0.7", features = ["trace", "cors", "csrf", "request-id", "compression-gzip", "compression-br", "set-header", "fs", "sensitive-headers"] }
+tower-sessions = { version = "0.15", features = ["signed"] }
+# `tower-sessions-core` is the SAME version `tower-sessions 0.14` pins
+# (`=0.14.0`), so this is NOT a second core in the tree — it is the same one,
+# with one extra feature enabled.
+#
+# The `deletion-task` feature provides `ExpiredDeletion::continuously_delete_expired`
+# — the sweeper loop `main.rs` runs. It used to be enabled *transitively*, by
+# `tower-sessions-sqlx-store` (`features = ["deletion-task"]` on its own core
+# dependency). Dropping the store dropped the feature with it, so it is now
+# requested explicitly here. Declaring it keeps the sweeper on the upstream
+# implementation instead of a hand-rolled loop in `main.rs`.
+tower-sessions-core = { version = "0.15", features = ["deletion-task"] }
+# The session store is owned IN-TREE (`src/common/session_store.rs`) — see
+# `54` Part C §C4. `tower-sessions-sqlx-store` required `sqlx ^0.8` AND
+# `tower-sessions-core ^0.14`, so taking either dependency major pulled a
+# second sqlx / a second core into the tree and did not compile.
+# `rmp-serde` is the MessagePack codec the previous store used — the payload
+# format is unchanged (a row written before the swap still reads).
+rmp-serde = "1"
+# `SessionStore` is an `#[async_trait]` trait — the impl needs the macro.
+async-trait = "0.1"
+tower_governor = "0.8"
+argon2 = "0.6"
+bcrypt = "0.19"
+garde = { version = "0.23", features = ["derive"] }
+secrecy = { version = "0.10", features = ["serde"] }
+utoipa = "6"
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+chrono = "0.4"
+time = "0.3"
+dotenvy = "0.15"
+envy = "0.4"
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.12"
+rpassword = "7"
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+# ---------------------------------------------------------------------------
+# Lints (Rust 1.74+ `[lints]` table — the crate-wide lint policy, in the
+# manifest, so it applies to every target: lib, bin and tests).
+# ---------------------------------------------------------------------------
+[lints.rust]
+# The doc discipline becomes a build gate, not a convention. MEASURED
+# 2026-10-22: the tree is already `missing_docs`-clean (0 warnings), so
+# this forbids NEW gaps without a doc-writing backlog.
+missing_docs = "deny"
+# `pub` items that are not reachable from the crate root are dead API
+# surface. Also measured clean (0 warnings today).
+unreachable_pub = "warn"
+# The crate has ZERO `unsafe` blocks today — make that a build property.
+unsafe_code = "forbid"
+
+[lints.clippy]
+# The default group is already enforced by CI's `-D warnings`; stating it
+# makes the policy explicit.
+all = "deny"
+# `pedantic` is ADVISORY: the tree carries ~370 pedantic warnings (measured
+# 2026-10-22 — 173 `missing_errors_doc`, 45 `must_use_candidate`, 22
+# `doc_markdown`, ~40 `cast_*`). The `cast_*` family cannot be "fixed"
+# without changing runtime semantics, so pedantic is enabled as a to-do
+# list here and EXEMPTED in CI (`-A clippy::pedantic`) until a follow-up
+# task drains the measured debt.
+pedantic = { level = "warn", priority = -1 }
+
+# ---------------------------------------------------------------------------
+# Release profile — the Docker image ships THIS build, not a stock one.
+# ---------------------------------------------------------------------------
+[profile.release]
+# Thin LTO + a single codegen unit: smaller, faster binary (the image is
+# the deployment artefact).
+lto = "thin"
+codegen-units = 1
+# Strip the symbol table: the shipped image carries no debug symbols.
+strip = "symbols"
+# `panic = "abort"` is deliberately NOT set: axum/tower catch a panic per
+# task and turn it into a 500 problem+json response. Aborting would kill
+# the process instead of serving the error.
+

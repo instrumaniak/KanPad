@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `sessions` WHERE `id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "dd932271c6b4884168ae82f33d0169033c820f634764a30861f517847d148145"
+}

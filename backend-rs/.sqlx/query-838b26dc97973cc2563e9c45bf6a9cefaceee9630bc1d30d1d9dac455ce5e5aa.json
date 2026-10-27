@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM `boards` WHERE `project_id` = ? AND `user_id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "838b26dc97973cc2563e9c45bf6a9cefaceee9630bc1d30d1d9dac455ce5e5aa"
+}

@@ -1,0 +1,150 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT k.`id`, k.`title`, k.`column_id` AS \"column_id: i32\", k.`position`, k.`description` AS \"description: String\", k.`due_date`, k.`created_at`, k.`updated_at` FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE k.`id` = ? AND b.`user_id` = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "column_id: i32",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "column_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "position",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "description: String",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB",
+          "collation": 224,
+          "max_size": 262140
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "due_date",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "MULTIPLE_KEY | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "due_date"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": {
+          "type": "Datetime",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.cards",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "f233c73044bd8bf713641b27657d016d6c3a5d1fb4af077859f9f6975f695ecd"
+}

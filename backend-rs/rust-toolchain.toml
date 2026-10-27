@@ -1,0 +1,16 @@
+# The toolchain is PINNED, not floating: local == CI == Docker.
+#
+# 1.99.1 is the current stable (released 2026-10-15). It clears the MSRV
+# ceiling of the whole target dependency set (sqlx 0.9's `1.94.0` is the
+# highest; everything else is <= 1.88) and it is required by `edition 2024`
+# (>= 1.85). `Cargo.toml` records `rust-version = "1.99"` as the MSRV floor.
+#
+# The Dockerfile base moves to `rust:1.99-bookworm` in the SAME commit —
+# the Dockerfile and the toolchain move together, never one alone.
+#
+# `llvm-tools-preview` is NOT listed: only `cargo-llvm-cov` needs it, and
+# T62's coverage step installs it itself (adding it here would force it on
+# every developer and on every cargo invocation).
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

@@ -89,7 +89,7 @@ export function NoteEditor({
           data: {
             title: title.trim(),
             content,
-            tagIds: selectedTagIds,
+            tag_ids: selectedTagIds,
             board_id: linkBoardId ?? null,
             project_id: linkProjectId ?? null,
             card_id: linkCardId ?? null,
@@ -150,7 +150,7 @@ export function NoteEditor({
     const commonData: CreateNoteData = {
       title: title.trim(),
       content,
-      tagIds: selectedTagIds,
+      tag_ids: selectedTagIds,
       board_id: linkBoardId ?? null,
       project_id: linkProjectId ?? null,
       card_id: linkCardId ?? null,

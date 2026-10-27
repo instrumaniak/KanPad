@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `labels` (`name`, `color`, `user_id`) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "859c117a3828b0e2dd78e7b1f4d22064cd11eecf6c317add6adf53dd4e9c10a7"
+}

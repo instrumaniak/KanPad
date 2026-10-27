@@ -10,12 +10,15 @@ import {
 
 const labelKeys = {
   all: () => ['labels'] as const,
+  /** Paginated list key — page is part of the key (T41e `Paginated<T>`). */
+  list: (page?: number, limit?: number) =>
+    [...labelKeys.all(), page ?? 1, limit ?? 50] as const,
 };
 
-export function useLabels() {
+export function useLabels(page?: number, limit?: number) {
   return useQuery({
-    queryKey: labelKeys.all(),
-    queryFn: () => fetchLabels().then((res) => res.data),
+    queryKey: labelKeys.list(page, limit),
+    queryFn: () => fetchLabels(page, limit),
   });
 }
 

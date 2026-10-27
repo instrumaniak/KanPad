@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `checklist_items` (`text`, `checklist_id`, `position`) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "0f93b5962855fb89b6292b94c770629fb68f726ff7341a1278c7df39ba840a5e"
+}

@@ -342,6 +342,46 @@ fn default_cors_origins() -> String {
     DEFAULT_CORS_ORIGIN.to_string()
 }
 
+/// Percent-encode a URL **userinfo** component (username or password) per
+/// RFC 3986: keep the unreserved set + the sub-delims + `:`, escape every
+/// other byte as `%XX`. Used ONLY by [`Settings::database_url`] — the URL
+/// is a rendering there, and this encoding is the exact inverse of the
+/// driver's percent-decode, so a password like `pa/ss#1` round-trips
+/// through a URL unchanged.
+fn percent_encode_userinfo(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'.'
+                    | b'_'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+                    | b':'
+            )
+        {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0F) as usize] as char);
+        }
+    }
+    out
+}
+
 /// Redacting `Debug`: secrets and DB credentials render as `[redacted]`.
 /// New secret-bearing fields MUST be added here redacted, never verbatim.
 impl fmt::Debug for Settings {
@@ -496,16 +536,23 @@ impl Settings {
     }
 
     /// Effective DB URL: explicit `DATABASE_URL` wins, otherwise built from
-    /// the `DB_*` parts with `?charset=utf8mb4` always appended. Built in
-    /// this one function only (pool creation calls it once).
+    /// the `DB_*` parts with `?charset=utf8mb4&collation=…` always appended.
+    ///
+    /// **A rendering, not a transport** (T005 step 5): the connection is
+    /// built by [`Self::connect_options`] directly from the parts, so this
+    /// string exists only for tooling/docs/`validate`'s charset+collation
+    /// screens. The username and password are percent-encoded (RFC 3986
+    /// `userinfo` set) so the URL PARSES for special characters like
+    /// `pa/ss#1` — the encoding is the inverse of the driver's own
+    /// percent-decode, so the password still round-trips exactly.
     pub fn database_url(&self) -> String {
         if let Some(explicit) = self.database_url.as_deref() {
             return explicit.to_string();
         }
         format!(
             "mysql://{}:{}@{}:{}/{}?charset={}&collation={}",
-            self.db_username,
-            self.db_password.expose_secret(),
+            percent_encode_userinfo(&self.db_username),
+            percent_encode_userinfo(self.db_password.expose_secret()),
             self.db_host,
             self.db_port,
             self.db_name,
@@ -514,20 +561,43 @@ impl Settings {
         )
     }
 
-    /// The URL parsed into the **driver's own options** — the same object
+    /// The **driver's own options** — the same object
     /// [`crate::state::AppState::from_settings`] hands to the pool.
     ///
     /// Everything derived from it (the DB-name screen in
-    /// [`Settings::validate`], the boot-config log) therefore cannot disagree
-    /// with the connection target, whether it came from `DATABASE_URL` or the
-    /// `DB_*` parts. This is the ONE place the effective URL is parsed: a
-    /// second parse site is a second, silently divergent answer to "which
-    /// database is this?".
+    /// [`Settings::validate`], the boot-config log, the startup probe's
+    /// target line) therefore cannot disagree with the connection target,
+    /// whether it came from `DATABASE_URL` or the `DB_*` parts. This is the
+    /// ONE place options are produced: a second site is a second, silently
+    /// divergent answer to "which database is this?".
     ///
-    /// `None` only when the URL does not parse at all (malformed URL or a
-    /// percent-decode failure) — never for a merely *unreachable* target.
+    /// **The `DB_*` parts are built DIRECTLY into the options object — never
+    /// round-tripped through a URL string** (T005 step 5): a password like
+    /// `pa/ss#1` is legal as a bound value but destroys a URL
+    /// (`…user:pa/ss#1@…` → the `/` terminates the authority, `#` starts a
+    /// fragment) and used to make this return `None`, which dropped the pool
+    /// to an unroutable `127.0.0.1:1` fallback. The URL string is a
+    /// rendering concern (`database_url()`, which percent-encodes), not a
+    /// transport one.
+    ///
+    /// `None` only when an explicit `DATABASE_URL` does not parse at all
+    /// (malformed URL or a percent-decode failure) — never for a merely
+    /// *unreachable* target. (T005 step 5 rejects such a URL in
+    /// [`Settings::validate`], so a `None` here is defense-in-depth.)
     pub fn connect_options(&self) -> Option<sqlx::mysql::MySqlConnectOptions> {
-        self.database_url().parse().ok()
+        match self.database_url.as_deref() {
+            Some(explicit) => explicit.parse().ok(),
+            None => Some(
+                sqlx::mysql::MySqlConnectOptions::new()
+                    .host(&self.db_host)
+                    .port(self.db_port)
+                    .username(&self.db_username)
+                    .password(self.db_password.expose_secret())
+                    .database(&self.db_name)
+                    .charset("utf8mb4")
+                    .collation("utf8mb4_unicode_ci"),
+            ),
+        }
     }
 
     /// Log the **effective** boot configuration — the values this process
@@ -542,8 +612,9 @@ impl Settings {
     /// which input won.
     ///
     /// **Never logs a credential**: no password, no session secret, and no
-    /// `database_url()` string (the DERIVED URL embeds the password
-    /// verbatim — `database_url()` does not percent-encode it).
+    /// `database_url()` string (the derived URL carries the percent-encoded
+    /// password — still a credential, so the whole string stays out of the
+    /// log).
     ///
     /// Emitted from [`Settings::load`] only, deliberately: that is the single
     /// place ambient config enters the process, so `serve`, `migrate` and
@@ -686,6 +757,25 @@ impl Settings {
             return Err(ConfigError::Invalid(format!(
                 "SESSION_SECRET must be at least {MIN_SESSION_SECRET_BYTES} bytes"
             )));
+        }
+        // A malformed `DATABASE_URL` is a CONFIG error, not an outage: it
+        // must fail boot HERE with the one message an operator can act on,
+        // not surface later as a probe failure, a causeless pool timeout, or
+        // the state.rs unroutable fallback (T005 step 5). Checked BEFORE the
+        // charset/collation screens — those `contains` probes would
+        // otherwise misreport a syntax error as "missing ?charset=utf8mb4".
+        // (The `state.rs` unroutable-pool fallback stays: it is the seam for
+        // hand-built `Settings` in tests.)
+        if self.database_url.as_deref().is_some_and(|explicit| {
+            explicit
+                .parse::<sqlx::mysql::MySqlConnectOptions>()
+                .is_err()
+        }) {
+            return Err(ConfigError::Invalid(
+                "DATABASE_URL does not parse as a MySQL connection URL — check the URL \
+                 syntax (the password must be percent-encoded; it is never logged)"
+                    .to_string(),
+            ));
         }
         if !self.database_url().contains(REQUIRED_DB_CHARSET) {
             return Err(ConfigError::Invalid(
@@ -1556,8 +1646,9 @@ mod tests {
         assert!(logs.contains("db_name=\"kanpad_parts\""), "{logs}");
         assert!(logs.contains("db_username=\"parts_user\""), "{logs}");
         assert!(logs.contains("db_source=\"DB_* parts\""), "{logs}");
-        // The derived URL carries the password verbatim (no percent-encoding
-        // in `database_url()`), so neither it nor the URL may be logged.
+        // The derived URL carries the password (percent-encoded in
+        // `database_url()` since T005 step 5 — still a credential), so
+        // neither it nor the URL may be logged.
         assert!(!logs.contains("parts-password-do-not-log"), "{logs}");
         assert!(!logs.contains("mysql://"), "{logs}");
     }
@@ -1641,6 +1732,104 @@ mod tests {
                     "env {app_env}: secret leaked into the boot line: {logs}"
                 );
             }
+        }
+    }
+
+    /// T005 step 5: the `DB_*` parts build the driver options DIRECTLY —
+    /// a special-character password (`pa/ss#1` destroys a URL: the `/`
+    /// terminates the authority, `#` starts a fragment) must round-trip
+    /// EXACTLY through `connect_options()`, which must be `Some` (no
+    /// silent unroutable fallback), with every part and the T66
+    /// charset+collation pins intact.
+    #[test]
+    fn parts_path_special_password_round_trips_without_a_url() {
+        let mut vars = base_vars();
+        vars.retain(|(key, _)| *key != "DATABASE_URL");
+        vars.extend_from_slice(&[
+            ("DB_HOST", "db.internal"),
+            ("DB_PORT", "3337"),
+            ("DB_USERNAME", "app"),
+            ("DB_PASSWORD", "pa/ss#1"),
+            ("DB_NAME", "kanpad"),
+        ]);
+        let settings = Settings::from_pairs(&vars).expect("special-char password must load");
+        let options = settings.connect_options().expect(
+            "parts-built options are ALWAYS Some — a special-char password must never \
+             fall back to the unroutable default",
+        );
+        assert_eq!(options.get_host(), "db.internal");
+        assert_eq!(options.get_port(), 3337);
+        assert_eq!(options.get_username(), "app");
+        assert_eq!(options.get_database(), Some("kanpad"));
+        assert_eq!(options.get_charset(), "utf8mb4");
+        assert_eq!(options.get_collation(), Some("utf8mb4_unicode_ci"));
+        // No public password getter (sqlx 0.9 keeps the field `pub(crate)`);
+        // the plain `#[derive(Debug)]` rendering is the byte-exact witness.
+        let rendered = format!("{options:?}");
+        assert!(
+            rendered.contains(r#"password: Some("pa/ss#1")"#),
+            "the password must round-trip byte-exactly: {rendered}"
+        );
+    }
+
+    /// T005 step 5: `database_url()` percent-encodes the userinfo, so the
+    /// derived URL PARSES for a special-character password (the encoding is
+    /// the inverse of the driver's percent-decode — the same password, not
+    /// a mangled one, reaches the driver when the URL is used for tooling).
+    #[test]
+    fn derived_url_percent_encodes_the_userinfo() {
+        let mut vars = base_vars();
+        vars.retain(|(key, _)| *key != "DATABASE_URL");
+        vars.extend_from_slice(&[
+            ("DB_HOST", "db.internal"),
+            ("DB_PORT", "3337"),
+            ("DB_USERNAME", "app"),
+            ("DB_PASSWORD", "pa/ss#1"),
+            ("DB_NAME", "kanpad"),
+        ]);
+        let settings = Settings::from_pairs(&vars).expect("config must load");
+        let url = settings.database_url();
+        assert_eq!(
+            url,
+            "mysql://app:pa%2Fss%231@db.internal:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+            "the raw `/` and `#` must be escaped, everything else kept"
+        );
+        assert!(
+            !url.contains("pa/ss#1"),
+            "the raw password must not appear in the URL: {url}"
+        );
+        // The rendered URL is still a valid connection target.
+        let reparsed: Result<sqlx::mysql::MySqlConnectOptions, _> = url.parse();
+        assert!(
+            reparsed.is_ok(),
+            "the encoded URL must parse back: {url} → {reparsed:?}"
+        );
+    }
+
+    /// T005 step 5: an unparseable `DATABASE_URL` fails `Settings::load`
+    /// (via `from_pairs` → `validate`) with a message naming `DATABASE_URL`
+    /// — a malformed URL is a CONFIG error, never a silent unroutable
+    /// fallback or a later causeless pool timeout. (The spec URL carries
+    /// charset+collation, so the syntax check is what rejects it.)
+    #[test]
+    fn unparseable_database_url_fails_boot_naming_the_variable() {
+        let vars = with_overrides(&[(
+            "DATABASE_URL",
+            "mysql://u:p@h:notaport/db?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+        )]);
+        let err = Settings::from_pairs(&vars).expect_err("a malformed URL must fail boot");
+        match err {
+            ConfigError::Invalid(message) => {
+                assert!(
+                    message.contains("DATABASE_URL"),
+                    "the message must name the variable: {message}"
+                );
+                assert!(
+                    message.contains("percent-encoded"),
+                    "the message must carry the actionable hint: {message}"
+                );
+            }
+            other => panic!("expected ConfigError::Invalid, got {other:?}"),
         }
     }
 }

@@ -471,3 +471,42 @@ async fn migrate_run_then_info_reports_exact_counts_on_suite_owned_databases() {
     drop_database(&pool, &main_db).await;
     drop_database(&pool, &fresh_db).await;
 }
+
+/// T005 step 5: an unparseable `DATABASE_URL` is a CONFIG error, not an
+/// outage — `Settings::load` rejects it (`validate`), and `create-admin`
+/// exits with `AdminExit::Db` (3) after printing the message that names
+/// `DATABASE_URL`. BEFORE this change a malformed URL silently degraded the
+/// pool to an unroutable `127.0.0.1:1`; now boot refuses it outright.
+/// (`serve` and `migrate *` take the same rejection — exit 1 — this test
+/// pins the create-admin variant because its exit code is distinct.)
+#[test]
+fn unparseable_database_url_fails_create_admin_with_exit_3() {
+    let cdir = TempCdir::new("unparseable");
+    let out = run_cli(
+        &[
+            "create-admin",
+            "--email",
+            "t005@example.test",
+            "--password",
+            "irrelevant-the-config-fails-first",
+        ],
+        "://not a url",
+        &[],
+        &cdir,
+    );
+    assert_eq!(out.status.code(), Some(3), "AdminExit::Db is exit 3");
+    let err = stderr(&out);
+    assert!(
+        err.contains("DATABASE_URL"),
+        "the message must name the variable: {err}"
+    );
+    assert!(
+        err.contains("percent-encoded"),
+        "the actionable hint must reach the operator: {err}"
+    );
+    let out_text = stdout(&out);
+    assert!(
+        !out_text.contains("://not a url") && !err.contains("://not a url"),
+        "the raw URL must never be echoed: {err} / {out_text}"
+    );
+}

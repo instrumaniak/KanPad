@@ -342,8 +342,8 @@ impl Diagnostics {
     /// sqlstate, transient, message, hint.
     ///
     /// **Never logs**: the password, `DB_PASSWORD`, `SESSION_SECRET`, or
-    /// `Settings::database_url()` (the derived URL embeds the password
-    /// verbatim).
+    /// `Settings::database_url()` (the derived URL carries the
+    /// percent-encoded password — still a credential).
     pub fn log(&self, target: &Target, elapsed: Duration) {
         self.log_at(tracing::Level::ERROR, target, elapsed);
     }

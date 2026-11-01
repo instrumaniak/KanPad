@@ -213,9 +213,9 @@ cargo run migrate run
 #   says DATABASE_URL, the DB_* values in `.env` are IGNORED — they are not
 #   what the process connects to.
 #   The NEXT line is the T005 boot probe (direct dial, transient-only retry):
-#     INFO backend_rs::database: database reachable database="kanpad_rs_dev"
-#       server_version=8.4.11 attempts=1 elapsed_ms=50
-#   ...and only then the migration lines. "database reachable" is the SAME
+#     INFO backend_rs::database: database connected database="kanpad_rs_dev"
+#       server_version=8.4.11 selected_database="kanpad_rs_dev" attempts=1 elapsed_ms=50
+#   ...and only then the migration lines. "database connected" is the SAME
 #   probe the /ready handler runs (bounded dial + transition log); the
 #   attempts count is 1 on a healthy DB, the failure classes never burn it.
 cargo run migrate info

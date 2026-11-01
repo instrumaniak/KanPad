@@ -274,9 +274,10 @@ async fn startup_db_probe(
             tracing::info!(
                 database = target.database.as_deref().unwrap_or("<none>"),
                 server_version = %report.server_version,
+                selected_database = report.selected_database.as_deref().unwrap_or("<none>"),
                 attempts,
                 elapsed_ms = %started.elapsed().as_millis(),
-                "database reachable"
+                "database connected"
             );
             // The server may pick a DIFFERENT default database than the
             // configured name (a leftover `DB_NAME`, an URL without one):

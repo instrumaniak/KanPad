@@ -37,6 +37,14 @@
 //! `bin`, `run_cli`, `cli_env`, `TempCdir`, `shared_database_url`,
 //! `database_parts`, `suite_url`, `reachable`, `create_database`,
 //! `drop_database`, `parse_attempts`, `migration_count`.
+//!
+//! SANCTIONED CONSUMER: `serve_boot.rs` (T005 step 4) drives the REAL
+//! BINARY as a long-lived SERVER (`serve` + degraded-mode probes), which is
+//! the same no-shared-helper situation — it imports this suite's spawn
+//! plumbing EXPLICITLY (`TempCdir`, `cli_env`, `run_cli`,
+//! `shared_database_url`, `reachable`, `parse_attempts`, `BIN`) instead of
+//! re-declaring any of it. If a serve-side need outgrows that list, add a
+//! NEW name here or in serve_boot — never a copy.
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -47,7 +55,7 @@ use sqlx::MySqlPool;
 
 /// The compile-time binary path (`CARGO_BIN_EXE_<name>`; bin target
 /// `backend-rs`). Integration tests only: cargo sets it for `tests/`.
-const BIN: &str = env!("CARGO_BIN_EXE_backend-rs");
+pub(crate) const BIN: &str = env!("CARGO_BIN_EXE_backend-rs");
 
 /// The session secret every spawned CLI needs (`SESSION_SECRET` ≥ 32 bytes)
 /// — explicitly injected so the test never depends on a developer `.env`.
@@ -63,7 +71,7 @@ const SESSION_SECRET: &str = "forty-two-bytes-of-test-session-secret!!";
 type Parts = (String, String, String, u16, String);
 
 /// `(mysql://user:pass@host:port/db?…)` → `(user, pass, host, port, db)`.
-fn database_parts(url: &str) -> Option<Parts> {
+pub(crate) fn database_parts(url: &str) -> Option<Parts> {
     let rest = url.strip_prefix("mysql://")?;
     let (auth, tail) = rest.rsplit_once('@')?;
     let (user, pass) = auth.split_once(':')?;
@@ -83,7 +91,7 @@ fn database_parts(url: &str) -> Option<Parts> {
 
 /// The env-provided shared `DATABASE_URL` + its parsed parts — `None` when
 /// absent or unparsable (the suite skips and passes).
-fn shared_database_url() -> Option<(String, Parts)> {
+pub(crate) fn shared_database_url() -> Option<(String, Parts)> {
     let url = std::env::var("DATABASE_URL")
         .ok()
         .filter(|url| !url.is_empty())?;
@@ -95,7 +103,7 @@ fn shared_database_url() -> Option<(String, Parts)> {
 /// the REQUIRED charset + collation pins (`Settings::validate` rejects
 /// their absence). The password round-trips raw — the same characters the
 /// shared URL carried, so the rebuild cannot diverge from the input.
-fn suite_url(parts: &Parts, database: &str) -> String {
+pub(crate) fn suite_url(parts: &Parts, database: &str) -> String {
     format!(
         "mysql://{}:{}@{}:{}/{database}?charset=utf8mb4&collation=utf8mb4_unicode_ci",
         parts.0, parts.1, parts.2, parts.3
@@ -105,7 +113,7 @@ fn suite_url(parts: &Parts, database: &str) -> String {
 /// Can the test process reach host:port at all? A 2 s TCP connect — the
 /// skip gate for tests whose assertions need the SERVER to answer (1045 and
 /// 1049 come from the server, not the transport).
-fn reachable(parts: &Parts) -> bool {
+pub(crate) fn reachable(parts: &Parts) -> bool {
     let Ok(mut addrs) = (parts.2.as_str(), parts.3).to_socket_addrs() else {
         return false;
     };
@@ -118,7 +126,7 @@ fn reachable(parts: &Parts) -> bool {
 /// Env for the spawned CLI: `env_clear` first (a developer shell may carry
 /// stale `DB_*`/`RUST_LOG`), then the explicit minimum. PATH is restored so
 /// the child resolves shared libraries the way a normal spawn would.
-fn cli_env(database_url: &str) -> Vec<(String, String)> {
+pub(crate) fn cli_env(database_url: &str) -> Vec<(String, String)> {
     vec![
         (
             "PATH".to_string(),
@@ -133,17 +141,17 @@ fn cli_env(database_url: &str) -> Vec<(String, String)> {
 /// Temp `current_dir` for the child, removed on drop. Keeps
 /// `dotenvy::dotenv()` from finding any `.env` (it searches CWD and
 /// ancestors — a temp dir under /tmp has none), on top of `env_clear`.
-struct TempCdir(PathBuf);
+pub(crate) struct TempCdir(PathBuf);
 
 impl TempCdir {
-    fn new(tag: &str) -> Self {
+    pub(crate) fn new(tag: &str) -> Self {
         let dir =
             std::env::temp_dir().join(format!("kanpad-migrate-cli-{}-{tag}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp cwd created");
         Self(dir)
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -157,7 +165,7 @@ impl Drop for TempCdir {
 /// Spawn `backend-rs <args>` with the explicit env (+ extra overrides),
 /// blocking until exit (the CLI is short-lived: worst case the retry
 /// budget). Panics propagate as test failures.
-fn run_cli(
+pub(crate) fn run_cli(
     args: &[&str],
     database_url: &str,
     extra_env: &[(&str, &str)],
@@ -174,17 +182,17 @@ fn run_cli(
     command.output().expect("spawn backend-rs")
 }
 
-fn stdout(out: &Output) -> String {
+pub(crate) fn stdout(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-fn stderr(out: &Output) -> String {
+pub(crate) fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 /// `(attempts: N` out of the probe-failure bail line — the AC evidence that
 /// the retry policy ran (wrong password → 1, refused port → > 1).
-fn parse_attempts(stderr: &str) -> u32 {
+pub(crate) fn parse_attempts(stderr: &str) -> u32 {
     let marker = "(attempts: ";
     let start = stderr.find(marker).expect("bail line carries (attempts: N") + marker.len();
     let rest = &stderr[start..];
@@ -199,7 +207,7 @@ fn parse_attempts(stderr: &str) -> u32 {
 /// against THIS count instead of a hardcoded `2`, so adding a migration
 /// later updates the expectation automatically (the invariant is "all
 /// applied, none pending", not the literal 2).
-fn migration_count() -> usize {
+pub(crate) fn migration_count() -> usize {
     std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
         .expect("migrations dir readable")
         .filter_map(|entry| entry.ok())

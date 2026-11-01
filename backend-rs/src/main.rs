@@ -90,18 +90,50 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     init_tracing_from_env();
     let settings = Settings::load().context("failed to load settings")?;
     let state = build_state(settings);
+    // T005 (step 4): fail fast on an unreachable database — BEFORE the
+    // session sweeper spawns, before bind, before `--auto-migrate`. The
+    // probe dials directly (cause + class visible on attempt 1); a pooled
+    // acquire would retry internally and surface a causeless
+    // `PoolTimedOut`. `DB_STARTUP_CHECK=warn` continues here so a DB-less
+    // server can serve degraded (/health 200, /ready 503) — but it never
+    // exempts a migration (see below).
+    let Some((options, target)) = db::Target::for_settings(&state.settings) else {
+        bail!(
+            "cannot connect to the database: the configured DATABASE_URL does not parse as a \
+             MySQL connection URL — check the URL syntax (the password must be percent-encoded; \
+             it is never logged)"
+        );
+    };
+    let probe_report = startup_db_probe(&state.settings, &options, &target, Some(&state)).await?;
     if auto_migrate {
         if state.settings.is_production() {
             bail!("--auto-migrate is dev/compose only; refusing in production");
+        }
+        // `DB_STARTUP_CHECK=warn` buys a DB-less server, never a
+        // silently-skipped migration: without a reachable database the
+        // auto-migrate aborts HERE (exit 1, pointing at the probe warning
+        // above) instead of failing later on a causeless pool timeout.
+        if probe_report.is_none() {
+            bail!(
+                "--auto-migrate: cannot apply migrations — the database is unreachable \
+                 (DB_STARTUP_CHECK=warn does not exempt migrations; see the probe warning above)"
+            );
         }
         tracing::info!(
             instance_id = %state.instance_id,
             "applying pending migrations (--auto-migrate)"
         );
-        sqlx::migrate!("./migrations")
-            .run(&state.pool)
-            .await
-            .context("failed to apply migrations")?;
+        let started = std::time::Instant::now();
+        if let Err(err) = sqlx::migrate!("./migrations").run(&state.pool).await {
+            let diagnostics = backend_rs::db::diagnose_migrate(&err);
+            diagnostics.log(&target, started.elapsed());
+            bail!(
+                "failed to apply migrations: {}: {} — {}",
+                diagnostics.describe(),
+                diagnostics.message,
+                diagnostics.hint
+            );
+        }
     }
     let port = state.settings.port;
     let instance_id = state.instance_id.clone();
@@ -198,21 +230,34 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     Ok(())
 }
 
-/// Probe the database BEFORE any CLI work touches the pool: a direct dial
+/// Probe the database BEFORE any work touches it: a direct dial
 /// (`db::wait_until_ready`, transient-only retry, bounded budget) — never
 /// `pool.acquire()`, whose internal retry loop returns a causeless
 /// `PoolTimedOut` and out-sources retry policy to `acquire_timeout`.
 ///
+/// `state`: when the caller has an [`backend_rs::state::AppState`] (serve,
+/// create-admin) the outcome is recorded through
+/// [`backend_rs::state::AppState::record_db_probe`] — the transition log
+/// (`Unknown→Down` warn / `Up→Down` error / `Down→Up` info), the
+/// `kanpad_db_up` gauge and the `kanpad_db_connect_failures_total{class}`
+/// counter. Ephemeral CLI processes (`migrate *`) pass `None` and get the
+/// plain full-field ERROR line instead — their metrics would die with the
+/// process.
+///
 /// `DB_STARTUP_CHECK=require` (default) fails the process with the
 /// one-line cause + hint; `warn` logs a warning and continues so a DB-less
-/// server can still boot degraded. The structured ERROR/WARN line carries
-/// the full field set (host, port, database, class, mysql_number, hint —
-/// never a password).
+/// server can still boot degraded — never a silently-skipped
+/// `--auto-migrate` (the caller aborts that explicitly).
+///
+/// Returns the successful [`db::ProbeReport`] so the caller can catch a
+/// "connected to the wrong database" (`selected_database` vs the
+/// configured name, e.g. a leftover `DB_NAME`) — `None` in warn mode.
 async fn startup_db_probe(
     settings: &Settings,
     options: &sqlx::mysql::MySqlConnectOptions,
     target: &db::Target,
-) -> Result<()> {
+    state: Option<&backend_rs::state::AppState>,
+) -> Result<Option<db::ProbeReport>> {
     let started = std::time::Instant::now();
     let outcome = db::wait_until_ready(
         options,
@@ -223,6 +268,9 @@ async fn startup_db_probe(
     .await;
     match outcome {
         Ok((report, attempts)) => {
+            if let Some(state) = state {
+                state.record_db_probe(Ok(&report), target, started.elapsed());
+            }
             tracing::info!(
                 database = target.database.as_deref().unwrap_or("<none>"),
                 server_version = %report.server_version,
@@ -230,28 +278,46 @@ async fn startup_db_probe(
                 elapsed_ms = %started.elapsed().as_millis(),
                 "database reachable"
             );
-            Ok(())
+            // The server may pick a DIFFERENT default database than the
+            // configured name (a leftover `DB_NAME`, an URL without one):
+            // say so before any work touches the wrong database.
+            if report.selected_database.as_deref() != target.database.as_deref() {
+                tracing::warn!(
+                    configured = target.database.as_deref().unwrap_or("<none>"),
+                    selected = report.selected_database.as_deref().unwrap_or("<none>"),
+                    "the server selected a different database than configured — \
+                     check DB_NAME / DATABASE_URL"
+                );
+            }
+            Ok(Some(report))
         }
         Err((diagnostics, attempts)) => {
             let elapsed = started.elapsed();
-            if settings.db_startup_check == backend_rs::config::StartupCheck::Warn {
-                diagnostics.log_at(tracing::Level::WARN, target, elapsed);
-                eprintln!(
-                    "warning: cannot connect to the database (attempts: {attempts}, elapsed: {}s): {} — {}",
-                    elapsed.as_secs(),
-                    diagnostics.describe(),
-                    diagnostics.hint
-                );
-                eprintln!("continuing: DB_STARTUP_CHECK=warn");
-                return Ok(());
+            match state {
+                Some(state) => {
+                    // The transition logger carries the full field set
+                    // (warn on the first observed failure, error after).
+                    state.record_db_probe(Err(&diagnostics), target, elapsed);
+                }
+                None => {
+                    diagnostics.log(target, elapsed);
+                }
             }
-            diagnostics.log(target, elapsed);
-            bail!(
+            let summary = format!(
                 "cannot connect to the database (attempts: {attempts}, elapsed: {}s): {} — {}",
                 elapsed.as_secs(),
                 diagnostics.describe(),
                 diagnostics.hint
             );
+            if settings.db_startup_check == backend_rs::config::StartupCheck::Warn {
+                eprintln!("warning: {summary}");
+                eprintln!(
+                    "continuing: DB_STARTUP_CHECK=warn (a DB-less server keeps serving: \
+                     /health 200, /ready 503; --auto-migrate will still abort)"
+                );
+                return Ok(None);
+            }
+            bail!("{summary}");
         }
     }
 }
@@ -316,7 +382,10 @@ async fn migrate(op: MigrateOp) -> Result<()> {
              it is never logged)"
         );
     };
-    startup_db_probe(&state.settings, &options, &target).await?;
+    // Ephemeral CLI process: no AppState yet, so no transition log and no
+    // metrics (they would die with the process) — the plain full-field
+    // ERROR line instead.
+    startup_db_probe(&state.settings, &options, &target, None).await?;
     match op {
         MigrateOp::Run => {
             let started = std::time::Instant::now();
@@ -482,6 +551,22 @@ async fn create_admin(email: Option<String>, password: Option<String>, force: bo
         }
     }
     let state = build_state(settings);
+    // T005 (step 4): probe BEFORE any admin work — the same direct-dial
+    // probe + Require/Warn policy as serve and `migrate *`. A Require
+    // failure maps to the existing `AdminExit::Db` (code 3) after the
+    // hint is printed; a Warn failure continues (the admin insert then
+    // fails with its own DB exit, which keeps the outcome honest).
+    let Some((options, target)) = db::Target::for_settings(&state.settings) else {
+        eprintln!(
+            "create-admin: the configured DATABASE_URL does not parse as a MySQL connection \
+             URL — check the URL syntax (the password must be percent-encoded; it is never logged)"
+        );
+        std::process::exit(AdminExit::Db.code());
+    };
+    if let Err(err) = startup_db_probe(&state.settings, &options, &target, Some(&state)).await {
+        eprintln!("create-admin: {err:#}");
+        std::process::exit(AdminExit::Db.code());
+    }
     let outcome = backend_rs::admin::run_create_admin(
         &state.pool,
         &state.settings,

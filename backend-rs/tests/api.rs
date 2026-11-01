@@ -63,6 +63,8 @@ mod notes;
 mod openapi_snapshot;
 #[path = "api/projects.rs"]
 mod projects;
+#[path = "api/serve_boot.rs"]
+mod serve_boot;
 #[path = "api/tags.rs"]
 mod tags;
 #[path = "api/throttle.rs"]

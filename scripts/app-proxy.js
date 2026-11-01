@@ -1,100 +1,137 @@
-// Nodejs single file proxy
-
-const http = require("node:http");
-const { spawn } = require("child_process");
-const path = require("path");
+const http = require('node:http');
+const { spawn } = require('node:child_process');
+const path = require('node:path');
+const net = require('node:net');
 
 const PROXY_SERVER_PORT = process.env.PORT || 3000;
-const APP_SERVER_PORT = 9001;
+const appServerBin = path.join(__dirname, 'backend-rs');
+const appServerArgs = ['serve'];
 
-const appServerBin = path.join(__dirname, "backend-rs");
-const appServerArgs = ["serve"];
+let app = null;
 
-// 1. start app server
-const app = spawn(appServerBin, appServerArgs, {
-  env: { ...process.env, NODE_ENV: undefined, PORT: APP_SERVER_PORT },
-  stdio: ["ignore", "pipe", "pipe"],
-});
+// Helper to reliably find a completely free random local port
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
 
-app.stdout.on("data", (d) => process.stdout.write("[app] " + d));
-app.stderr.on("data", (d) => process.stderr.write("[app] " + d));
-app.on("exit", (code) => {
-  console.error(`app exited ${code}, stopping Node`);
-  process.exit(1); // Passenger will restart us
-});
+async function startServer() {
+  const APP_SERVER_PORT = await findFreePort().catch(() => 9005);
 
-// 2. simple reverse proxy
-const server = http.createServer((clientReq, clientRes) => {
-  const headers = {
-    ...clientReq.headers,
-    host: `127.0.0.1:${APP_SERVER_PORT}`,
-    "x-forwarded-for": clientReq.socket.remoteAddress,
-    "x-forwarded-proto": clientReq.socket.encrypted ? "https" : "http",
-  };
+  console.log(`[proxy] Spawning Rust backend on dynamic port: ${APP_SERVER_PORT}`);
 
-  const opts = {
-    hostname: "127.0.0.1",
-    port: APP_SERVER_PORT,
-    path: clientReq.url,
-    method: clientReq.method,
-    headers,
-  };
-
-  const proxy = http.request(opts, (appRes) => {
-    clientRes.writeHead(appRes.statusCode, appRes.headers);
-    appRes.pipe(clientRes);
+  // Spawn Rust child process directly under the Node process group
+  app = spawn(appServerBin, appServerArgs, {
+    env: { ...process.env, NODE_ENV: undefined, PORT: APP_SERVER_PORT },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false, // Ensures child dies if parent gets SIGKILL'd
   });
 
-  proxy.on("error", () => {
-    if (!clientRes.headersSent) {
-      clientRes.writeHead(502);
-    }
-    clientRes.end("Bad gateway");
+  app.stdout.on('data', (d) => process.stdout.write('[app] ' + d));
+  app.stderr.on('data', (d) => process.stderr.write('[app] ' + d));
+
+  app.on('exit', (code) => {
+    console.error(`[proxy] Rust backend exited with code ${code}. Stopping Node wrapper.`);
+    process.exit(code || 1);
   });
 
-  clientReq.on("aborted", () => proxy.destroy());
-  clientReq.pipe(proxy);
-});
+  // Create reverse proxy
+  const server = http.createServer((clientReq, clientRes) => {
+    const headers = {
+      ...clientReq.headers,
+      host: `127.0.0.1:${APP_SERVER_PORT}`,
+      'x-forwarded-for': clientReq.socket.remoteAddress,
+      'x-forwarded-proto': clientReq.socket.encrypted ? 'https' : 'http',
+    };
 
-// WebSocket support
-server.on("upgrade", (req, socket, head) => {
-  const headers = {
-    ...req.headers,
-    host: `127.0.0.1:${APP_SERVER_PORT}`,
-  };
+    const proxy = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: APP_SERVER_PORT,
+        path: clientReq.url,
+        method: clientReq.method,
+        headers,
+      },
+      (appRes) => {
+        clientRes.writeHead(appRes.statusCode, appRes.headers);
+        appRes.pipe(clientRes);
+      },
+    );
 
-  const proxy = http.request({
-    hostname: "127.0.0.1",
-    port: APP_SERVER_PORT,
-    method: req.method,
-    path: req.url,
-    headers,
+    proxy.on('error', () => {
+      if (!clientRes.headersSent) clientRes.writeHead(502);
+      clientRes.end('Bad gateway');
+    });
+
+    clientReq.on('aborted', () => proxy.destroy());
+    clientReq.pipe(proxy);
   });
 
-  proxy.on("upgrade", (res, proxySocket, proxyHead) => {
-    socket.write(`HTTP/${res.httpVersion} 101 Switching Protocols\r\n`);
-    for (const [k, v] of Object.entries(res.headers)) {
-      socket.write(`${k}: ${v}\r\n`);
-    }
-    socket.write("\r\n");
+  // WebSocket support
+  server.on('upgrade', (req, socket, head) => {
+    const proxy = http.request({
+      hostname: '127.0.0.1',
+      port: APP_SERVER_PORT,
+      method: req.method,
+      path: req.url,
+      headers: { ...req.headers, host: `127.0.0.1:${APP_SERVER_PORT}` },
+    });
 
-    if (proxyHead && proxyHead.length) proxySocket.unshift(proxyHead);
-    if (head && head.length) socket.unshift(head);
+    proxy.on('upgrade', (res, proxySocket, proxyHead) => {
+      socket.write(`HTTP/${res.httpVersion} 101 Switching Protocols\r\n`);
+      for (const [k, v] of Object.entries(res.headers)) {
+        socket.write(`${k}: ${v}\r\n`);
+      }
+      socket.write('\r\n');
 
-    proxySocket.pipe(socket).pipe(proxySocket);
+      if (proxyHead?.length) proxySocket.unshift(proxyHead);
+      if (head?.length) socket.unshift(head);
+
+      proxySocket.pipe(socket).pipe(proxySocket);
+    });
+
+    proxy.on('error', () => socket.destroy());
+    socket.on('error', () => proxy.destroy());
+    proxy.end();
   });
 
-  proxy.on("error", () => socket.destroy());
-  socket.on("error", () => proxy.destroy());
+  server.listen(PROXY_SERVER_PORT, '0.0.0.0', () => {
+    console.log('[proxy] Node wrapper listening on external port:', PROXY_SERVER_PORT);
+  });
+}
 
-  proxy.end();
+// --- ABSOLUTE LIFECYCLE CLEANUP ---
+const cleanup = () => {
+  if (app && !app.killed) {
+    console.log('[proxy] Forcefully terminating child Rust process...');
+    app.kill('SIGKILL'); // SIGKILL prevents Rust from hanging on long connections
+  }
+};
+
+// Handle all shutdown angles from cPanel/LiteSpeed
+process.on('SIGTERM', () => {
+  cleanup();
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  cleanup();
+  process.exit(0);
+});
+process.on('exit', () => {
+  cleanup();
+});
+process.on('uncaughtException', (err) => {
+  console.error('[proxy] Uncaught Exception encountered:', err);
+  cleanup();
+  process.exit(1);
 });
 
-server.listen(PROXY_SERVER_PORT, "0.0.0.0", () => {
-  console.log("Node proxy listening on", PROXY_SERVER_PORT);
-});
-
-// graceful shutdown for Passenger
-process.on("SIGTERM", () => {
-  server.close(() => app.kill());
-});
+// Fire initialization
+startServer();

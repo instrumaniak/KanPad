@@ -918,6 +918,90 @@ async fn spa_index(method: Method, uri: Uri) -> impl IntoResponse {
     }
 }
 
+/// Test-only helpers shared by the crate's unit tests.
+///
+/// [`capture_logs`] is the SINGLE log-capture harness: the JSON-vs-human
+/// format test in this file and `config.rs`'s boot-config tests both render
+/// REAL `tracing` events through a subscriber that writes into a buffer. A
+/// second hand-rolled `MakeWriter` would be a per-test copy of the same
+/// plumbing — the same drift the API-suite harness (`tests/api/helpers.rs`)
+/// exists to prevent. (`tests/api/*` cannot use this: the module is
+/// `#[cfg(test)]`, so it does not exist in the lib compiled for an
+/// integration-test binary.)
+///
+/// The subscriber is SCOPED ([`tracing::subscriber::with_default`], which is
+/// thread-local), so these helpers need no lock and cannot swallow a parallel
+/// test's output.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    /// Buffered sink handed to a `tracing` subscriber.
+    #[derive(Clone, Default)]
+    pub(crate) struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl CaptureWriter {
+        /// Everything written so far, as UTF-8 text.
+        fn contents(&self) -> String {
+            let bytes = self
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            String::from_utf8(bytes).expect("logs are UTF-8")
+        }
+    }
+
+    impl std::io::Write for CaptureWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CaptureWriter {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Run `f` under a HUMAN-readable (`fmt`, no ANSI, no timestamp)
+    /// subscriber and return everything it emitted.
+    ///
+    /// The timestamp is dropped so assertions can match `field=value` pairs
+    /// without a moving clock in the buffer.
+    pub(crate) fn capture_logs<F: FnOnce()>(f: F) -> String {
+        let writer = CaptureWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_writer(writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        writer.contents()
+    }
+
+    /// As [`capture_logs`], in the **production** (JSON) format.
+    pub(crate) fn capture_json_logs<F: FnOnce()>(f: F) -> String {
+        let writer = CaptureWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        writer.contents()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,50 +1136,14 @@ mod tests {
     /// REAL events through the same builders `init_tracing` selects.
     #[test]
     fn production_logs_are_json_development_logs_are_human() {
-        use std::sync::{Arc, Mutex};
-
-        #[derive(Clone, Default)]
-        struct TestWriter(Arc<Mutex<Vec<u8>>>);
-        impl std::io::Write for TestWriter {
-            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-                self.0
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .extend_from_slice(buffer);
-                Ok(buffer.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TestWriter {
-            type Writer = Self;
-            fn make_writer(&'a self) -> Self::Writer {
-                self.clone()
-            }
-        }
+        use super::test_support::{capture_json_logs, capture_logs};
 
         fn render_one_event(json: bool) -> String {
-            let writer = TestWriter::default();
-            let buffer = writer.0.clone();
             if json {
-                let subscriber = tracing_subscriber::fmt()
-                    .json()
-                    .with_writer(writer)
-                    .finish();
-                tracing::subscriber::with_default(subscriber, || tracing::info!("json probe"));
+                capture_json_logs(|| tracing::info!("json probe"))
             } else {
-                let subscriber = tracing_subscriber::fmt()
-                    .with_ansi(false)
-                    .with_writer(writer)
-                    .finish();
-                tracing::subscriber::with_default(subscriber, || tracing::info!("json probe"));
+                capture_logs(|| tracing::info!("json probe"))
             }
-            let bytes = buffer
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            String::from_utf8(bytes).expect("logs are UTF-8")
         }
 
         assert!(log_json(config::AppEnv::Production));

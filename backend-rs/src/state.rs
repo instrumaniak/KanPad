@@ -32,13 +32,16 @@ impl AppState {
     /// Build state from settings without I/O (test-friendly): pool connect
     /// and store migration never run here.
     pub fn from_settings(settings: Settings) -> Self {
-        let pool = match settings.database_url().parse() {
-            Ok(options) => db::pool_options(&settings).connect_lazy_with(options),
+        // `connect_options` is the SAME parse the boot-config log reports
+        // from, so "what the console says" and "what the pool dials" cannot
+        // drift apart.
+        let pool = match settings.connect_options() {
+            Some(options) => db::pool_options(&settings).connect_lazy_with(options),
             // Unreachable via `Settings::load` (a stricter parse check could
             // live in `validate`, but URL validity is the pool's decision):
             // fall back to an unroutable lazy pool so construction stays
             // total and the failure surfaces as `503` at `/ready`.
-            Err(_) => db::pool_options(&settings).connect_lazy_with(unroutable_options()),
+            None => db::pool_options(&settings).connect_lazy_with(unroutable_options()),
         };
         Self::with_pool(settings, pool)
     }

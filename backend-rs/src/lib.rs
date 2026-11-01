@@ -833,11 +833,24 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
-/// Readiness probe: `SELECT 1` through the pool. `200 {status:"ok",db:"up"}`
-/// when MySQL answers, `503` problem+json otherwise — ANY pool error maps to
-/// `503` (a wrong password is "not ready", not a 500). Fixed strings only:
-/// driver errors can name users/hosts, so neither the error nor the URL is
-/// interpolated into the body or the logs.
+/// Readiness probe: a DIRECT-dial probe (`db::wait_until_ready`) — the same
+/// diagnostics the boot path uses — bounded by `DB_READY_PROBE_TIMEOUT_MS`
+/// (default 500 ms, calibrated to the kubelet's 1 s `timeoutSeconds`
+/// default; probe `timeoutSeconds ≥ 2×` the budget). `200
+/// {status:"ok",db:"up"}` when MySQL answers, `503` problem+json otherwise.
+///
+/// **Why NOT `SELECT 1` through the pool**: a pooled acquire retries
+/// refused errors internally until `acquire_timeout` and then returns a
+/// causeless `PoolTimedOut` (`sqlx-core-0.9.0/pool/inner.rs:325-385`,
+/// upstream #3808/#3929) — the probe could not even see the failure it
+/// probes for, and a refused port held the request for seconds. The direct
+/// dial classifies on attempt 1 and is budget-bounded.
+///
+/// The outcome is recorded via `AppState::record_db_probe` (transition log
+/// + `kanpad_db_up` + `kanpad_db_connect_failures_total{class}`). ANY
+/// failure maps to the same `503` body (fixed strings only — driver errors
+/// can name users/hosts, so neither the error nor the URL is interpolated
+/// into the body or the logs).
 #[utoipa::path(
     get,
     path = "/ready",
@@ -853,23 +866,39 @@ pub async fn ready(
     uri: Uri,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    match sqlx::query("SELECT 1").fetch_one(&state.pool).await {
+    let started = std::time::Instant::now();
+    // The probe dials what the POOL dials (`pool.connect_options()`), not
+    // what the settings describe: `AppState::with_pool` may be handed a
+    // pool whose target the settings cannot describe (the `#[sqlx::test]`
+    // harness mints per-test databases after settings are built — the same
+    // rule that binds the session store to the pool). `DbSource::Pool`
+    // marks the target's provenance honestly in the transition log.
+    let options = (*state.pool.connect_options()).clone();
+    let target = db::Target::from_options(&options, db::DbSource::Pool);
+    let budget = state.settings.db_ready_probe_timeout();
+    let outcome = db::wait_until_ready(&options, &target, budget, budget).await;
+    state.record_db_probe(
+        outcome
+            .as_ref()
+            .map(|(report, _)| report)
+            .map_err(|(diagnostics, _)| diagnostics),
+        &target,
+        started.elapsed(),
+    );
+    match outcome {
         Ok(_) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "ok", "db": "up"})),
         )
             .into_response(),
-        Err(_) => {
-            tracing::error!("readiness probe failed: database unreachable");
-            error::problem_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "service-unavailable",
-                "Service Unavailable",
-                "The database is temporarily unavailable. Please try again.".to_string(),
-                request_instance(&method, &uri, &headers),
-                Vec::new(),
-            )
-        }
+        Err(_) => error::problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service-unavailable",
+            "Service Unavailable",
+            "The database is temporarily unavailable. Please try again.".to_string(),
+            request_instance(&method, &uri, &headers),
+            Vec::new(),
+        ),
     }
 }
 

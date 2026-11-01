@@ -198,24 +198,6 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     Ok(())
 }
 
-/// Derive the redacted dial description + the parsed connect options from
-/// the SAME source the pool uses ([`Settings::connect_options`], the ONE
-/// parse site). The CLI probe and the target line must never disagree with
-/// the pool about which database is in play.
-///
-/// `None` when `DATABASE_URL` does not parse at all — the caller bail with
-/// a config-shaped error (T005 step 5 additionally rejects that URL at
-/// boot, after which this arm is defense-in-depth).
-fn db_target(settings: &Settings) -> Option<(sqlx::mysql::MySqlConnectOptions, db::Target)> {
-    let options = settings.connect_options()?;
-    let source = if settings.database_url.is_some() {
-        db::DbSource::DatabaseUrl
-    } else {
-        db::DbSource::Parts
-    };
-    Some((options.clone(), db::Target::from_options(&options, source)))
-}
-
 /// Probe the database BEFORE any CLI work touches the pool: a direct dial
 /// (`db::wait_until_ready`, transient-only retry, bounded budget) — never
 /// `pool.acquire()`, whose internal retry loop returns a causeless
@@ -327,7 +309,7 @@ async fn migrate(op: MigrateOp) -> Result<()> {
     // print `applied: 0 pending: 2` ("fresh database") and exit 0. The
     // probe + the classification below make every outcome visible and
     // accurate.
-    let Some((options, target)) = db_target(&state.settings) else {
+    let Some((options, target)) = db::Target::for_settings(&state.settings) else {
         bail!(
             "cannot connect to the database: the configured DATABASE_URL does not parse as a \
              MySQL connection URL — check the URL syntax (the password must be percent-encoded; \

@@ -126,6 +126,7 @@ async fn openapi_stub_served() {
 #[tokio::test]
 async fn ready_503_when_db_down_no_password_leak() {
     let app = broken_pool_app();
+    let started = std::time::Instant::now();
     let response = app
         .oneshot(
             Request::get("/ready")
@@ -134,6 +135,7 @@ async fn ready_503_when_db_down_no_password_leak() {
         )
         .await
         .unwrap();
+    let elapsed = started.elapsed();
 
     let (status, headers, body) = read_body(response).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
@@ -151,6 +153,44 @@ async fn ready_503_when_db_down_no_password_leak() {
         "password leaked in body: {raw}"
     );
     assert!(!raw.contains("127.0.0.1:1"), "dial address leaked: {raw}");
+    // T005: the probe is DIRECT-dial and budget-bounded (DB_READY_PROBE_TIMEOUT_MS,
+    // default 500 ms) — the old pooled `SELECT 1` waited out the pool's
+    // internal retry loop (seconds) and returned a causeless PoolTimedOut.
+    // The kubelet's default probe timeout is 1 s, so the 503 must land well
+    // inside it.
+    assert!(
+        elapsed < std::time::Duration::from_millis(1500),
+        "the readiness probe must be budget-bounded, took {elapsed:?}"
+    );
+}
+
+/// T005: a failed readiness probe moves the tri-state flag
+/// (`Unknown → Down`) — the transition the boot `warn` path and the
+/// `Up→Down` error log key on. The body contract above is unchanged.
+#[tokio::test]
+async fn ready_failure_records_the_tri_state() {
+    let settings = Settings {
+        database_url: Some(format!(
+            "mysql://kanpad:{WRONG_PASSWORD}@127.0.0.1:1/kanpad?charset=utf8mb4"
+        )),
+        ..test_settings()
+    };
+    let state = build_state(settings);
+    let app = create_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::get("/ready")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        state.db_state.load(std::sync::atomic::Ordering::SeqCst),
+        backend_rs::state::DB_PROBE_DOWN,
+        "the failed probe must move the flag Unknown → Down"
+    );
 }
 
 #[tokio::test]

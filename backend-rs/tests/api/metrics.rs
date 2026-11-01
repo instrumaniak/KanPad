@@ -180,3 +180,44 @@ async fn pool_gauges_and_acquire_histogram_track_the_pool(pool: sqlx::MySqlPool)
         assert!(text.contains(expected), "missing {expected:?} in {text}");
     }
 }
+
+/// T005: a failed readiness probe records the DB-observability series —
+/// `kanpad_db_up 0` (gauge) and `kanpad_db_connect_failures_total{class}`
+/// (labelled counter, folded per class). The probe is DIRECT-dial against
+/// an unreachable port, so the failure class is the transport one
+/// (`refused`), not the pool's causeless `PoolTimedOut`.
+#[tokio::test]
+async fn failed_ready_probe_records_the_db_series() {
+    // Point the settings at port 1 (refused fast, deterministic) —
+    // `from_settings` falls back to an unroutable pool only for an
+    // UNPARSEABLE URL; an unreachable PORT parses fine and dials into the
+    // refused classification.
+    let settings = backend_rs::config::Settings {
+        database_url: Some(
+            "mysql://kanpad:t005-wrong-password@127.0.0.1:1/kanpad?charset=utf8mb4".to_string(),
+        ),
+        ..test_settings()
+    };
+    let state = backend_rs::state::AppState::from_settings(settings);
+    let app = backend_rs::create_app(state.clone());
+
+    let (status, _, _) = send(app, Request::get("/ready").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    let (status, _, body) = send(
+        backend_rs::metrics_router(state),
+        Request::get("/metrics").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let text = String::from_utf8(body).expect("Prometheus text is UTF-8");
+    assert!(text.contains("kanpad_db_up 0"), "{text}");
+    assert!(
+        text.contains("kanpad_db_connect_failures_total{class=\"refused\"} 1"),
+        "the refused probe must land in the labelled failure counter: {text}"
+    );
+    assert!(
+        !text.contains("t005-wrong-password"),
+        "the password must never reach the exposition: {text}"
+    );
+}

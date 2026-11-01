@@ -100,6 +100,11 @@ pub enum DbSource {
     DatabaseUrl,
     /// The individual `DB_*` parts (no `DATABASE_URL` set).
     Parts,
+    /// The POOL's own connect options (`/ready` probes what the pool
+    /// actually dials — `AppState::with_pool` may be handed a pool whose
+    /// target the settings cannot describe, e.g. a `#[sqlx::test]`
+    /// per-test database).
+    Pool,
 }
 
 impl DbSource {
@@ -109,6 +114,7 @@ impl DbSource {
         match self {
             Self::DatabaseUrl => "DATABASE_URL",
             Self::Parts => "DB_* parts",
+            Self::Pool => "pool",
         }
     }
 }
@@ -157,6 +163,26 @@ impl Target {
             Some(socket) => socket.display().to_string(),
             None => format!("{}:{}", self.host, self.port),
         }
+    }
+
+    /// Derive the parsed connect options + the redacted dial description
+    /// from settings — the SAME source the pool is built from
+    /// (`config::Settings::connect_options` is the ONE parse site), so the
+    /// probe, the `/ready` target line and the pool can never disagree
+    /// about which database is in play.
+    ///
+    /// `None` when the URL does not parse at all (malformed URL or a
+    /// percent-decode failure) — callers must treat that as a CONFIG
+    /// failure, never dial it. (T005 step 5 additionally rejects such a
+    /// URL at boot, after which this arm is defense-in-depth.)
+    pub fn for_settings(settings: &Settings) -> Option<(MySqlConnectOptions, Self)> {
+        let options = settings.connect_options()?;
+        let source = if settings.database_url.is_some() {
+            DbSource::DatabaseUrl
+        } else {
+            DbSource::Parts
+        };
+        Some((options.clone(), Self::from_options(&options, source)))
     }
 
     /// One human line naming the inspected database — used by `migrate info`

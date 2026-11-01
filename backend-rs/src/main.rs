@@ -10,7 +10,7 @@ use sqlx::{MySqlPool, migrate::Migrate};
 use tower_sessions::session_store::ExpiredDeletion;
 
 use backend_rs::{
-    build_state, config::Settings, create_app_with_csp, init_tracing_from_env, metrics_addr,
+    build_state, config::Settings, create_app_with_csp, db, init_tracing_from_env, metrics_addr,
     metrics_router,
 };
 
@@ -198,6 +198,82 @@ async fn serve(auto_migrate: bool) -> Result<()> {
     Ok(())
 }
 
+/// Derive the redacted dial description + the parsed connect options from
+/// the SAME source the pool uses ([`Settings::connect_options`], the ONE
+/// parse site). The CLI probe and the target line must never disagree with
+/// the pool about which database is in play.
+///
+/// `None` when `DATABASE_URL` does not parse at all — the caller bail with
+/// a config-shaped error (T005 step 5 additionally rejects that URL at
+/// boot, after which this arm is defense-in-depth).
+fn db_target(settings: &Settings) -> Option<(sqlx::mysql::MySqlConnectOptions, db::Target)> {
+    let options = settings.connect_options()?;
+    let source = if settings.database_url.is_some() {
+        db::DbSource::DatabaseUrl
+    } else {
+        db::DbSource::Parts
+    };
+    Some((options.clone(), db::Target::from_options(&options, source)))
+}
+
+/// Probe the database BEFORE any CLI work touches the pool: a direct dial
+/// (`db::wait_until_ready`, transient-only retry, bounded budget) — never
+/// `pool.acquire()`, whose internal retry loop returns a causeless
+/// `PoolTimedOut` and out-sources retry policy to `acquire_timeout`.
+///
+/// `DB_STARTUP_CHECK=require` (default) fails the process with the
+/// one-line cause + hint; `warn` logs a warning and continues so a DB-less
+/// server can still boot degraded. The structured ERROR/WARN line carries
+/// the full field set (host, port, database, class, mysql_number, hint —
+/// never a password).
+async fn startup_db_probe(
+    settings: &Settings,
+    options: &sqlx::mysql::MySqlConnectOptions,
+    target: &db::Target,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let outcome = db::wait_until_ready(
+        options,
+        target,
+        settings.db_startup_timeout(),
+        settings.db_ready_probe_timeout(),
+    )
+    .await;
+    match outcome {
+        Ok((report, attempts)) => {
+            tracing::info!(
+                database = target.database.as_deref().unwrap_or("<none>"),
+                server_version = %report.server_version,
+                attempts,
+                elapsed_ms = %started.elapsed().as_millis(),
+                "database reachable"
+            );
+            Ok(())
+        }
+        Err((diagnostics, attempts)) => {
+            let elapsed = started.elapsed();
+            if settings.db_startup_check == backend_rs::config::StartupCheck::Warn {
+                diagnostics.log_at(tracing::Level::WARN, target, elapsed);
+                eprintln!(
+                    "warning: cannot connect to the database (attempts: {attempts}, elapsed: {}s): {} — {}",
+                    elapsed.as_secs(),
+                    diagnostics.describe(),
+                    diagnostics.hint
+                );
+                eprintln!("continuing: DB_STARTUP_CHECK=warn");
+                return Ok(());
+            }
+            diagnostics.log(target, elapsed);
+            bail!(
+                "cannot connect to the database (attempts: {attempts}, elapsed: {}s): {} — {}",
+                elapsed.as_secs(),
+                diagnostics.describe(),
+                diagnostics.hint
+            );
+        }
+    }
+}
+
 /// Applied migration versions (ascending) — from **sqlx's own API**, not
 /// from a hand-rolled query against `_sqlx_migrations`.
 ///
@@ -206,22 +282,35 @@ async fn serve(auto_migrate: bool) -> Result<()> {
 /// crate's internals. `Migrate::list_applied_migrations` is the supported
 /// way — and it means `migrate info` and `migrate run` can never disagree
 /// about what is applied.
-async fn applied_versions(
+///
+/// Split from `applied_versions` so the RAW [`sqlx::migrate::MigrateError`]
+/// is classifiable (`diagnose_migrate` keys the "fresh database" branch on
+/// MySQL 1146 — an anyhow-wrapped error cannot be classified). The anyhow
+/// contexting stays at the call sites that still want it.
+async fn journal_versions(
     pool: &MySqlPool,
     migrator: &sqlx::migrate::Migrator,
-) -> Result<Vec<i64>> {
+) -> std::result::Result<Vec<i64>, sqlx::migrate::MigrateError> {
     let mut conn = pool
         .acquire()
         .await
-        .context("failed to acquire a connection for the migration journal")?;
-    let applied = conn
-        .list_applied_migrations(&migrator.table_name)
-        .await
-        .context("failed to read the migration journal")?;
+        .map_err(sqlx::migrate::MigrateError::Execute)?;
+    let applied = conn.list_applied_migrations(&migrator.table_name).await?;
     Ok(applied
         .into_iter()
         .map(|migration| migration.version)
         .collect())
+}
+
+/// [`journal_versions`] with the anyhow context `migrate run`/`revert` want
+/// — every error is real there, so none of them is classifiable as "fresh".
+async fn applied_versions(
+    pool: &MySqlPool,
+    migrator: &sqlx::migrate::Migrator,
+) -> Result<Vec<i64>> {
+    journal_versions(pool, migrator)
+        .await
+        .context("failed to read the migration journal")
 }
 
 async fn migrate(op: MigrateOp) -> Result<()> {
@@ -229,22 +318,66 @@ async fn migrate(op: MigrateOp) -> Result<()> {
     let settings = Settings::load().context("failed to load settings")?;
     let state = build_state(settings);
     let migrator = sqlx::migrate!("./migrations");
+    // Fail fast on an unreachable database BEFORE the op touches the pool:
+    // the probe dials directly (cause + class visible on attempt 1), while
+    // a pool acquire would retry internally and surface a causeless
+    // `PoolTimedOut`.
+    //
+    // T005 (Step 0 evidence): a wrong password or a refused port used to
+    // print `applied: 0 pending: 2` ("fresh database") and exit 0. The
+    // probe + the classification below make every outcome visible and
+    // accurate.
+    let Some((options, target)) = db_target(&state.settings) else {
+        bail!(
+            "cannot connect to the database: the configured DATABASE_URL does not parse as a \
+             MySQL connection URL — check the URL syntax (the password must be percent-encoded; \
+             it is never logged)"
+        );
+    };
+    startup_db_probe(&state.settings, &options, &target).await?;
     match op {
         MigrateOp::Run => {
-            migrator
-                .run(&state.pool)
-                .await
-                .context("failed to apply migrations")?;
+            let started = std::time::Instant::now();
+            if let Err(err) = migrator.run(&state.pool).await {
+                let diagnostics = db::diagnose_migrate(&err);
+                diagnostics.log(&target, started.elapsed());
+                bail!(
+                    "failed to apply migrations: {}: {} — {}",
+                    diagnostics.describe(),
+                    diagnostics.message,
+                    diagnostics.hint
+                );
+            }
             let applied = applied_versions(&state.pool, &migrator).await?;
             println!("migrations applied: {}", applied.len());
             Ok(())
         }
         MigrateOp::Info => {
-            let applied = match applied_versions(&state.pool, &migrator).await {
+            // Print the target BEFORE the status lines so a `RUST_LOG=error`
+            // operator still sees WHICH database was inspected (stdout is
+            // not filtered by tracing).
+            println!("{}", target.describe_line());
+            let applied = match journal_versions(&state.pool, &migrator).await {
                 Ok(versions) => versions,
-                Err(_) => {
+                // ONLY 1146 means "the journal was never created" (sqlx runs
+                // a bare SELECT against `_sqlx_migrations` with no
+                // existence check — `sqlx-mysql-0.9.0/src/migrate.rs`). EVERY
+                // other error is a real failure: the old `Err(_)` catch-all
+                // printed "fresh database" for outages and lock-ups alike.
+                Err(err) if db::diagnose_migrate(&err).class == db::DbClass::MissingTable => {
                     println!("journal: no _sqlx_migrations table yet (fresh database)");
                     Vec::new()
+                }
+                Err(err) => {
+                    let started = std::time::Instant::now();
+                    let diagnostics = db::diagnose_migrate(&err);
+                    diagnostics.log(&target, started.elapsed());
+                    bail!(
+                        "cannot read the migration journal: {}: {} — {}",
+                        diagnostics.describe(),
+                        diagnostics.message,
+                        diagnostics.hint
+                    );
                 }
             };
             let mut pending = 0;
@@ -257,6 +390,8 @@ async fn migrate(op: MigrateOp) -> Result<()> {
                 };
                 println!("{status}: {} {}", migration.version, migration.description);
             }
+            // The LAST line is load-bearing: humans and
+            // `docs/data-migration-live.md` gates grep it.
             println!("applied: {} pending: {pending}", applied.len());
             Ok(())
         }
@@ -269,11 +404,18 @@ async fn migrate(op: MigrateOp) -> Result<()> {
                 println!("nothing to revert");
                 return Ok(());
             };
-            let target = applied.iter().rev().nth(1).copied().unwrap_or(0);
-            migrator
-                .undo(&state.pool, target)
-                .await
-                .context("failed to revert migration")?;
+            let target_version = applied.iter().rev().nth(1).copied().unwrap_or(0);
+            let started = std::time::Instant::now();
+            if let Err(err) = migrator.undo(&state.pool, target_version).await {
+                let diagnostics = db::diagnose_migrate(&err);
+                diagnostics.log(&target, started.elapsed());
+                bail!(
+                    "failed to revert migration: {}: {} — {}",
+                    diagnostics.describe(),
+                    diagnostics.message,
+                    diagnostics.hint
+                );
+            }
             println!("reverted migration {last}");
             Ok(())
         }

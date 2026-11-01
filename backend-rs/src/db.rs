@@ -34,9 +34,9 @@
 
 use std::time::Duration;
 
-use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
-use sqlx::Connection;
 use sqlx::ConnectOptions;
+use sqlx::Connection;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 
 use crate::config::Settings;
 
@@ -242,15 +242,12 @@ impl DbClass {
 /// **Every fact in these strings is verified against the tree** (the AGENTS
 /// rule: a wrong hint compiled into the binary is worse than a generic one).
 /// The `:3337` fact is `backend-rs/docker-compose.test.yml`'s publish port.
-const HINT_ACCESS_DENIED: &str =
-    "MySQL rejected the credentials: check DB_USERNAME / DB_PASSWORD (the password is never logged).";
+const HINT_ACCESS_DENIED: &str = "MySQL rejected the credentials: check DB_USERNAME / DB_PASSWORD (the password is never logged).";
 const HINT_DB_ACCESS_DENIED: &str =
     "the user is not granted access to this database: GRANT … ON <db>.* TO <user>.";
 const HINT_UNKNOWN_DATABASE: &str = "the database does not exist: CREATE DATABASE … CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci.";
-const HINT_HOST_BLOCKED_1129: &str =
-    "the server blocked this host after too many failed attempts: wait, or FLUSH HOSTS on the server.";
-const HINT_HOST_BLOCKED_1130: &str =
-    "the server does not allow this host: add a matching account (CREATE USER 'user'@'host' + GRANT …).";
+const HINT_HOST_BLOCKED_1129: &str = "the server blocked this host after too many failed attempts: wait, or FLUSH HOSTS on the server.";
+const HINT_HOST_BLOCKED_1130: &str = "the server does not allow this host: add a matching account (CREATE USER 'user'@'host' + GRANT …).";
 const HINT_TOO_MANY_CONNECTIONS: &str =
     "the server is out of connections: raise MySQL max_connections or lower DB_MAX_CONNECTIONS.";
 const HINT_AUTH_PLUGIN_1251: &str = "the account uses an auth plugin this client cannot negotiate.";
@@ -258,15 +255,15 @@ const HINT_AUTH_PLUGIN_PROTOCOL: &str = "the auth/handshake negotiation failed �
 const HINT_MISSING_TABLE: &str =
     "table missing — for the migration journal this means the database has never been migrated.";
 const HINT_REFUSED: &str = "nothing is listening on host:port — check DB_HOST/DB_PORT against the compose file / the runbook (the shared test container is :3337).";
-const HINT_TIMEOUT: &str = "the server did not answer — firewall, wrong host, or MySQL still starting.";
+const HINT_TIMEOUT: &str =
+    "the server did not answer — firewall, wrong host, or MySQL still starting.";
 const HINT_POOL_TIMED_OUT: &str = "the connection pool timed out waiting for a connection.";
 const HINT_DNS: &str = "the host name did not resolve — check DB_HOST.";
 const HINT_TLS: &str = "TLS negotiation failed: check the CA/ssl-mode of DATABASE_URL.";
 const HINT_CONFIG: &str = "the connection options are invalid — see the boot configuration line.";
 const HINT_OTHER: &str = "unexpected driver error: see `class`/`mysql_number` and the message.";
 const HINT_JOURNAL_DIRTY: &str = "the migration journal is dirty: `DELETE FROM _sqlx_migrations WHERE version = <v> AND success = 0` (or drop and re-migrate dev data) — NEVER hand-edit a `success = 1` row (rows carry SHA-384 checksums).";
-const HINT_JOURNAL_CHECKSUM: &str =
-    "a migration file was edited in place after it was applied — checksum break; the applied DB must be dropped and re-migrated.";
+const HINT_JOURNAL_CHECKSUM: &str = "a migration file was edited in place after it was applied — checksum break; the applied DB must be dropped and re-migrated.";
 
 /// Structured diagnosis of one failed DB connection attempt.
 ///
@@ -327,8 +324,11 @@ impl Diagnostics {
 
     /// [`Self::log`] with a caller-chosen level — the transition logger
     /// (`AppState::record_db_probe`) renders the FIRST observed failure as
-    /// `warn` (bootstrap) and `Up→Down` as `error`, from the same field set.
-    pub(crate) fn log_at(&self, level: tracing::Level, target: &Target, elapsed: Duration) {
+    /// `warn` (bootstrap) and `Up→Down` as `error`, from the same field set;
+    /// the CLI's `DB_STARTUP_CHECK=warn` path logs the identical fields at
+    /// `warn`. Public because the `backend-rs` BINARY is a separate crate
+    /// from the library and cannot see `pub(crate)`.
+    pub fn log_at(&self, level: tracing::Level, target: &Target, elapsed: Duration) {
         macro_rules! event {
             ($level_macro:ident) => {{
                 tracing::$level_macro!(
@@ -650,9 +650,7 @@ pub fn diagnose_migrate(err: &sqlx::migrate::MigrateError) -> Diagnostics {
             class: DbClass::Other,
             mysql_number: None,
             sqlstate: None,
-            message: format!(
-                "migration {version} was previously applied but has been modified"
-            ),
+            message: format!("migration {version} was previously applied but has been modified"),
             transient: false,
             hint: HINT_JOURNAL_CHECKSUM,
         },
@@ -906,8 +904,7 @@ mod diagnostics_tests {
         assert!(dirty.hint.contains("NEVER hand-edit"));
         assert!(!dirty.hint.contains("fresh database"));
 
-        let mismatch =
-            super::diagnose_migrate(&sqlx::migrate::MigrateError::VersionMismatch(2));
+        let mismatch = super::diagnose_migrate(&sqlx::migrate::MigrateError::VersionMismatch(2));
         assert_eq!(mismatch.class, DbClass::Other);
         assert!(
             mismatch.hint.contains("checksum break"),
@@ -922,9 +919,9 @@ mod diagnostics_tests {
 
         // `Execute(#[from] sqlx::Error)` unwraps to the FULL connection
         // diagnosis (refused → Refused, transient).
-        let executed = super::diagnose_migrate(&sqlx::migrate::MigrateError::Execute(
-            io_error(std::io::ErrorKind::ConnectionRefused),
-        ));
+        let executed = super::diagnose_migrate(&sqlx::migrate::MigrateError::Execute(io_error(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
         assert_eq!(executed.class, DbClass::Refused);
         assert!(executed.transient);
     }
@@ -1072,7 +1069,9 @@ mod diagnostics_tests {
             .filter(|url| !url.is_empty())
             .and_then(|url| url.parse::<sqlx::mysql::MySqlConnectOptions>().ok())
         else {
-            eprintln!("SKIP probe_reports_the_server_version_when_the_db_is_up: DATABASE_URL unset or unparsable");
+            eprintln!(
+                "SKIP probe_reports_the_server_version_when_the_db_is_up: DATABASE_URL unset or unparsable"
+            );
             return;
         };
         let target = Target::from_options(&database_url, super::DbSource::DatabaseUrl);

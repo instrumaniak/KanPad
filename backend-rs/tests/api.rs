@@ -55,6 +55,8 @@ mod helpers;
 mod labels;
 #[path = "api/metrics.rs"]
 mod metrics;
+#[path = "api/migrate_cli.rs"]
+mod migrate_cli;
 #[path = "api/notes.rs"]
 mod notes;
 #[path = "api/openapi_snapshot.rs"]

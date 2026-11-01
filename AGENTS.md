@@ -1,4 +1,18 @@
+## Overview
+
+KanPad is a  _project management & note taking_ tool.
+
+Tech stack:
+- _Frontend_: TypeScript, React, Vite : `frontend/`
+- _Backend_ (OLD): TypeScript, Node.js, Nestjs, Fastify, TypeORM : `backend/`
+- _Backend_ (NEW): Rust, Axum, sqlx : `backend-rs`
+- _Database_: MySQL
+
+The old node.js backend is deprecated & it is here for reference only.
+
 ## Project Specification References
+
+Initial specs:
 
 - `specs/project-context.md`
 - `specs/planning-artifacts/prd.md`
@@ -6,6 +20,12 @@
 - `specs/planning-artifacts/ux-design-specification.md`
 - `specs/planning-artifacts/epics.md`
 - `specs/implementation-artifacts/sprint-status.yaml`
+
+The backend is rewritten from node.js to rust. The spec files related to that:
+
+- `BACKEND-RS-ORCHESTRATION.md`
+- `CONTRACT-CHANGES.md`
+- `specs/api-rewrite-rs-specs/`
 
 ## General Agent Instructions
 
@@ -16,6 +36,12 @@
 - after implementation check for errors, run tests, fix linting or type check error
 - Follow project coding conventions & community best practices.
 - add the lessons you learned while implementing tasks & fixing issues in this file (AGENTS.md) so that next time you are better prepared.
+- DO NOT git commit without asking & confirming first. In case you are given approval, follow the Git Commit Message Guidelines.
+
+## Git Commit Message Guidelines
+Analyze staged changes (`git diff --cached`) and write a single lowercase, present-tense Conventional Commit message matching: `<type>(<scope>): <description>`. 
+
+Keep the summary line strictly between **20 and 50 characters** with no ending period. Provide an optional body wrapped at **72 characters** *only* for breaking or complex changes.
 
 ## DB data & migration safety first
 

@@ -25,6 +25,17 @@ inconsistent with its own contract.
    `422 text/plain`, not `400 application/problem+json` — the only endpoints where a client cannot get a
    machine-readable error. Note the **ordering trap** that makes the naive fix wrong (see §Notes 2).
 
+4. **Production CSP blocks the Inter web font.** The backend emits
+   `Content-Security-Policy: … font-src 'self' data: …` (see `backend-rs/src/lib.rs::content_security_policy`),
+   but `frontend/src/index.css` loads Inter from Google's CDN
+   (`https://fonts.gstatic.com/s/inter/v18/…UcCO3Fwr…woff2`). In dev the SPA is served by Vite, which sends
+   **no** CSP, so the font loads; in production the Rust backend serves the SPA and attaches the strict CSP to
+   the document, so the cross-origin font request is blocked and the UI falls back to system fonts. The defect
+   is invisible locally because the dev topology never enforces the production CSP on the document (same
+   "production-only enforcement" class as defect 2). It is **not** fixed by relaxing `font-src` (that would
+   weaken the CSP and keep an external runtime dependency) — it is fixed by **self-hosting** the font so
+   `font-src 'self'` already covers it.
+
 Also in scope, because it is the same "the proxy must not fight the app" contract:
 `scripts/app-proxy.js:49,84` **rewrite `Host`** to `127.0.0.1:<port>`, which breaks the CSRF layer's
 `Origin`/`Host` fallback that `10-architecture.md:134` explicitly says production must preserve, and
@@ -32,7 +43,8 @@ Also in scope, because it is the same "the proxy must not fight the app" contrac
 termination), so a plain-HTTP hop is advertised as plain HTTP.
 
 End state: **the app sees the real client IP and the real public host, a production boot refuses a
-loopback CORS origin, and every rejection on every route renders problem+json.**
+loopback CORS origin, every rejection on every route renders problem+json, and the Inter font loads under
+the production CSP.**
 
 ## Depends On
 
@@ -139,6 +151,9 @@ External references (verified 2026-11-02):
   silently lose observability. This must **not** go in `health.rs`: that suite is entirely `#[tokio::test]`
   and DB-free (`build_state(test_settings())`, no pool), so it cannot host a `#[sqlx::test]`. `auth_session.rs`
   already owns the per-test pool, `app_with_env`, `session_ids` and `login_fresh_session`.
+- `frontend/public/fonts/inter.woff2` — the Inter variable font (weight 100 900) currently fetched from
+  `fonts.gstatic.com`, copied into the build so the backend serves it from the same origin (new).
+- `frontend/src/index.css` — change the `@font-face` `src` URL from the Google CDN URL to `/fonts/inter.woff2`.
 - `specs/api-rewrite-rs-specs/10-architecture.md` — CORS/CSRF section: the loopback-in-production boot
   rejection; the proxy contract (append XFF, never rewrite `Host`, `TRUSTED_PROXIES` holds exactly the
   proxy hops).
@@ -278,6 +293,23 @@ registration-closed. The `registration_enabled` check is the first statement in 
 cannot gate parse failures. Document this in `20-api-contract.md` and do not try to "fix" it by moving
 validation before parsing (that would break normalize-before-validate).
 
+### Step 6 — P1: self-host the Inter font (production CSP)
+
+The production CSP is `font-src 'self' data:` and the frontend loads Inter from
+`https://fonts.gstatic.com/…`, so the font is blocked in production (and works in dev only because Vite
+sends no CSP). Fix by self-hosting — do **not** add `fonts.gstatic.com` to `font-src` (that would loosen
+the CSP and keep an external runtime dependency).
+
+1. Download the woff2 currently referenced in `frontend/src/index.css` into
+   `frontend/public/fonts/inter.woff2` (verify it is a valid woff2, ~24 KB).
+2. Edit `frontend/src/index.css`: change the `@font-face` `src` to
+   `url('/fonts/inter.woff2') format('woff2');` (keep `font-weight: 100 900`, `font-display: swap`).
+3. Rebuild: `npm run build` in `frontend/` (Vite copies `public/` to `dist/`); the Dockerfile then copies
+   `dist/` into `backend-rs/public/`, so the font ships at `/fonts/inter.woff2`.
+4. Verify: `curl -sI https://kanpad.raziur.com/fonts/inter.woff2` returns 200 and the browser console no
+   longer reports a CSP `font-src` violation; the live CSP stays `font-src 'self' data:` (no loosening).
+5. Confirm `frontend/src/index.css` no longer references `fonts.gstatic.com`.
+
 ### Step 5 — Contracts, docs, deploy
 
 - The `DROP TABLE sessions` middleware-5xx test (Step 3 list) pins that *even* a bodyless 5xx keeps
@@ -320,6 +352,9 @@ validation before parsing (that would break normalize-before-validate).
       default still boots.
 - [ ] Production CSP is `connect-src 'self' https://kanpad.raziur.com` (no `localhost`), and the boot log
       prints the canonical origin list.
+- [ ] The Inter font loads in production: `/fonts/inter.woff2` returns 200, no `font-src` CSP violation in
+      the browser console, and the live CSP remains `font-src 'self' data:` (unchanged — no loosening).
+- [ ] `frontend/src/index.css` no longer references `fonts.gstatic.com`.
 - [ ] `POST /api/auth/login` and `/register` with a missing field / malformed JSON / over-limit body return
       `400` + `application/problem+json` (`invalid-json`) + `instance`; a wrong content-type returns `415`
       — never `422 text/plain`.
@@ -400,6 +435,26 @@ before something starts deriving absolute URLs from it.
 5. **Fixing an extractor must preserve each handler's documented ordering** (normalize → validate for
    auth). `ValidJson` is the house pattern *except* where a handler normalizes first — and a test with a
    padded email is what proves it.
+
+### 6. Font / CSP measured evidence (2026-11-03, live `kanpad.raziur.com`)
+
+```
+$ curl -sI https://kanpad.raziur.com | grep -i content-security-policy
+content-security-policy: … font-src 'self' data:; …
+
+# browser console:
+# Loading the font 'https://fonts.gstatic.com/s/inter/v18/…UcCO3Fwr…woff2' violates
+# Content Security Policy directive: "font-src 'self' data:".
+```
+
+Root cause: the dev server (Vite) sends no CSP, so the defect is invisible locally; production enforces
+`font-src 'self' data:` on the document and blocks the cross-origin font. Fix is self-hosting the woff2
+(Step 6), not CSP relaxation — keeping `font-src 'self' data:` strict.
+
+Suggested additional lesson (extend §Notes 4): **A CSP is only enforced where it is attached.** A frontend
+that loads third-party assets passes in dev (no CSP) and fails in prod (CSP on the document). Verify
+against a production-like serve (backend serving the built SPA), not the Vite dev server — and either
+self-host the asset or add the origin to the CSP deliberately.
 
 ### 5. Out of scope (deliberately)
 

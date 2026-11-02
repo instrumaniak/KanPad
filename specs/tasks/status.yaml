@@ -29,3 +29,16 @@ tasks:
     depends: ~
     phase: 0
     critical: false
+  T006:
+    name: "BE-RS: MySQL & MariaDB SQL portability"
+    status: pending
+    depends: ~
+    phase: 0
+    critical: true
+  T007:
+    name: "BE-RS: production proxy, CORS & error-shape hardening"
+    status: pending
+    depends:
+      - T006
+    phase: 0
+    critical: true

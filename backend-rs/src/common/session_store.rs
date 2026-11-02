@@ -108,14 +108,19 @@ impl MySqlSessionStore {
         let payload =
             rmp_serde::to_vec(record).map_err(|error| Error::Encode(error.to_string()))?;
         let expiry_date = to_naive_utc(record.expiry_date)?;
-        // `AS new` is the modern form of the upsert (MySQL 8.0.19+): the
-        // `VALUES(col)` function it replaces is deprecated in 8.0.20+ and
-        // emits a server-side deprecation warning.
+        // Portable upsert. The 8.0.19+ row alias (`... VALUES (...) AS new ...
+        // new.col`) does NOT parse on MariaDB 10.6 (production), and MySQL
+        // deprecates `VALUES(col)` since 8.0.20 — so re-bind the post-insert
+        // values as extra placeholders: ONE statement valid on both servers,
+        // with no alias and no deprecated function.
+        let session_id = record.id.to_string();
         sqlx::query!(
-            "INSERT INTO `sessions` (`id`, `data`, `expiry_date`) VALUES (?, ?, ?) AS new \
-             ON DUPLICATE KEY UPDATE `data` = new.`data`, `expiry_date` = new.`expiry_date`",
-            record.id.to_string(),
-            payload,
+            "INSERT INTO `sessions` (`id`, `data`, `expiry_date`) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE `data` = ?, `expiry_date` = ?",
+            session_id,
+            &payload,
+            expiry_date,
+            &payload,
             expiry_date,
         )
         .execute(conn)
@@ -408,5 +413,47 @@ mod tests {
         assert_eq!(count, 1, "the upsert must not create a second row");
         let loaded = store.load(&record.id).await.expect("load").expect("there");
         assert_eq!(loaded.expiry_date, updated.expiry_date);
+    }
+
+    /// Tripwire: the upsert statement must not use the MySQL-only row alias
+    /// (`AS new` / `new.`), which does not parse on MariaDB 10.6. Runs on
+    /// every leg so a regression fails CI instead of production login.
+    #[test]
+    fn upsert_does_not_use_the_mysql_only_row_alias() {
+        let source = std::fs::read_to_string("src/common/session_store.rs")
+            .expect("session_store source readable");
+        // Only the production SQL matters: locate the upsert statement (the
+        // `sqlx::query!` whose body contains the `sessions` INSERT) and scan
+        // every line of it, including the continuation lines that carry
+        // `ON DUPLICATE KEY UPDATE ...`. The test module is ignored because it
+        // only names the forbidden forms inside its own assertions.
+        let lines: Vec<&str> = source.lines().collect();
+        let insert_idx = lines
+            .iter()
+            .position(|l| l.contains("INSERT INTO `sessions`"))
+            .expect("upsert INSERT present");
+        // walk back to the opening `sqlx::query!`
+        let mut start = insert_idx;
+        while start > 0 && !lines[start].contains("sqlx::query!") {
+            start -= 1;
+        }
+        // walk forward to the `.execute(conn)` that closes the statement
+        let mut end = insert_idx;
+        while end < lines.len() && !lines[end].contains(".execute(conn)") {
+            end += 1;
+        }
+        end = (end + 1).min(lines.len());
+        let upsert_lines: Vec<String> = lines[start..end]
+            .iter()
+            .map(|l| l.split("//").next().unwrap_or("").to_string())
+            .collect();
+        assert!(
+            !upsert_lines.iter().any(|line| line.contains("AS new")),
+            "the upsert must not use the MySQL-only `AS new` row alias"
+        );
+        assert!(
+            !upsert_lines.iter().any(|line| line.contains("new.")),
+            "the upsert must not reference the `new.` row alias"
+        );
     }
 }

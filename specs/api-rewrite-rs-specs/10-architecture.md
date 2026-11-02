@@ -224,3 +224,9 @@ backend-rs export-openapi           # writes openapi.json to stdout; boots NO po
 * Argon2id (new) + bcrypt (legacy-verify + upgrade) over bcrypt-12-everywhere: OWASP 2024–2026 primary is Argon2id; bcrypt stays only to verify pre-cutover cost-10 hashes without forcing password resets.
 * `dotenvy + envy` over the `config` crate: ~10 keys don't justify ~30 transitive deps; same precedence, fail-fast `Settings::load()`.
 * openapi-typescript (types-only) over orval/hey-api: keep hand fetch+React Query hooks, zero runtime, `erasableSyntaxOnly`-safe (see `40-typegen.md`).
+
+## MySQL & MariaDB portability (T006)
+
+Production runs **MariaDB 10.6.28**; dev/CI run **MySQL 8.4**. Every SQL statement in `backend-rs/` must be valid on both (MySQL 8.0.19+ and MariaDB 10.6+). The portable-SQL rules and the supported-server matrix live in `30-db-schema.md` ("Supported servers"). The session store (`src/common/session_store.rs`) is the reference implementation of a portable upsert (re-bound placeholders, no row alias, no deprecated `VALUES(col)`). The MariaDB 10.6 leg is enforced by `backend-rs/docker-compose.test.yml` (`mariadb` service, `:3338`) and the `backend-mariadb` CI job, which run `common::session_store`, `auth_session` and `sql_portability`.
+
+Auth-plugin reality (per-leg, not a universal rule): MariaDB 10.6 default = `mysql_native_password` (no `caching_sha2_password` at all); MySQL 8.4 default = `caching_sha2_password` (`mysql_native_password` disabled by default). The app must not depend on either plugin. Do not mandate `mysql_native_password` globally.

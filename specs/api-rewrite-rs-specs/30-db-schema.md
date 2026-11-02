@@ -26,3 +26,36 @@ Toolchain PINNED `cargo install sqlx-cli --version 0.9.0 --no-default-features -
 ## Tests/CI parity
 
 Local `docker run mysql:8.4`; `DATABASE_URL=mysql://root:pw@127.0.0.1:3306/kanpad`. `#[sqlx::test(migrations="./migrations",fixtures("users","projects","boards"))]` with fixtures inserting fixed ids in FK order. DB strategy (Cost control — per-test `CREATE DATABASE` on MySQL is minutes at ~150 tests): migration/unicode tests use per-test DBs (parallel, isolated); resource suites share one DB + transaction rollback per test (see T07). `cargo sqlx prepare --workspace --all -- --all-targets` then commit `.sqlx/`; CI gates `migrate run → migrate info → SHOW CREATE TABLE assert → prepare --check → test`; Docker builds `COPY .sqlx + SQLX_OFFLINE=true` (never bake `DATABASE_URL`; never set `SQLX_OFFLINE` in dev `.env`).
+
+## Supported servers (T006)
+
+Production runs **MariaDB 10.6.28**; dev/CI run **MySQL 8.4**. The Rust backend must run on **both**, and every statement in `backend-rs/` is valid on **MySQL 8.0.19+** and **MariaDB 10.6+**.
+
+### Portable-SQL rules
+
+| Construct | MySQL 8.0.19+ | MariaDB 10.6 | Verdict |
+|---|---|---|---|
+| `INSERT ... VALUES (...) ON DUPLICATE KEY UPDATE` (plain) | yes | yes | allowed |
+| `... VALUES (...) AS new ... new.col` (row alias) | yes | **no — 1064** | **forbidden** |
+| `... ON DUPLICATE KEY UPDATE col = VALUES(col)` | yes (deprecated 8.0.20+) | yes | allowed only with a comment; prefer re-binding |
+| `INSERT ... RETURNING` | no | yes | forbidden (breaks MySQL) |
+| `CHECK` constraints, `ALTER TABLE ... RENAME INDEX` | yes / yes | yes (10.2+ / 10.5.2+) | allowed |
+| CTEs, window functions | yes | yes (10.2+) | allowed |
+| `utf8mb4_0900_*` collations | yes | no (<=11.4.4); alias from 11.4.5 | forbidden on the 10.6 leg |
+| `JSON_TABLE` | yes | yes (10.6+) | allowed but avoid `JSON` columns entirely |
+| `->` / `->>` | yes | **no** (13.1+) | forbidden — do not use JSON operators at all |
+| `INSERT IGNORE`, multi-row `INSERT`, `UTC_TIMESTAMP(6)` | yes | yes | allowed |
+
+Prefer **re-binding** the post-insert values as extra placeholders for upserts (the session store `src/common/session_store.rs` is the reference implementation of a portable upsert): one statement, valid on both, no alias, no deprecated function, no warning on either.
+
+### Connection side
+
+- `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci` (the collation pin) is accepted on both; `@@collation_connection = 'utf8mb4_unicode_ci'` is asserted by `tests/api/collation.rs` and `tests/api/sql_portability.rs`.
+- Auth plugin is a per-leg fact, not a universal rule: MariaDB 10.6 default = `mysql_native_password` (no `caching_sha2_password` at all); MySQL 8.4 default = `caching_sha2_password` (`mysql_native_password` disabled by default). The app must not depend on either plugin. Do not mandate `mysql_native_password` globally.
+- Migrations `0001_baseline.sql` / `0002_convert_to_utf8mb4.sql` apply cleanly on MariaDB 10.6 (`_sqlx_migrations` = 2 in prod); keep them byte-identical (editing an applied migration is a checksum break).
+- Timestamp parity: `UTC_TIMESTAMP(6)` / `TIMESTAMP(6)` give microsecond precision on both legs; `TIMESTAMP` is stored UTC on both. The 2038 ceiling holds on both pinned legs (MySQL 8.4 and MariaDB 10.6); MariaDB 11.5+ raises it to 2106.
+
+### Required test legs
+
+- MySQL 8.4 leg (existing): `docker-compose.test.yml` `test_db` service on `:3337`.
+- MariaDB 10.6 leg (T006): `docker-compose.test.yml` `mariadb` service on `:3338`, plus the `backend-mariadb` CI job. Both legs run the same suites (`common::session_store`, `auth_session`, `sql_portability`).

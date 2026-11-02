@@ -383,6 +383,8 @@ jobs:
       # metadata directly — no `SQLX_OFFLINE` offset needed.
       - name: sqlx prepare --check --workspace --all -- --locked --all-targets
         working-directory: backend-rs
+        env:
+          SQLX_OFFLINE: "true"
         run: cargo sqlx prepare --check --workspace --all -- --locked --all-targets
 
       # -- 6. test + coverage floor (T62) -----------------------------------
@@ -475,6 +477,73 @@ jobs:
           set -euo pipefail
           SQLX_OFFLINE=true cargo run --locked --offline -- export-openapi > /tmp/openapi.ci.json
           diff -u openapi.json /tmp/openapi.ci.json
+
+  # ---------------------------------------------------------------- backend-mariadb (T006 portability leg)
+  backend-mariadb:
+    name: backend-mariadb (session-store + auth + sql_portability on MariaDB 10.6)
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+          MARIADB_DATABASE: kanpad
+        ports:
+          - '3306:3306'
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+          --health-start-period=20s
+    env:
+      DATABASE_URL: mysql://root:@127.0.0.1:3306/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Rust toolchain (pinned)
+        uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # branch 1.99.1
+        with:
+          components: clippy, rustfmt
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: backend-rs -> backend-rs/target
+
+      - name: fmt --check
+        working-directory: backend-rs
+        run: cargo fmt --check
+
+      - name: clippy --workspace --all-targets -D warnings
+        working-directory: backend-rs
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic
+
+      - name: migrate run
+        working-directory: backend-rs
+        run: |
+          set -euo pipefail
+          cargo sqlx database create
+          cargo sqlx migrate run
+          cargo sqlx migrate info
+
+      - name: sqlx prepare --check
+        working-directory: backend-rs
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo sqlx prepare --check --workspace --all -- --locked --all-targets
+
+      - name: session-store (lib) + auth + sql_portability (api) suites
+        working-directory: backend-rs
+        env:
+          SQLX_OFFLINE: "true"
+        run: |
+          set -euo pipefail
+          cargo test --locked --lib common::session_store
+          cargo test --locked --test api sql_portability
+          cargo test --locked --test api auth_session
 
   # ------------------------------------------------------------------ web
   # gen:api --check -> tsc -> vite build (dist feeds the docker image).

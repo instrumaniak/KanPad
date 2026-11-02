@@ -65,6 +65,8 @@ mod openapi_snapshot;
 mod projects;
 #[path = "api/serve_boot.rs"]
 mod serve_boot;
+#[path = "api/sql_portability.rs"]
+mod sql_portability;
 #[path = "api/tags.rs"]
 mod tags;
 #[path = "api/throttle.rs"]

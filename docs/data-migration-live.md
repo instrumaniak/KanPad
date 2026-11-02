@@ -902,3 +902,7 @@ runbook's current shape.
   the same migrations) **before** seeding the default labels
 - seed the default labels, then re-check `labels` with the seed-aware gates
 - log in by hand; then blue-green cutover with backup-restore-only rollback
+
+## Appendix — production flavour (T006)
+
+Production runs **MariaDB 10.6.28** (not MySQL 8). The Rust backend must run on both MySQL 8.0.19+ and MariaDB 10.6+; see `specs/api-rewrite-rs-specs/30-db-schema.md` ("Supported servers") for the portable-SQL rules. Post-deploy gate: `POST /api/auth/login` -> 200 + `Set-Cookie: __Host-kanpad.sid=...` (the login smoke), plus one row in `sessions` per login.

@@ -31,7 +31,7 @@ tasks:
     critical: false
   T006:
     name: "BE-RS: MySQL & MariaDB SQL portability"
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: true

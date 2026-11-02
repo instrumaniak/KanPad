@@ -21,6 +21,21 @@ services:
       retries: 10
       start_period: 2s
 
+  mariadb:
+    image: mariadb:10.6
+    container_name: kanpad-rs-mariadb
+    ports:
+      - "3338:3306"
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: kanpad
+    tmpfs:
+      - /var/lib/mysql:rw,noexec,nosuid,size=1G
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+
 
 # docker compose -f docker-compose.test.yml up -d --wait'
 # docker compose -f docker-compose.test.yml down

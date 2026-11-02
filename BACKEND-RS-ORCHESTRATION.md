@@ -880,3 +880,20 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
 - **The release build is not a problem:** `#20 [builder 8/8] RUN cargo build --locked --release` compiled **293 crates** and finished in **2m54s** (`lto = "thin"` + `codegen-units = 1` included). So the layer-cache/cargo-chef optimization discussed during the fix is UNNECESSARY — the job already exports `cache-to: type=gha,mode=max`, and a cold build fits comfortably in the budget.
 - **The unmigrated-DB prediction held:** the container booted against `kanpad_ci` with no migrations and the smoke passed (`/health` DB-free, `openapi.json` embedded, `/app/public/index.html` present). Still true: any future smoke that touches `/api/v1/*` needs `migrate run` in that job first.
 - **Remaining CI noise (non-blocking):** GitHub annotations only — Node 20 deprecation for the SHA-pinned actions, and the `ubuntu-latest` → Ubuntu 26 migration notice (2026-10-19). Neither fails a job.
+
+## MariaDB leg (T006)
+
+Production runs MariaDB 10.6.28. A second test container runs MariaDB 10.6 on host `:3338`:
+
+```bash
+docker compose -f backend-rs/docker-compose.test.yml up -d mariadb --wait
+# leg 2 (MariaDB 10.6, tmpfs)
+export DATABASE_URL='mysql://root:@127.0.0.1:3338/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci'
+```
+
+Run the same suites as the MySQL leg against it:
+`cargo test -p backend-rs --lib common::session_store`,
+`cargo test -p backend-rs --test api sql_portability`,
+`cargo test -p backend-rs --test api auth_session`.
+
+Both legs must be green; the MariaDB leg is what catches server-specific SQL (e.g. the `AS new` row alias that broke production login).

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `sessions` (`id`, `data`, `expiry_date`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `data` = ?, `expiry_date` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "9cd08ec36d7f3288a18950cde52579efe61506c1f1acc569e5f90d262eef8e86"
+}

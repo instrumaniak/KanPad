@@ -225,3 +225,11 @@ A review of `backend-rs/` (organization, architecture, idiomatic Rust, industry 
 - A lint fix can introduce a FORMAT diff: `collapsible_if` collapsing (`if let Some(x) = … { if cond`) is clippy-correct but rustfmt wants a different shape — run `cargo fmt` after clippy fixes, and capture the fmt exit code WITHOUT a pipe (`cargo fmt --check > file; echo $?`).
 - Doc-comment continuation lines that begin with `+`/`*` read as Markdown list markers to `clippy::doc_lazy_continuation` → reword (e.g. "`+ hint + ONE`").
 - Suite cross-reuse: a black-box binary-spawn suite (`serve_boot.rs`) reuses the spawn plumbing of the suite that owns it (`migrate_cli.rs`) via EXPLICIT `use` imports + `pub(crate)` items; the owning suite's header lists the sanctioned consumer, and the forbidden set stays honoured.
+
+### T006 lessons (2026-11-03) — MySQL & MariaDB SQL portability
+
+1. **A test suite that only runs one RDBMS flavour cannot prove portability.** Dev/CI ran MySQL 8.4; production runs MariaDB 10.6. Every SQL statement must be exercised on both in CI, or a server-specific syntax error ships green.
+2. **An ORM/driver's "modern" syntax may be server-specific.** `AS new` is the recommended MySQL 8.0.19+ form — and a hard `1064` on MariaDB. A comment that justifies a construct by one vendor's docs is not portability proof; run it on the other server.
+3. **A middleware can replace a 200 with a 500.** `tower-sessions` converts a store-write failure into a bodyless 500 (`service.rs:252-258`), so "the endpoint's own error handling" is not the whole error surface. When a 500 has no body, look above the handler.
+4. **Split the symptom before theorising.** "Unknown email -> 401, wrong password -> 401, correct password -> 500" localises the failure to post-verify in one probe.
+5. **Rebuild the release binary from HEAD before diagnosing prod.** The deployed binary predated the T005 commits, so "prod behaves differently from the tree" had two candidate causes at once.

@@ -40,5 +40,12 @@ tasks:
     status: pending
     depends:
       - T006
+      - T008
+    phase: 0
+    critical: true
+  T008:
+    name: Make backend API only
+    status: pending
+    depends: ~
     phase: 0
     critical: true

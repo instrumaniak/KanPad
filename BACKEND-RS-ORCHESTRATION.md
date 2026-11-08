@@ -578,7 +578,8 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 
 - **T67 MERGED `a0b25543`** (ff into `dev-rs-local`; worktree + branch deleted).
 - **tower-http 0.7.1** (both behaviour changes TEST-LOCKED: the compression **406** and the `ServeDir`
-  **trailing slash** — `tests/api/tower_http_07.rs`, 4 tests) · **tower-sessions 0.15 + core 0.15** (one
+  **trailing slash** — `tests/api/tower_http_07.rs`, 4 tests; the trailing-slash half is **superseded by
+  T008**, which removes `ServeDir` entirely) · **tower-sessions 0.15 + core 0.15** (one
   core) · **utoipa 6 + swagger-ui 10** (the OpenAPI union ordering changed → `openapi.json` **and**
   `schema.d.ts` regenerated **in this PR**; the typegen diff is 98 lines, all union re-ordering) ·
   **argon2 0.6 + bcrypt 0.19** (the PHC types moved to the `phc` crate; the salt is generated internally
@@ -878,7 +879,7 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
 
 - **All three jobs passed:** `backend` 5m39s, `web` 44s, `docker-e2e` **6m37s** — the FIRST fully green `backend-rs CI` run. Every previously-unrun step executed for the first time and passed: `Dockerfile contract gates` (the re-aimed one), `docker build backend-rs`, `Image must not bake DATABASE_URL`, `Serve :3001 + smoke test`, `npm ci`, `vitest`, `playwright pinned`.
 - **The release build is not a problem:** `#20 [builder 8/8] RUN cargo build --locked --release` compiled **293 crates** and finished in **2m54s** (`lto = "thin"` + `codegen-units = 1` included). So the layer-cache/cargo-chef optimization discussed during the fix is UNNECESSARY — the job already exports `cache-to: type=gha,mode=max`, and a cold build fits comfortably in the budget.
-- **The unmigrated-DB prediction held:** the container booted against `kanpad_ci` with no migrations and the smoke passed (`/health` DB-free, `openapi.json` embedded, `/app/public/index.html` present). Still true: any future smoke that touches `/api/v1/*` needs `migrate run` in that job first.
+- **The unmigrated-DB prediction held:** the container booted against `kanpad_ci` with no migrations and the smoke passed (`/health` DB-free, `openapi.json` embedded, `/app/public/index.html` present — **superseded by T008**, which removes `/app/public` entirely). Still true: any future smoke that touches `/api/v1/*` needs `migrate run` in that job first.
 - **Remaining CI noise (non-blocking):** GitHub annotations only — Node 20 deprecation for the SHA-pinned actions, and the `ubuntu-latest` → Ubuntu 26 migration notice (2026-10-19). Neither fails a job.
 
 ## MariaDB leg (T006)

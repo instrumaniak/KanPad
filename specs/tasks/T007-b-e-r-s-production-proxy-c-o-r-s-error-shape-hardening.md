@@ -9,32 +9,23 @@ inconsistent with its own contract.
 1. **The proxy collapses every client into one throttle bucket.**
    `scripts/app-proxy.js:50` **overwrites** `x-forwarded-for` with its own peer address
    (`clientReq.socket.remoteAddress` = `127.0.0.1`, because LiteSpeed is the only caller), and
-   `TRUSTED_PROXIES` is empty (`config.rs:695`), so `ClientIpExtractor` (`lib.rs`) keys every request on
+   `TRUSTED_PROXIES` is empty (`config.rs`, `default_trusted_proxies`), so `ClientIpExtractor` (`lib.rs`) keys every request on
    `127.0.0.1`. The governors are therefore **process-global, not per-IP**: measured live on 2026-11-02,
    **the 6th login attempt from anywhere in the world 429s for everyone** for the rest of the minute
-   (default `throttle_auth_per_min = 5`, `throttle_global_per_min = 120` — `config.rs:1433-1434`). One
+   (default `throttle_auth_per_min = 5`, `throttle_global_per_min = 120` — see `default_throttle_auth` /
+   `default_throttle_global` in `config.rs`). One
    busy user, one scanner, or one brute-force attempt can lock the whole site out.
-2. **Production CORS/CSP still points at localhost.** The live CSP is
-   `connect-src 'self' http://localhost:5173`, i.e. `CORS_ORIGINS` was never changed from the dev default.
-   The canonical `CORS_ORIGINS` list feeds **three** consumers (CORS allowlist, CSRF trusted origins, CSP
-   `connect-src` — `10-architecture.md:132`), so a wrong value is wrong in three places at once. It is
+2. **Production CORS still points at localhost.** The live trusted-origin set is
+   `http://localhost:5173`, i.e. `CORS_ORIGINS` was never changed from the dev default. Since T008 the SPA
+   is deployed to its own origin (`https://kanpad.raziur.com`) and calls this API cross-origin, so the
+   canonical `CORS_ORIGINS` list feeds **two** consumers (the CORS allowlist and the CSRF trusted-origin
+   set — `10-architecture.md:132`), and a wrong value blocks every mutating call from the browser. It is
    also *silently* wrong: nothing at boot rejects a loopback origin in production.
 3. **Body/extractor rejections bypass the problem+json kernel on the auth routes.**
    `auth/routes.rs:69,141` take raw `Json<T>` while every other feature uses the project's `ValidJson`
    (`extract.rs:150` struct, `:174-180` `from_request`). Result (measured): `POST /api/auth/register` with `{}` returns
    `422 text/plain`, not `400 application/problem+json` — the only endpoints where a client cannot get a
    machine-readable error. Note the **ordering trap** that makes the naive fix wrong (see §Notes 2).
-
-4. **Production CSP blocks the Inter web font.** The backend emits
-   `Content-Security-Policy: … font-src 'self' data: …` (see `backend-rs/src/lib.rs::content_security_policy`),
-   but `frontend/src/index.css` loads Inter from Google's CDN
-   (`https://fonts.gstatic.com/s/inter/v18/…UcCO3Fwr…woff2`). In dev the SPA is served by Vite, which sends
-   **no** CSP, so the font loads; in production the Rust backend serves the SPA and attaches the strict CSP to
-   the document, so the cross-origin font request is blocked and the UI falls back to system fonts. The defect
-   is invisible locally because the dev topology never enforces the production CSP on the document (same
-   "production-only enforcement" class as defect 2). It is **not** fixed by relaxing `font-src` (that would
-   weaken the CSP and keep an external runtime dependency) — it is fixed by **self-hosting** the font so
-   `font-src 'self'` already covers it.
 
 Also in scope, because it is the same "the proxy must not fight the app" contract:
 `scripts/app-proxy.js:49,84` **rewrite `Host`** to `127.0.0.1:<port>`, which breaks the CSRF layer's
@@ -43,14 +34,18 @@ Also in scope, because it is the same "the proxy must not fight the app" contrac
 termination), so a plain-HTTP hop is advertised as plain HTTP.
 
 End state: **the app sees the real client IP and the real public host, a production boot refuses a
-loopback CORS origin, every rejection on every route renders problem+json, and the Inter font loads under
-the production CSP.**
+loopback CORS origin, every rejection on every route renders problem+json, and the statically hosted SPA
+can call the API cross-origin from a browser with no CORS or CSRF rejection.**
 
 ## Depends On
 
-T006 (recommended order, not a code dependency): ship the MariaDB fix first so login works in production,
-then verify this task's per-client throttling and CORS behaviour against a working login. T007's own code
-changes are independent of T006.
+- **T008 (hard dependency, lands first).** T008 makes `backend-rs` API-only: `ServeDir`, the SPA fallback
+  and the CSP are gone before this task starts. T007's CORS work is therefore genuinely cross-origin, and
+  there is no CSP to update — do **not** re-add one, and do not move one into `frontend/public/.htaccess`
+  (that is a separate, deferred task with a self-hosted font).
+- T006 (recommended order, not a code dependency): ship the MariaDB fix first so login works in
+  production, then verify this task's per-client throttling and CORS behaviour against a working login.
+  T007's own code changes are independent of T006.
 
 ## Phase
 
@@ -58,15 +53,20 @@ changes are independent of T006.
 
 ## Critical
 
-Yes. The shared throttle bucket is a site-wide denial-of-service with a 5-requests-per-minute trigger.
+Yes. The shared throttle bucket is a site-wide denial-of-service with a 5-requests-per-minute trigger;
+and after T008 the SPA calls this API cross-origin, so a stale `CORS_ORIGINS` blocks every mutating call
+from the browser.
 
 ## Spec References
 
 - `specs/api-rewrite-rs-specs/10-architecture.md`
   - CORS section `## CORS (restrictive, dev-only open)` (line ~126) and the middleware-order block: the
-    canonical-origin rule (one list → three consumers, `:132`) and the **deployment caveat** (`:134`):
-    "*the `Origin`/`Host` fallback degrades if a reverse proxy rewrites `Host` … the runbook must require
-    `Host` to be forwarded unchanged*". Today's proxy violates it.
+    canonical-origin rule (one list → **two** consumers: CORS + CSRF, `:132`) and the **deployment
+    caveat** (`:134`): "*the `Origin`/`Host` fallback degrades if a reverse proxy rewrites `Host` … the
+    runbook must require `Host` to be forwarded unchanged*". Today's proxy violates it — and after T008 the
+    fallback cannot rescue a wrong allowlist, because the SPA's `Host` is a different subdomain.
+  - T008's amendments remove the CSP row and the `ServeDir`/SPA-fallback rows from this document; this
+    task adds nothing back (no CSP, no SPA fallback).
   - Config table (`CORS_ORIGINS` at `:201`, `TRUSTED_PROXIES` at `:203`) — precedence, fail-fast contract.
 - `specs/api-rewrite-rs-specs/10-architecture.md` also owns the `invalid-json` type-URI registry (line ~82);
   `20-api-contract.md` says parse/validation → 400 problem+json but does not name the slug.
@@ -94,6 +94,10 @@ External references (verified 2026-11-02):
   look cross-origin whenever `Sec-Fetch-Site` is absent (curl, older browsers, the plain-HTTP staging box).
 - `tower_governor` keys are per-`KeyExtractor`; the limiter is in-process memory (already documented as the
   scale-out caveat). Nothing changes there — only the key.
+- **Same-site ≠ same-origin.** `kanpad.raziur.com` and `api-kanpad-rs.raziur.com` share the registrable
+  domain `raziur.com`, so `SameSite=Lax` still lets the browser attach `__Host-kanpad.sid` (scoped to the
+  API host) to a cross-origin `fetch` with `credentials: 'include'` (`frontend/src/lib/api/client.ts:70`,
+  already set). Cross-origin still applies to CORS, so the allowlist is load-bearing.
 
 ## Files to Create/Modify
 
@@ -102,12 +106,17 @@ External references (verified 2026-11-02):
 - `backend-rs/tests/api/proxy_headers.rs` — the `ClientIpExtractor` policy matrix through the real router:
   trusted peer + XFF chain, untrusted peer (spoof ignored), trusted peer with no XFF, and two distinct XFF
   clients getting **independent** buckets (the assertion that would have caught the outage).
-- `docs/deployment.md` — the required production environment (one table: `APP_ENV`, `CORS_ORIGINS`,
-  `TRUSTED_PROXIES`, `SESSION_SECRET`, `HASH_COST`, `DB_*`, `DB_STARTUP_CHECK`, `REGISTRATION_ENABLED`,
-  `PORT`) + the proxy contract (which headers LiteSpeed/Node must forward) + the post-deploy smoke list.
-  This is the operator-facing artifact that did not exist, which is *why* prod kept the dev CORS value.
 
 ### Modify
+
+- `backend-rs/.env.example` — the `TRUSTED_PROXIES` comment currently states the **leftmost**
+  `X-Forwarded-For` entry wins and that a trusted proxy "MUST overwrite that header rather than append to
+  it" — both are the exact opposite of this task's rightmost-walk extractor and append-only proxy. Rewrite
+  it to describe the right-to-left walk, and state that the proxy appends.
+- `docs/deployment.md` — **created by T008** (two-origin topology + build sequence); this task extends it
+  with the required production environment (one table: `APP_ENV`, `CORS_ORIGINS`, `TRUSTED_PROXIES`,
+  `SESSION_SECRET`, `HASH_COST`, `DB_*`, `DB_STARTUP_CHECK`, `REGISTRATION_ENABLED`, `PORT`) + the proxy
+  contract (which headers LiteSpeed/Node must forward) + the post-deploy smoke list.
 
 - `scripts/app-proxy.js` — header handling only (no routing/behaviour change):
   - **stop overwriting** `Host`; forward it unchanged and set `x-forwarded-host` for completeness;
@@ -122,7 +131,10 @@ External references (verified 2026-11-02):
   (`http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`) when `APP_ENV=production`, with an error
   naming `CORS_ORIGINS` and the offending entry (the existing canonical-form rejection stays as-is). Also
   emit the canonical origin list in the boot-config log so the value is visible without guessing.
-- `backend-rs/tests/api.rs` — register the new suite: `#[path = "api/proxy_headers.rs"] mod proxy_headers;`
+- `backend-rs/tests/api/cors.rs` — extend `one_canonical_list_feeds_cors_cross_origin_and_csrf` and add the
+  CSP-absence guard (Step 2).
+- `backend-rs/tests/api/health.rs` — add the CSP-absence assertion to `assert_transport_headers` (Step 2/5).
+- `backend-rs/src/lib.rs` — `ClientIpExtractor` rightmost-walk rewrite (Step 1 item 3).
   (explicit `#[path]`, no bare `mod`, inserted in the existing alphabetical order). A suite file that is
   never registered simply never runs — that is a silent no-op guard.
 - `backend-rs/src/lib.rs` — `ClientIpExtractor`: switch from leftmost-XFF to rightmost-non-trusted-walk
@@ -147,13 +159,14 @@ External references (verified 2026-11-02):
   `auth_session_full_flow`) that removes `sessions` from **its own per-test database**
   (`RENAME TABLE`/`DROP TABLE`; safe here because `#[sqlx::test]` gives every test a private database
   which is discarded afterwards), performs a login, and asserts the middleware-generated 500 still carries
-  `x-request-id`, `served-by: rust`, and the CSP header — the contract that the bodyless 500 path must not
-  silently lose observability. This must **not** go in `health.rs`: that suite is entirely `#[tokio::test]`
+  `x-request-id` and `served-by: rust` — the contract that the bodyless 500 path must not silently lose
+  observability. It must **not** assert a `content-security-policy` header: since T008 the API serves no
+  document and emits no policy. This must **not** go in `health.rs`: that suite is entirely `#[tokio::test]`
   and DB-free (`build_state(test_settings())`, no pool), so it cannot host a `#[sqlx::test]`. `auth_session.rs`
   already owns the per-test pool, `app_with_env`, `session_ids` and `login_fresh_session`.
-- `frontend/public/fonts/inter.woff2` — the Inter variable font (weight 100 900) currently fetched from
-  `fonts.gstatic.com`, copied into the build so the backend serves it from the same origin (new).
-- `frontend/src/index.css` — change the `@font-face` `src` URL from the Google CDN URL to `/fonts/inter.woff2`.
+- `frontend/public/fonts/inter.woff2` and `frontend/src/index.css` — **removed from this task.** T008 deletes
+  the CSP that blocked the font, so Inter keeps loading from Google's CDN with no change. Self-hosting the
+  font + a static-host CSP is a separate, deferred follow-up (see T008 §Notes 1).
 - `specs/api-rewrite-rs-specs/10-architecture.md` — CORS/CSRF section: the loopback-in-production boot
   rejection; the proxy contract (append XFF, never rewrite `Host`, `TRUSTED_PROXIES` holds exactly the
   proxy hops).
@@ -174,9 +187,15 @@ for i in $(seq 1 7); do
 done
 # observed 2026-11-02: 401 401 401 401 401 429 429
 
-# (b) prod CORS/CSP still points at dev
-curl -sSI https://kanpad.raziur.com/health | grep -i "content-security-policy"
-# observed: ... connect-src 'self' http://localhost:5173; ...
+# (b) prod CORS/CSRF still points at dev — the SPA origin is not allowed
+curl -sS -i -X OPTIONS https://api-kanpad-rs.raziur.com/api/auth/login \
+  -H 'Origin: https://kanpad.raziur.com' \
+  -H 'Access-Control-Request-Method: POST' | head -8
+# observed: no access-control-allow-origin for the real SPA origin
+
+# (b2) the API carries no CSP at all — the T008 contract, pinned here
+curl -sSI https://api-kanpad-rs.raziur.com/health | grep -ci "content-security-policy"
+# observed: 0
 
 # (c) auth body rejection is not problem+json
 curl -sS -i -X POST https://kanpad.raziur.com/api/auth/register \
@@ -210,7 +229,9 @@ Record all three in the final report as the "before" evidence.
 
 2. Production env: `TRUSTED_PROXIES=127.0.0.1` (exactly the Node hop). Do **not** trust a wider range.
    `TRUSTED_PROXIES` must list **every** proxy hop in the chain (here: 127.0.0.1 only) so the extractor
-   can walk the XFF list right-to-left and skip them.
+   can walk the XFF list right-to-left and skip them. This only works if LiteSpeed appends the peer IP
+   (see the hard requirement in the `docs/deployment.md` proxy contract, Step 5); in "Keep Header from
+   Trusted IP" (pass-through) mode the spoofed client entry survives and the throttle stays global.
 
 3. **App-side spoof resistance (new, required):** change `ClientIpExtractor` (`lib.rs`) from "leftmost
    XFF when peer is trusted" to "walk the XFF list **right-to-left**, skipping entries that are in
@@ -220,21 +241,32 @@ Record all three in the final report as the "before" evidence.
    together with the operator verification: `curl` an echo endpoint and print the raw `X-Forwarded-For`
    to confirm LiteSpeed appended (not passed through).
 
-### Step 2 — P1: production CORS/CSP correctness
+### Step 2 — P1: production CORS correctness
 
 - `Settings::validate()`: add the loopback-origin rejection for `APP_ENV=production` (error names
-  `CORS_ORIGINS` and the entry). Test both directions: prod + `http://localhost:5173` → `Err`;
-  dev/test + the same value → `Ok` (the dev default must keep working).
+  `CORS_ORIGINS` and the entry). The guard keys on the **loopback host regardless of scheme** — i.e. it
+  rejects `http://localhost:*`, `https://localhost:*`, `http://127.0.0.1:*`, `https://127.0.0.1:*`,
+  `http://[::1]:*` and `https://[::1]:*` — because a loopback origin is never a legitimate production
+  SPA origin in any scheme. Test both directions: prod + `http://localhost:5173` → `Err`; prod +
+  `https://localhost:5173` → `Err`; dev/test + the same value → `Ok` (the dev default must keep
+  working).
 - Include the canonical origins in the boot-config log line (`Settings::log_boot_config`) so
   `journalctl`/cPanel logs answer "what CORS list is live?" without a redeploy.
-- Set the real value in production: `CORS_ORIGINS=https://kanpad.raziur.com` (the SPA is served from the
-  same origin, so `connect-src` becomes `'self' https://kanpad.raziur.com`; the CSRF trusted set gains the
-  real origin; CORS echoes it).
-- Add the CSP assertion to `backend-rs/tests/api/cors.rs`, which already owns every CSP test — extend
-  `csp_connect_src_lists_the_cors_allowlist` (and keep `one_canonical_list_feeds_cors_cross_origin_and_csp`
-  green): under production settings the emitted `connect-src` must contain the canonical origin and
-  **must not** contain `localhost`. Do not re-implement the `csp_of`/`directive` helpers; assert per
-  directive, never by substring over the whole policy.
+- Set the real value in production: `CORS_ORIGINS=https://kanpad.raziur.com`. This is now a genuine
+  cross-origin allowlist entry (the SPA is served from `https://kanpad.raziur.com`, the API from
+  `https://api-kanpad-rs.raziur.com`), so CORS echoes it and the CSRF trusted set gains it. The cookie
+  still flows because both hosts are same-site (`raziur.com`) — see Spec References.
+- `backend-rs/tests/api/cors.rs` owns the canonical-list guard. Extend
+  `one_canonical_list_feeds_cors_cross_origin_and_csrf` (renamed by T008: the CSP consumer is gone): under
+  production settings the CORS echo is the canonical origin, the CSRF trusted set contains it, and
+  **neither contains `localhost`**. Assert per-consumer via a preflight + a cross-origin POST, never by
+  substring over a header blob.
+- Add the **CSP-absence** guard that T008's contract needs: no production response carries
+  `content-security-policy` (`/health`, `/api/v1/*`, a problem+json 404). T008 adds this to
+  `health.rs::assert_transport_headers`; extend it here for the production-settings app used by the CORS
+  tests.
+- Do **not** re-add a CSP, and do not move one into `frontend/public/.htaccess` — the static-host CSP plus
+  a self-hosted font is a separate, deferred task.
 
 ### Step 3 — P0/P1: the extractor policy tests
 
@@ -273,9 +305,9 @@ pub async fn login(
 Do the same for `register` (its `403` registration-closed check stays **first** in the handler body — a
 role-denied 403 must not be turned into a body-parse 400; see the ordering caveat above).
 
-Also verify the `#[tracing::instrument(skip(state, session))]` attribute on both handlers does **not**
-record the now-`Result<…>` payload (the repo already has a CI grep gate for body recording; keep
-`input`/`payload` in the skip list).
+Also verify the `#[tracing::instrument(skip(state, session, payload))]` attribute on both handlers does **not**
+record the now-`Result<…>` payload (the repo already has a CI grep gate for body recording; the skip list must
+follow the rename from `input` to `payload` — a stale `input` entry would silently record the body).
 
 Scan the rest of the tree for the same bypass:
 `grep -rnE "\): (Json|Query|Path)<" backend-rs/src/features` — everything must be `ValidJson`/
@@ -293,41 +325,39 @@ registration-closed. The `registration_enabled` check is the first statement in 
 cannot gate parse failures. Document this in `20-api-contract.md` and do not try to "fix" it by moving
 validation before parsing (that would break normalize-before-validate).
 
-### Step 6 — P1: self-host the Inter font (production CSP)
-
-The production CSP is `font-src 'self' data:` and the frontend loads Inter from
-`https://fonts.gstatic.com/…`, so the font is blocked in production (and works in dev only because Vite
-sends no CSP). Fix by self-hosting — do **not** add `fonts.gstatic.com` to `font-src` (that would loosen
-the CSP and keep an external runtime dependency).
-
-1. Download the woff2 currently referenced in `frontend/src/index.css` into
-   `frontend/public/fonts/inter.woff2` (verify it is a valid woff2, ~24 KB).
-2. Edit `frontend/src/index.css`: change the `@font-face` `src` to
-   `url('/fonts/inter.woff2') format('woff2');` (keep `font-weight: 100 900`, `font-display: swap`).
-3. Rebuild: `npm run build` in `frontend/` (Vite copies `public/` to `dist/`); the Dockerfile then copies
-   `dist/` into `backend-rs/public/`, so the font ships at `/fonts/inter.woff2`.
-4. Verify: `curl -sI https://kanpad.raziur.com/fonts/inter.woff2` returns 200 and the browser console no
-   longer reports a CSP `font-src` violation; the live CSP stays `font-src 'self' data:` (no loosening).
-5. Confirm `frontend/src/index.css` no longer references `fonts.gstatic.com`.
-
 ### Step 5 — Contracts, docs, deploy
 
-- The `DROP TABLE sessions` middleware-5xx test (Step 3 list) pins that *even* a bodyless 5xx keeps
-  `x-request-id` + `served-by` + CSP.
-- `docs/deployment.md`: required env + proxy contract + post-deploy smoke:
-  1. `curl -sSI …/health | grep -i content-security-policy` → `connect-src 'self' https://kanpad.raziur.com`;
+- The `DROP TABLE sessions` middleware-5xx test (§Files, `auth_session.rs`) pins that *even* a bodyless 5xx
+  keeps `x-request-id` and `served-by: rust`. It must **not** assert a `content-security-policy` header:
+  since T008 the API serves no document and emits no policy.
+- `docs/deployment.md` (created by T008): extend it with the required env table + the proxy contract + the
+  post-deploy smoke:
+  - **Proxy contract (hard requirements, not hints):** LiteSpeed must be in an **append** mode
+    ("Trusted IP Only" or "Use Last IP (for AWS ELB)") so the peer IP is appended to
+    `X-Forwarded-For`; **never** "Keep Header from Trusted IP" (pass-through), which leaves a
+    client-supplied spoofed entry as the selected one. If LiteSpeed runs on a non-loopback interface, that
+    interface's IP must be added to `TRUSTED_PROXIES`. Record the confirmed mode in the task log.
+  - **Proxy-header verification is a manual staging gate** (no automated harness for `scripts/app-proxy.js`
+    in this task): capture the raw forwarded headers (`Host`, `X-Forwarded-For`, `X-Forwarded-Proto`,
+    `X-Forwarded-Host`) for both the HTTP and the WebSocket upgrade path and record them in the task log.
+  1. `curl -sSI …/health | grep -ci content-security-policy` → `0` (T008's contract) and the header
+     `served-by: rust` present;
   2. `OPTIONS /api/v1/auth/login` with `Origin: https://kanpad.raziur.com` → ACAO + credentials;
      with `Origin: https://evil.example` → no ACAO;
   3. six logins from **two** different clients (or two XFF values in staging) → each gets 5, the 6th of
      one does **not** 429 the other;
-  4. `POST /auth/register` with `{}` → `400` problem+json.
+  4. `POST /auth/register` with `{}` → `400` problem+json;
+  5. `GET https://api-kanpad-rs.raziur.com/boards` → `404 application/problem+json` (no HTML — proves the
+     proxy is not serving a stale SPA).
 - `10-architecture.md` (+ `BACKEND-RS-ORCHESTRATION.md` pointer): the proxy contract and the boot guard.
 - `AGENTS.md`: lessons in §Notes 4.
 
 ## Constraints
 
-- **Scope:** `scripts/app-proxy.js`, `config.rs` (CORS guard + boot log), `auth/routes.rs`, and the four
-  test files + docs. No feature behaviour change, no route change, no `openapi.json` change.
+- **Scope:** `scripts/app-proxy.js`, `config.rs` (CORS guard + boot log), `auth/routes.rs`,
+  `backend-rs/.env.example` (TRUSTED_PROXIES comment), and the test files `throttle.rs`,
+  `auth_register.rs`, `auth_session.rs`, `cors.rs`, `health.rs`, `proxy_headers.rs` + docs. No feature
+  behaviour change, no route change, no `openapi.json` change, and **no** SPA/CSP work — T008 removed it.
 - **No new dependency.** `tower_governor`, `tower-http`, `axum`, `serde` suffice.
 - **Do not disable or loosen** the CSRF layer, the CORS allowlist, the governor, or `SameSite` to make the
   proxy simpler. The fix is to send correct headers.
@@ -337,6 +367,10 @@ the CSP and keep an external runtime dependency).
   Moving validation before normalization silently breaks padded/mixed-case logins.
 - **No credential/PII in logs.** The client IP is already logged/used as a throttle key; keep it out of
   request bodies and problem documents.
+- **The wrapper is production-only.** It runs behind LiteSpeed's TLS termination, so `x-forwarded-proto`
+  falls back to `https` when the header is absent; running it without TLS termination would mislabel
+  requests. Gate the fallback on an explicit env (e.g. `PROXY_ASSUME_HTTPS`) if a non-TLS staging box is
+  ever needed.
 - Commands per `BACKEND-RS-ORCHESTRATION.md` (`CARGO_HOME`, `CARGO_TARGET_DIR`, `DATABASE_URL`); the
   MariaDB leg from T006 must stay green too (this task touches no SQL).
 
@@ -350,18 +384,17 @@ the CSP and keep an external runtime dependency).
       `X-Forwarded-Proto`; the WebSocket path sends the same headers.
 - [ ] `APP_ENV=production` + a loopback `CORS_ORIGINS` entry **fails boot** naming `CORS_ORIGINS`; the dev
       default still boots.
-- [ ] Production CSP is `connect-src 'self' https://kanpad.raziur.com` (no `localhost`), and the boot log
-      prints the canonical origin list.
-- [ ] The Inter font loads in production: `/fonts/inter.woff2` returns 200, no `font-src` CSP violation in
-      the browser console, and the live CSP remains `font-src 'self' data:` (unchanged — no loosening).
-- [ ] `frontend/src/index.css` no longer references `fonts.gstatic.com`.
+- [ ] Production `CORS_ORIGINS=https://kanpad.raziur.com` is echoed by CORS and trusted by CSRF for a
+      cross-origin `POST` from `https://kanpad.raziur.com`; no `localhost` origin is trusted; the boot log
+      prints the canonical list.
+- [ ] No API response carries `content-security-policy` (T008's API-only contract holds after this task).
 - [ ] `POST /api/auth/login` and `/register` with a missing field / malformed JSON / over-limit body return
       `400` + `application/problem+json` (`invalid-json`) + `instance`; a wrong content-type returns `415`
       — never `422 text/plain`.
 - [ ] A padded, mixed-case email still authenticates (normalize-before-validate preserved).
 - [ ] A session-store failure (simulated by dropping `sessions` in a per-test DB) still returns a 5xx that
-      carries `x-request-id`, `served-by: rust`, and the CSP header.
-- [ ] Staging smoke (four checks in Step 5) recorded in the task log.
+      carries `x-request-id` and `served-by: rust`.
+- [ ] Staging smoke (five checks in Step 5) recorded in the task log.
 - [ ] Gates: `cargo fmt --check` 0 · `cargo clippy --workspace --all-targets -- -D warnings
       -A clippy::pedantic` 0 · suites green on **MySQL 8.4 and MariaDB 10.6** · `cargo sqlx prepare --check`
       with `SQLX_OFFLINE=true` 0 (no SQL changed) · `openapi.json` +
@@ -382,8 +415,10 @@ attempt 5 -> 401
 attempt 6 -> 429        # ← and every other client on the planet is now 429 for the rest of the minute
 attempt 7 -> 429
 
-$ curl -sSI https://kanpad.raziur.com/health | grep -i content-security-policy
-content-security-policy: … connect-src 'self' http://localhost:5173; …
+$ curl -sS -i -X OPTIONS https://api-kanpad-rs.raziur.com/api/auth/login \
+    -H 'Origin: https://kanpad.raziur.com' -H 'Access-Control-Request-Method: POST'
+HTTP/2 200
+# no access-control-allow-origin: the real SPA origin was never in CORS_ORIGINS
 
 $ curl -sS -i -X POST https://kanpad.raziur.com/api/auth/register -H 'content-type: application/json' -d '{}' | head -4
 HTTP/2 422
@@ -393,7 +428,8 @@ content-type: text/plain; charset=utf-8
 Root cause of (a): `scripts/app-proxy.js:50` sets `'x-forwarded-for': clientReq.socket.remoteAddress` —
 it *replaces* the list instead of appending. Behind LiteSpeed that value is always `127.0.0.1`, and
 `TRUSTED_PROXIES` is unset, so `ClientIpExtractor` returns the peer (`127.0.0.1`) for every request. Both
-governors then have exactly **one** bucket for the entire site (`config.rs:1433-1434`: global 120/min,
+governors then have exactly **one** bucket for the entire site (see `default_throttle_global` /
+`default_throttle_auth` in `config.rs`: global 120/min,
 auth 5/min).
 
 ### 2. The ordering trap in the auth extractor fix
@@ -410,7 +446,7 @@ padded + mixed-case email authenticates.
 
 ### 3. Why the proxy rewrites `Host` at all
 
-It doesn't need to: the Rust service has no vhost routing (one `Router`, SPA fallback included). The rewrite
+It doesn't need to: the Rust service has no vhost routing (one `Router`). The rewrite
 is leftover from a generic reverse-proxy template — and it actively breaks the CSRF `Origin`/`Host`
 fallback that the architecture doc calls out as a production requirement. Removing it is a **strict
 improvement** with no functional dependence to break.
@@ -425,9 +461,9 @@ before something starts deriving absolute URLs from it.
 1. **A reverse proxy that overwrites `X-Forwarded-For` turns a per-IP throttle into a global one.** The
    symptom is not a proxy bug — it is "the whole site 429s after five logins". XFF is append-only, and the
    app must trust it only from a known hop.
-2. **One canonical origin list feeds CORS, CSRF and CSP.** A stale `CORS_ORIGINS` is wrong in three places
-   at once, and the CSP makes it visible in every response — check the header, not the env file. Fail boot
-   on a loopback origin in production.
+2. **One canonical origin list feeds CORS and CSRF.** A stale `CORS_ORIGINS` is wrong in both consumers at
+   once and fails *silently* — the browser reports a CORS error while the server logs a normal 200. Check
+   the preflight, not the env file. Fail boot on a loopback origin in production.
 3. **Proxies must forward `Host` unchanged** whenever the app implements an `Origin`/`Host` CSRF fallback
    (`10-architecture.md:134` says so; the committed proxy violated it since it was written).
 4. **A 422 `text/plain` on one route family is an extractor bypass, not a validation bug.** The kernel's
@@ -436,29 +472,25 @@ before something starts deriving absolute URLs from it.
    auth). `ValidJson` is the house pattern *except* where a handler normalizes first — and a test with a
    padded email is what proves it.
 
-### 6. Font / CSP measured evidence (2026-11-03, live `kanpad.raziur.com`)
+### 5. After the split: same-site, cross-origin (topology that makes this task real)
 
-```
-$ curl -sI https://kanpad.raziur.com | grep -i content-security-policy
-content-security-policy: … font-src 'self' data:; …
+The SPA (`https://kanpad.raziur.com`) and the API (`https://api-kanpad-rs.raziur.com`) are **same-site**
+(registrable domain `raziur.com`) but **cross-origin**. Consequences, in the order they bite:
 
-# browser console:
-# Loading the font 'https://fonts.gstatic.com/s/inter/v18/…UcCO3Fwr…woff2' violates
-# Content Security Policy directive: "font-src 'self' data:".
-```
+1. **The cookie still flows.** `__Host-kanpad.sid` is scoped to the API host, `SameSite=Lax` is satisfied
+   (same-site request), and `frontend/src/lib/api/client.ts:70` already sends `credentials: 'include'`.
+   Do **not** relax to `SameSite=None` — that gives up the browser-level CSRF defence for nothing.
+2. **The CSRF `Origin`/`Host` fallback can no longer match.** `Host` is `api-kanpad-rs.raziur.com` while
+   `Origin` is `https://kanpad.raziur.com`. With `Sec-Fetch-Site: same-site` present the layer demands a
+   **trusted** origin, so `CORS_ORIGINS` is the only thing standing between a legitimate SPA and a 403.
+   That is why a stale value is a total outage of every mutating call, and why the boot guard exists.
+3. **CORS is load-bearing, not decorative.** T55's preflight guard covers the production topology: a verb
+   missing from `allow_methods` blocks the browser before the request is sent.
 
-Root cause: the dev server (Vite) sends no CSP, so the defect is invisible locally; production enforces
-`font-src 'self' data:` on the document and blocks the cross-origin font. Fix is self-hosting the woff2
-(Step 6), not CSP relaxation — keeping `font-src 'self' data:` strict.
+### 7. Decisions recorded (review 2026-11-09)
 
-Suggested additional lesson (extend §Notes 4): **A CSP is only enforced where it is attached.** A frontend
-that loads third-party assets passes in dev (no CSP) and fails in prod (CSP on the document). Verify
-against a production-like serve (backend serving the built SPA), not the Vite dev server — and either
-self-host the asset or add the origin to the CSP deliberately.
-
-### 5. Out of scope (deliberately)
-
-- Anything MariaDB-related (T006).
-- The in-process governor's scale-out caveat (N replicas ⇒ N× the limit) — already documented; a
-  Redis-backed limiter is a separate decision.
-- Rate-limiting by user id after authentication (the current policy is strictly per-IP, pre-auth).
+- Loopback CORS boot guard keys on the **loopback host regardless of scheme** (http + https).
+- Proxy-header verification is a **manual staging gate** (no Node harness added in this task).
+- LiteSpeed mode is a **deploy precondition**: must append the peer IP; "Keep Header from Trusted IP"
+  (pass-through) is not acceptable.
+- `#[tracing::instrument]` skip list follows the rename: `skip(state, session, payload)`.

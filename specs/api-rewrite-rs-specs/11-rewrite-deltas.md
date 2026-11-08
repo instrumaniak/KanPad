@@ -183,6 +183,10 @@ Neither change touches the wire contract (the cookie name is not in
 > Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
 > folded into `10-architecture.md` (CORS + Middleware order) by T56. Do not
 > implement from the MUSTs below.
+>
+> **CSP half superseded by T008 (2026-11-09):** the API no longer serves a
+> document, so no CSP is emitted. The CSRF half (everything above the
+> `* **CSP.**` bullet) still applies and is owned by T007.
 
 * **Cross-origin check on mutating requests — the Go 1.25
   `CrossOriginProtection` algorithm.** The API authenticates with an ambient

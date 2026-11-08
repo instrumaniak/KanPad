@@ -233,3 +233,12 @@ A review of `backend-rs/` (organization, architecture, idiomatic Rust, industry 
 3. **A middleware can replace a 200 with a 500.** `tower-sessions` converts a store-write failure into a bodyless 500 (`service.rs:252-258`), so "the endpoint's own error handling" is not the whole error surface. When a 500 has no body, look above the handler.
 4. **Split the symptom before theorising.** "Unknown email -> 401, wrong password -> 401, correct password -> 500" localises the failure to post-verify in one probe.
 5. **Rebuild the release binary from HEAD before diagnosing prod.** The deployed binary predated the T005 commits, so "prod behaves differently from the tree" had two candidate causes at once.
+
+### T007/T008 lessons (2026-11-09) — API-only split + cross-origin CORS
+
+1. **An API that serves no document needs no CSP** — and removing the CSP is what unblocks third-party assets (Inter from Google's CDN). Self-hosting + a static-host CSP is a separate, deferred task; do not bundle it.
+2. **One canonical origin list feeds CORS and CSRF only after the split** (two consumers, not three). A stale value is now a total outage of every mutating call from the browser — silent, because the server logs a normal 200.
+3. **Same-site ≠ same-origin.** `kanpad.raziur.com` → `api-kanpad-rs.raziur.com` shares the registrable domain, so `SameSite=Lax` still delivers `__Host-kanpad.sid`, but the CSRF `Origin`/`Host` fallback can no longer match — making `CORS_ORIGINS` load-bearing.
+4. **A reverse proxy that overwrites `X-Forwarded-For` turns a per-IP throttle into a global one.** XFF is append-only; the app trusts it only from a known hop. LiteSpeed must be in an append mode ("Trusted IP Only" / "Use Last IP"), never "Keep Header from Trusted IP" (pass-through).
+5. **When a security header disappears, update every reference in the same commit** — `10-architecture.md`, `11-rewrite-deltas.md`, `50-tasks.md`, `BACKEND-RS-ORCHESTRATION.md`, `AGENTS.md`, plus code comments and the CI gates. A stale mention breaks the grep gate and leaves broken intra-doc links.
+6. **Dropping a Cargo feature is safe only after a `cargo build --locked`** — verify `tokio/fs` and `tower-http/fs` are not required transitively before removing them from the manifest.

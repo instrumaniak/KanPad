@@ -25,14 +25,14 @@ use axum::{
     Json, Router,
     error_handling::HandleErrorLayer,
     extract::{ConnectInfo, MatchedPath, Request, State},
-    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use docs::{HealthResponse, ReadyResponse};
 use error::{AppError, ProblemDetails, capture_request_context, handle_timeout};
 use secrecy::ExposeSecret;
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha512};
 use state::AppState;
 use tower::ServiceBuilder;
 use tower_governor::{
@@ -44,7 +44,6 @@ use tower_http::{
     csrf::{CsrfLayer, ProtectionError},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     sensitive_headers::SetSensitiveRequestHeadersLayer,
-    services::ServeDir,
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
@@ -72,168 +71,9 @@ fn session_key(settings: &config::Settings) -> Key {
 /// Origin timeout bound for every request (handle layer above renders 503).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Path of the SPA entry document the server serves (the very path the SPA
-/// fallback reads).
-///
-/// **`backend-rs/public/` is NOT in git** — the Dockerfile copies
-/// `frontend/dist/` into it before the image build — so this file usually
-/// does NOT exist in a dev tree. The CSP hash computation degrades
-/// deterministically around that (see [`boot_inline_script_hashes`]).
-pub const SPA_INDEX_PATH: &str = "public/index.html";
-
 /// Build application state from already-loaded settings (no I/O, no pool).
 pub fn build_state(settings: config::Settings) -> AppState {
     AppState::from_settings(settings)
-}
-
-/// Compute the CSP hashes of the **inline** `<script>` blocks in `html`.
-///
-/// Each entry is `'sha256-<base64>'` over the EXACT bytes between the
-/// `<script>` and `</script>` tags — the same bytes a browser hashes when it
-/// evaluates the CSP `script-src` list. A `<script src=...>` is EXTERNAL
-/// (covered by `script-src 'self'`) and is skipped.
-///
-/// This is the whole point of computing the hash instead of hand-maintaining
-/// it: a stale constant breaks the SPA's inline theme bootstrap **silently**
-/// (the page renders, the stored theme is ignored).
-pub fn inline_script_hashes(html: &[u8]) -> Vec<String> {
-    let mut hashes = Vec::new();
-    let mut cursor = 0usize;
-    while let Some(offset) = find_bytes(&html[cursor..], b"<script") {
-        let tag_start = cursor + offset;
-        let after_name = tag_start + b"<script".len();
-        let Some(tag_end_offset) = find_bytes(&html[after_name..], b">") else {
-            break;
-        };
-        let tag_end = after_name + tag_end_offset;
-        let attributes = &html[after_name..tag_end];
-        cursor = tag_end + 1;
-        if has_src_attribute(attributes) {
-            continue;
-        }
-        let Some(closing_offset) = find_bytes(&html[cursor..], b"</script") else {
-            break;
-        };
-        let closing = cursor + closing_offset;
-        let content = &html[cursor..closing];
-        hashes.push(format!("'sha256-{}'", base64_standard(&sha256(content))));
-        cursor = closing + b"</script".len();
-    }
-    hashes
-}
-
-/// Read the served SPA index and compute its inline-script hashes.
-///
-/// **DEGRADE PATH (documented + deterministic):** `backend-rs/public/` is not
-/// in git (the Dockerfile copies `frontend/dist/` into it before the image
-/// build), so in a dev tree the file does NOT exist. The hash list is then
-/// EMPTY — no panic, no boot failure — and the CSP is still emitted with
-/// `script-src 'self'` and no hash. In such a deployment the browser blocks
-/// the SPA's inline theme bootstrap (the page still renders; the stored
-/// theme is ignored), which is precisely why the hash is computed from the
-/// file the server ACTUALLY serves rather than hand-written.
-pub fn boot_inline_script_hashes() -> Vec<String> {
-    match std::fs::read(SPA_INDEX_PATH) {
-        Ok(bytes) => inline_script_hashes(&bytes),
-        Err(_) => Vec::new(),
-    }
-}
-
-/// The `Content-Security-Policy` value for the SPA-serving origin.
-///
-/// Scoped to what the SPA actually needs (`54` B7):
-///
-/// ```text
-/// default-src 'self'; script-src 'self' 'sha256-<hash>'; style-src 'self' 'unsafe-inline';
-/// img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' <CORS origins>;
-/// frame-ancestors 'none'; base-uri 'self'; form-action 'self'
-/// ```
-///
-/// * `connect-src` is `'self'` **plus the canonical CORS allowlist** — in the
-///   shipped dev topology the SPA is served by Vite at `http://localhost:5173`
-///   and calls the API at `http://localhost:3001` (cross-origin), so
-///   `'self'` alone would have the browser block every API call.
-/// * `script-src` keeps NEITHER `'unsafe-inline'` NOR `'unsafe-eval'`; the
-///   SPA's inline theme bootstrap is allowed by its **hash**.
-/// * `style-src 'unsafe-inline'` IS required (the frontend uses ~12 inline
-///   `style={{...}}` React props).
-/// * `frame-ancestors 'none'` + `base-uri 'self'` + `form-action 'self'`
-///   close the framing / base-tag / form-target holes.
-pub fn content_security_policy(settings: &config::Settings, script_hashes: &[String]) -> String {
-    let mut script_src = String::from("'self'");
-    for hash in script_hashes {
-        script_src.push(' ');
-        script_src.push_str(hash);
-    }
-    // The SAME canonical list the CORS layer and the CSRF layer use.
-    let mut connect_src = String::from("'self'");
-    for origin in settings.canonical_cors_origins() {
-        connect_src.push(' ');
-        connect_src.push_str(&origin);
-    }
-    format!(
-        "default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data: blob:; font-src 'self' data:; connect-src {connect_src}; \
-         frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
-}
-
-/// Find `needle` in `haystack` (byte-wise).
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .position(|window| window.eq_ignore_ascii_case(needle))
-}
-
-/// Whether a `<script>` tag's attribute list carries a `src` attribute (an
-/// EXTERNAL script — covered by `script-src 'self'`, never hashed).
-fn has_src_attribute(attributes: &[u8]) -> bool {
-    attributes
-        .split(|byte| byte.is_ascii_whitespace())
-        .filter(|token| !token.is_empty())
-        .any(|token| {
-            let name = token.split(|byte| *byte == b'=').next().unwrap_or_default();
-            name.eq_ignore_ascii_case(b"src")
-        })
-}
-
-/// SHA-256 digest of `bytes`.
-fn sha256(bytes: &[u8]) -> Vec<u8> {
-    Sha256::digest(bytes).as_slice().to_vec()
-}
-
-/// Standard base64 (RFC 4648, with padding) — the encoding a CSP `sha256-`
-/// source uses.
-///
-/// Hand-rolled on purpose: the crate may not take a new dependency for one
-/// encoding (the `Cargo.toml` change budget of this task is the `csrf`
-/// feature only), and the implementation is pinned by a unit test against the
-/// well-known SHA-256("") vector.
-fn base64_standard(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let first = u32::from(chunk[0]);
-        let second = u32::from(chunk.get(1).copied().unwrap_or_default());
-        let third = u32::from(chunk.get(2).copied().unwrap_or_default());
-        let triple = (first << 16) | (second << 8) | third;
-        encoded.push(ALPHABET[((triple >> 18) & 0x3f) as usize] as char);
-        encoded.push(ALPHABET[((triple >> 12) & 0x3f) as usize] as char);
-        encoded.push(if chunk.len() > 1 {
-            ALPHABET[((triple >> 6) & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-        encoded.push(if chunk.len() > 2 {
-            ALPHABET[(triple & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-    }
-    encoded
 }
 
 /// Assemble the router. Session sweeper is deliberately NOT spawned here.
@@ -242,9 +82,9 @@ fn base64_standard(bytes: &[u8]) -> String {
 /// 10-architecture.md; axum applies `.layer()` calls inside-out, so the code
 /// below reads innermost-first):
 /// 1. secure-headers `SetResponseHeaderLayer`s — outermost, so 4xx/5xx carry
-///    them (`served-by: rust`, no CSP header matches `helmet(csp:false)`;
-///    prod adds HSTS). Sensitive request headers (`authorization`, `cookie`,
-///    `set-cookie`) are marked here too so no span/debug log can print them.
+///    them (`served-by: rust`; prod adds HSTS). Sensitive request headers
+///    (`authorization`, `cookie`, `set-cookie`) are marked here too so no
+///    span/debug log can print them.
 /// 2. `SetRequestIdLayer(x-request-id)` — even early rejections carry an id.
 /// 3. `TraceLayer` — method + path + status + latency spans. The span reads
 ///    ONLY `x-request-id` (safe); query strings are excluded by recording
@@ -264,28 +104,15 @@ fn base64_standard(bytes: &[u8]) -> String {
 ///    above since T10; T11 hardens its cookie/expiry.)
 ///
 /// Route order: `/api` versioned routers (each with a JSON-404 fallback, so
-/// `/api/*` misses never reach the SPA files) → `/health` + `/ready` (outside
-/// `/api`, never throttled, no auth) → swagger/openapi → static files →
-/// SPA fallback (`public/index.html`, never for `/api*`/swagger/api-docs).
-///
-/// The CSP hash of the SPA's inline theme bootstrap is computed from the
-/// served `public/index.html` at BOOT (see [`boot_inline_script_hashes`]);
-/// pass the hashes in explicitly with [`create_app_with_csp`].
+/// `/api/*` misses are JSON 404) → `/health` + `/ready` (outside `/api`,
+/// never throttled, no auth) → swagger/openapi → API-only JSON-404 fallback
+/// (every other path, including `/`, `/boards`, `/assets/*`, is the shared
+/// problem+json 404). There is no static file service and no SPA rewrite:
+/// the frontend is deployed to its own origin (docs/deployment.md).
 pub fn create_app(state: AppState) -> Router {
-    create_app_with_csp(state, boot_inline_script_hashes())
-}
-
-/// [`create_app`], with the CSP's inline-script hashes supplied by the
-/// caller.
-///
-/// `main.rs` computes them at boot from the file the server actually serves
-/// (and logs them); this entry point exists so the computation has exactly
-/// ONE owner and the tests can pin a fixture's hashes.
-pub fn create_app_with_csp(state: AppState, script_hashes: Vec<String>) -> Router {
     let v1 = api_router(&state.settings);
     let cors = cors_layer(&state.settings);
     let csrf = csrf_layer(state.settings.canonical_cors_origins());
-    let policy = content_security_policy(&state.settings, &script_hashes);
     let is_production = state.settings.is_production();
     // Swagger UI shell only: the spec itself is served byte-identically from
     // the committed `openapi.json` by `openapi_json` below (CI diffs them),
@@ -294,19 +121,13 @@ pub fn create_app_with_csp(state: AppState, script_hashes: Vec<String>) -> Route
     let swagger: Router<AppState> = SwaggerUi::new("/swagger-ui")
         .config(SwaggerConfig::from("/api-docs/openapi.json"))
         .into();
-    // Static files first, SPA `index.html` on miss. `ServeDir::fallback`
-    // (not `not_found_service`, which would force a 404 status) preserves the
-    // fallback response status.
-    let spa = ServeDir::new("public")
-        .call_fallback_on_method_not_allowed(true)
-        .fallback(Router::new().fallback(spa_index));
 
     let router = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api-docs/openapi.json", get(openapi_json))
         .merge(swagger)
-        .fallback_service(spa);
+        .fallback(api_only_fallback);
     // Versioned routers + deprecated alias (same handlers, NOT redirects).
     let router = mount_versioned(router, v1);
     // [8] session management, innermost of the shared stack (closest to
@@ -356,7 +177,7 @@ pub fn create_app_with_csp(state: AppState, script_hashes: Vec<String>) -> Route
         // trusted `Origin`; no `Sec-Fetch-Site` + no `Origin` passes
         // (curl/proxy/native); an `Origin` whose authority equals the
         // request's effective host passes (the safety net that makes an
-        // EMPTY production allowlist workable for a same-origin SPA).
+        // EMPTY production allowlist workable).
         //
         // PROXY CAVEAT: the `Origin`/`Host` fallback degrades if a reverse
         // proxy REWRITES `Host` (tower-http's own "Deployment caveat") —
@@ -413,27 +234,6 @@ pub fn create_app_with_csp(state: AppState, script_hashes: Vec<String>) -> Route
         .layer(SetResponseHeaderLayer::overriding(
             header::REFERRER_POLICY,
             header::HeaderValue::from_static("strict-origin-when-cross-origin"),
-        ))
-        // [0] the CSP header — OUTERMOST of the shared stack, so it also
-        // lands on 4xx/5xx responses (a 404 must carry it too).
-        .layer(axum::middleware::from_fn(
-            move |request: Request, next: axum::middleware::Next| {
-                let policy = policy.clone();
-                async move {
-                    // The Swagger UI is a DEVELOPER surface, not the SPA: it
-                    // ships its own scripts/styles and is not served in
-                    // production, so it is excluded from the policy rather
-                    // than given a second, looser one.
-                    let excluded = request.uri().path().starts_with("/swagger-ui");
-                    let mut response = next.run(request).await;
-                    if !excluded && let Ok(value) = HeaderValue::from_str(&policy) {
-                        response
-                            .headers_mut()
-                            .insert(HeaderName::from_static("content-security-policy"), value);
-                    }
-                    response
-                }
-            },
         ))
         // [T60] HTTP metrics, OUTERMOST of the shared stack (applied after
         // routing, so `MatchedPath` is still visible; measured latency
@@ -748,7 +548,7 @@ async fn metrics_endpoint(State(state): State<AppState>) -> Response {
 /// practice and keeps router construction total).
 ///
 /// The allowlist is the **canonical** one (`Settings::canonical_cors_origins`)
-/// — the same list the CSRF layer trusts and the CSP's `connect-src` names.
+/// — the same list the CSRF layer trusts.
 fn cors_layer(settings: &config::Settings) -> CorsLayer {
     let origins: Vec<HeaderValue> = settings
         .canonical_cors_origins()
@@ -781,8 +581,7 @@ fn cors_layer(settings: &config::Settings) -> CorsLayer {
 /// algorithm step for step.
 ///
 /// The trusted-origin set is the **canonical** CORS allowlist (the same list
-/// the CORS layer allows and the CSP's `connect-src` names) — one list, three
-/// consumers, so they can never disagree.
+/// the CORS layer allows) — one list, two consumers, so they can never disagree.
 ///
 /// The rejection response is the SHARED problem+json renderer through the
 /// EXISTING [`AppError::Forbidden`] mapping: the cross-origin rejection is
@@ -922,29 +721,11 @@ pub async fn openapi_json() -> impl IntoResponse {
     )
 }
 
-/// SPA fallback (runs only when no route or static file matched): `/api*`
-/// + swagger/api-docs misses become JSON 404 (excluded, never rewritten);
-/// anything else serves `public/index.html` when the frontend build is
-/// present (dev serves the frontend via Vite, so a missing build is a 404,
-/// not a 500). Only `GET`/`HEAD` serve the file; other methods 404.
-#[tracing::instrument(skip(uri))]
-async fn spa_index(method: Method, uri: Uri) -> impl IntoResponse {
-    let path = uri.path();
-    if method != Method::GET && method != Method::HEAD {
-        return AppError::NotFound.into_response();
-    }
-    if path == "/api"
-        || path.starts_with("/api/")
-        || path == "/swagger-ui"
-        || path.starts_with("/swagger-ui/")
-        || path.starts_with("/api-docs")
-    {
-        return AppError::NotFound.into_response();
-    }
-    match tokio::fs::read("public/index.html").await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], bytes).into_response(),
-        Err(_) => AppError::NotFound.into_response(),
-    }
+/// API-only fallback: every unmatched path is the shared problem+json 404.
+/// There is no static file service and no SPA rewrite — the frontend is
+/// deployed to its own origin (docs/deployment.md).
+async fn api_only_fallback() -> impl IntoResponse {
+    AppError::NotFound.into_response()
 }
 
 /// Test-only helpers shared by the crate's unit tests.
@@ -1040,82 +821,6 @@ mod tests {
 
     fn probe_state() -> AppState {
         build_state(config::Settings::default())
-    }
-
-    /// The hand-rolled base64 encoder is pinned against the well-known
-    /// vectors — a CSP `sha256-` source is only as good as this encoding.
-    #[test]
-    fn base64_matches_the_known_vectors() {
-        assert_eq!(base64_standard(b""), "");
-        assert_eq!(base64_standard(b"a"), "YQ==");
-        assert_eq!(base64_standard(b"ab"), "YWI=");
-        assert_eq!(base64_standard(b"abc"), "YWJj");
-        // SHA-256("") — the canonical RFC 6234 vector.
-        assert_eq!(
-            base64_standard(&sha256(b"")),
-            "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-        );
-        assert_eq!(
-            base64_standard(&sha256(b"abc")),
-            "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
-        );
-    }
-
-    /// The inline-script scanner: the INLINE script is hashed, the external
-    /// one (`src=`) is not (it is covered by `script-src 'self'`).
-    #[test]
-    fn inline_script_hashes_cover_only_inline_scripts() {
-        let html = br#"<html><head>
-             <script>
-               window.__theme = 'dark';
-             </script>
-             <script type="module" src="/assets/main.js"></script>
-             </head></html>"#;
-        let hashes = inline_script_hashes(html);
-        assert_eq!(
-            hashes.len(),
-            1,
-            "only the inline script is hashed: {hashes:?}"
-        );
-        assert!(hashes[0].starts_with("'sha256-"), "{hashes:?}");
-        // The hash covers the EXACT bytes between the tags.
-        let expected = format!(
-            "'sha256-{}'",
-            base64_standard(&sha256(
-                b"\n               window.__theme = 'dark';\n             "
-            ))
-        );
-        assert_eq!(hashes[0], expected);
-    }
-
-    /// A document with no inline script yields NO hash (the CSP then carries
-    /// `script-src 'self'` alone).
-    #[test]
-    fn inline_script_hashes_are_empty_without_inline_scripts() {
-        assert!(inline_script_hashes(b"<html><body></body></html>").is_empty());
-        assert!(
-            inline_script_hashes(b"<script type=\"module\" src=\"/a.js\"></script>").is_empty()
-        );
-    }
-
-    /// The CSP's `connect-src` names the CANONICAL allowlist — the same list
-    /// the CORS layer allows and the cross-origin layer trusts.
-    #[test]
-    fn content_security_policy_names_the_canonical_allowlist() {
-        let settings = config::Settings {
-            cors_origins: "http://localhost:5173,https://app.example.com".to_string(),
-            ..config::Settings::default()
-        };
-        let policy = content_security_policy(&settings, &["'sha256-abc'".to_string()]);
-        assert!(
-            policy.contains("connect-src 'self' http://localhost:5173 https://app.example.com"),
-            "{policy}"
-        );
-        assert!(
-            policy.contains("script-src 'self' 'sha256-abc'"),
-            "{policy}"
-        );
-        assert!(!policy.contains("'unsafe-eval'"), "{policy}");
     }
 
     /// Dual-mount proof on the REAL [`mount_versioned`]: one probe handler

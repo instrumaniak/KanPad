@@ -751,6 +751,10 @@ resource handlers look like an oversight rather than a decision.
 
 ### B7 — Missing CSRF/Origin defence + no CSP (P0 — new finding)
 
+> **CSP half superseded by T008 (2026-11-09):** the API no longer serves a
+> document, so no CSP is emitted. The CSRF half (Origin check) still applies
+> and is owned by T007.
+
 **CSRF.** The API authenticates with a **cookie** (`credentials: 'include'`),
 so a browser attaches the session cookie to cross-site requests.
 `SameSite=Lax` blocks it for cross-site **POST/PATCH/DELETE** (Lax only sends

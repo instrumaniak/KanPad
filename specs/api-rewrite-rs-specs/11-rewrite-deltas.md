@@ -227,8 +227,9 @@ Neither change touches the wire contract (the cookie name is not in
   (lowercase scheme+host, the scheme's default port stripped, no trailing
   slash, no path/query/fragment, no opaque origin) and a non-canonical entry
   is a **boot error naming the offending entry**; one canonical list feeds
-  `CorsLayer::allow_origin`, `CsrfLayer::add_trusted_origin` and the CSP's
-  `connect-src`; (ii) the rejection is rendered through the shared
+  `CorsLayer::allow_origin` and `CsrfLayer::add_trusted_origin` (the CSP
+  `connect-src` consumer was removed in T008); (ii) the rejection is rendered
+  through the shared
   `problem_response` + the **existing** `AppError::Forbidden` mapping, so
   **no new problem-type URI** is introduced — the change is contract-neutral;
   (iii) the `Host`-rewrite proxy caveat is recorded in the runbook.

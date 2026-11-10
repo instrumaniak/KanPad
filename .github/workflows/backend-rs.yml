@@ -588,13 +588,6 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Upload frontend dist (feeds docker public/)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: frontend-dist
-          path: frontend/dist
-          if-no-files-found: error
-
   # --------------------------------------- docker build + :3001 e2e (pinned)
   docker-e2e:
     name: docker build + vitest + playwright pinned to :3001
@@ -615,12 +608,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Populate backend-rs/public from frontend dist
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: frontend-dist
-          path: backend-rs/public
 
       - name: Dockerfile contract gates (no DATABASE_URL, locked build)
         working-directory: backend-rs
@@ -649,7 +636,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$CODE" | grep -q 'COPY .sqlx' || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
-          printf '%s\n' "$CODE" | grep -Eq 'COPY .*public/' || { echo 'FAIL: Dockerfile must COPY public/ (SPA fallback)'; exit 1; }
+          if printf '%s\n' "$CODE" | grep -Eq 'COPY .*public/'; then echo 'FAIL: Dockerfile must NOT COPY public/ (API-only, T008)'; exit 1; fi
           echo 'OK: Dockerfile contract gates pass'
 
       - name: Set up Docker Buildx
@@ -698,8 +685,8 @@ jobs:
           curl -fsS http://localhost:3001/api-docs/openapi.json > /tmp/openapi.3001.json
           diff -u backend-rs/openapi.json /tmp/openapi.3001.json
           echo 'OK: /api-docs/openapi.json matches committed openapi.json'
-          docker exec kanpad-rust-ci test -f /app/public/index.html
-          echo 'OK: SPA index present at /app/public/index.html'
+          docker exec kanpad-rust-ci test ! -e /app/public
+          echo 'OK: no /app/public in API-only image'
           docker stop kanpad-rust-ci && docker rm kanpad-rust-ci
 
       - name: Setup node

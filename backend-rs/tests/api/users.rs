@@ -11,7 +11,7 @@
 //! suites (`auth_register`, `auth_session`) — this file asserts ONLY the two
 //! T13-owned facts, with no DB and no duplicate endpoint coverage:
 //! 1. every `/api/users` path 404s from the router (intentional, JSON
-//!    problem — never the SPA fallback); 2. the internal helper module
+//!    problem); 2. the internal helper module
 //!    resolves to the auth-store owner (re-export identity, compile-checked).
 //!
 //! DB-free by design: absence is a routing fact (`test_app()` boots without

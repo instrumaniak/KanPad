@@ -11,13 +11,9 @@
 //!    (it always accepts gzip), so this only affects exotic clients — but
 //!    "only affects exotic clients" is exactly the kind of assumption that
 //!    rots, so the behaviour is pinned by a test.
-//! 2. **`ServeDir` rejects a trailing slash** on a file path (404 instead of
-//!    serving the file). The SPA is served through
-//!    `ServeDir::new("public").fallback(...)`, so a request for
-//!    `/index.html/` must NOT serve the file.
 //!
 //! DB-free: none of these touch a handler — the compression layer answers
-//! before the router, and the SPA fallback is a static-file path.
+//! before the router.
 
 use axum::{
     body::Body,
@@ -85,18 +81,5 @@ async fn a_client_without_accept_encoding_is_served() {
         response.status().is_success(),
         "no Accept-Encoding means identity is acceptable, got {}",
         response.status()
-    );
-}
-
-/// A **trailing slash** on a file path must NOT serve the file
-/// (tower-http 0.7's `services` change). The SPA fallback is not a licence
-/// to serve `/index.html/` either.
-#[tokio::test]
-async fn a_trailing_slash_does_not_serve_the_file() {
-    let response = get_without_accept_encoding("/index.html/").await;
-    assert_ne!(
-        response.status(),
-        StatusCode::OK,
-        "a trailing slash must not serve the file (tower-http 0.7 rejects it)"
     );
 }

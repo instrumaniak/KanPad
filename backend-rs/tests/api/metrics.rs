@@ -132,7 +132,7 @@ async fn a_scrape_does_not_record_itself() {
 }
 
 /// `/metrics` is served ONLY by the separate [`backend_rs::metrics_router`]:
-/// the main app (with its SPA fallback) must 404 it — fail closed.
+/// the main app must 404 it — fail closed.
 #[tokio::test]
 async fn metrics_are_never_mounted_on_the_main_app() {
     let (status, _, _) = send(

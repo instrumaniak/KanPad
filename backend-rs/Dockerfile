@@ -18,10 +18,11 @@
 #   * DATABASE_URL is NEVER baked in (no ARG/ENV for it anywhere below);
 #     it is a runtime-only env (compose.yaml / CI `docker run -e`).
 #
-# SPA contract (10-architecture.md SPA fallback; serving code lands in T05):
-#   * `public/` is NOT in git. CI/vite build copies frontend/dist/ to
-#     backend-rs/public/ BEFORE `docker build`; the runtime stage copies it
-#     to /app/public (ServeDir::new("public/") resolves against WORKDIR).
+# API-only contract (T008): the backend serves NO frontend asset. The SPA is
+# deployed to its own origin (kanpad.raziur.com) by the static host; the API
+# is reached cross-origin at api-kanpad-rs.raziur.com. There is no `public/`
+# directory and no ServeDir. Only /health, /ready, /api/v1/*, /api/*,
+# /api-docs/openapi.json, /swagger-ui* and /metrics (opt-in) are served.
 #   * Serves :3001 by default (PORT env, default 3001 in Settings).
 
 # The builder base moves WITH the toolchain pin (rust-toolchain.toml =
@@ -70,8 +71,6 @@ RUN useradd --create-home --shell /usr/sbin/nologin app
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/target/release/backend-rs /usr/local/bin/backend-rs
-# Frontend dist/ -> public/ (populated by CI before `docker build`).
-COPY --chown=app:app public/ ./public/
 
 USER app
 

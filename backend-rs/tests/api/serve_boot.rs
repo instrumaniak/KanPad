@@ -95,7 +95,7 @@ fn http_get(port: u16, path: &str) -> Option<(u16, String)> {
 
 /// Poll `GET /health` until the degraded server answers (or the budget
 /// expires) — the child's boot path is: settings load → probe (warn) →
-/// sweeper → CSP hashes → bind. A 1045 probe is ONE attempt (permanent),
+/// sweeper → bind. A 1045 probe is ONE attempt (permanent),
 /// so the budget is generous only against slow CI.
 fn wait_for_health(port: u16, budget: Duration) -> u16 {
     let started = Instant::now();

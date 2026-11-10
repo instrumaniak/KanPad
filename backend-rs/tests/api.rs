@@ -63,6 +63,8 @@ mod notes;
 mod openapi_snapshot;
 #[path = "api/projects.rs"]
 mod projects;
+#[path = "api/proxy_headers.rs"]
+mod proxy_headers;
 #[path = "api/serve_boot.rs"]
 mod serve_boot;
 #[path = "api/sql_portability.rs"]

@@ -37,6 +37,7 @@ use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},
 };
+use backend_rs::config::AppEnv;
 use backend_rs::{build_state, config::Settings, create_app};
 use tower::ServiceExt;
 
@@ -439,4 +440,52 @@ async fn one_canonical_list_feeds_cors_cross_origin_and_csrf() {
         StatusCode::NOT_FOUND,
         "the cross-origin layer must trust the canonical origin"
     );
+}
+
+#[tokio::test]
+async fn production_canonical_origin_feeds_cors_and_csrf_without_localhost() {
+    let settings = Settings {
+        app_env: AppEnv::Production,
+        hash_cost: 2,
+        cors_origins: "https://kanpad.raziur.com".to_string(),
+        ..test_settings()
+    };
+    let app = create_app(build_state(settings));
+
+    // Preflight echoes the canonical origin.
+    let preflight = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/api/v1/cards/1/labels/2")
+                .header(header::ORIGIN, "https://kanpad.raziur.com")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let allow_origin = preflight
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(allow_origin, "https://kanpad.raziur.com");
+
+    // Cross-origin trusted POST passes the CSRF layer.
+    let request = probe(
+        "POST",
+        Some("cross-site"),
+        Some("https://kanpad.raziur.com"),
+        None,
+    );
+    let (status, _, _) = send(app.clone(), request).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // No CSP on any response.
+    let request = Request::get("/health").body(Body::empty()).unwrap();
+    let (status, headers, _) = send(app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get("content-security-policy").is_none());
 }

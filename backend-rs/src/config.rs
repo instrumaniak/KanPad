@@ -639,6 +639,7 @@ impl Settings {
                     db_name,
                     db_username = options.get_username(),
                     db_source,
+                    cors_origins = ?self.canonical_cors_origins(),
                     "boot configuration"
                 );
             }
@@ -649,6 +650,7 @@ impl Settings {
             None => tracing::warn!(
                 app_env = %self.app_env,
                 db_source,
+                cors_origins = ?self.canonical_cors_origins(),
                 "boot configuration: the database URL did not parse, so the database identity is \
                  NOT logged — the pool falls back to an unroutable target and `/ready` will \
                  report 503"
@@ -669,8 +671,8 @@ impl Settings {
     }
 
     /// The **canonical** CORS allowlist — the SINGLE source of truth for
-    /// `CorsLayer::allow_origin`, `CsrfLayer::add_trusted_origin` AND the
-    /// CSP's `connect-src` (three consumers, one list).
+    /// `CorsLayer::allow_origin` and `CsrfLayer::add_trusted_origin` (two
+    /// consumers, one list).
     ///
     /// Every entry is rendered in the exact form a **browser** sends in an
     /// `Origin` header, because both `CorsLayer` and `CsrfLayer` match
@@ -874,10 +876,24 @@ impl Settings {
                 }
             }
         }
-        if self.is_production() && origins.is_empty() {
-            return Err(ConfigError::Invalid(
-                "CORS_ORIGINS must not be empty in production (fail closed: deny-all)".to_string(),
-            ));
+        if self.is_production() {
+            if origins.is_empty() {
+                return Err(ConfigError::Invalid(
+                    "CORS_ORIGINS must not be empty in production (fail closed: deny-all)"
+                        .to_string(),
+                ));
+            }
+            for origin in &origins {
+                if let Ok(canonical) = canonical_origin(origin) {
+                    let host = origin_host(&canonical).unwrap_or_default();
+                    if is_loopback_host(&host) {
+                        return Err(ConfigError::Invalid(format!(
+                            "CORS_ORIGINS must not contain a loopback origin in production: \
+                             {origin:?}"
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -894,9 +910,9 @@ impl Settings {
 ///
 /// This function returns exactly that rendering for a well-formed entry, or
 /// an actionable reason why the entry cannot be one. It is the single
-/// definition of "canonical" for the whole service: the CORS allowlist, the
-/// CSRF trusted-origin set and the CSP's `connect-src` are all derived from
-/// it, so they can never disagree.
+/// definition of "canonical" for the whole service: the CORS allowlist and
+/// the CSRF trusted-origin set are both derived from it, so they can never
+/// disagree.
 ///
 /// The scheme's default port is **stripped** rather than rejected here: the
 /// caller ([`Settings::validate`]) compares the canonical rendering with the
@@ -983,6 +999,20 @@ fn parse_port(raw: &str) -> Result<u16, String> {
         return Err("the port must not have leading zeros".to_string());
     }
     Ok(port)
+}
+
+/// Extract the host portion of a canonical `scheme://host[:port]` origin.
+fn origin_host(origin: &str) -> Option<String> {
+    let (_, rest) = origin.split_once("://")?;
+    let (host, _) = split_host_port(rest).ok()?;
+    Some(host.trim_matches(|c| c == '[' || c == ']').to_string())
+}
+
+/// Whether `host` is a loopback address (`localhost`, `127.0.0.1`, `::1`).
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+        || host.eq_ignore_ascii_case("::1")
 }
 
 #[cfg(test)]
@@ -1129,7 +1159,11 @@ mod tests {
     fn session_cookie_never_uses_the_express_default() {
         for env in ["development", "test", "production"] {
             let vars = if env == "production" {
-                with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
+                with_overrides(&[
+                    ("APP_ENV", env),
+                    ("HASH_COST", "2"),
+                    ("CORS_ORIGINS", "https://app.example.com"),
+                ])
             } else {
                 with_overrides(&[("APP_ENV", env)])
             };
@@ -1162,7 +1196,11 @@ mod tests {
         }
         // Production needs HASH_COST>=2 to get past the cost floor.
         {
-            let vars = with_overrides(&[("APP_ENV", "production"), ("HASH_COST", "2")]);
+            let vars = with_overrides(&[
+                ("APP_ENV", "production"),
+                ("HASH_COST", "2"),
+                ("CORS_ORIGINS", "https://app.example.com"),
+            ]);
             Settings::from_pairs(&vars).expect("production APP_ENV must load");
         }
         let vars = with_overrides(&[("PORT", "0")]);
@@ -1353,6 +1391,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn production_rejects_loopback_cors_origin() {
+        for entry in [
+            "http://localhost:5173",
+            "https://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://127.0.0.1:5173",
+            "http://[::1]:5173",
+            "https://[::1]:5173",
+        ] {
+            let vars = with_overrides(&[
+                ("APP_ENV", "production"),
+                ("HASH_COST", "2"),
+                ("CORS_ORIGINS", entry),
+            ]);
+            let err = Settings::from_pairs(&vars)
+                .expect_err("a loopback CORS origin must fail boot in production");
+            let message = err.to_string();
+            assert!(
+                message.contains("CORS_ORIGINS"),
+                "the error must name the key: {message}"
+            );
+            assert!(
+                message.contains(entry),
+                "the error must name the offending entry {entry:?}: {message}"
+            );
+        }
+        // Dev/test still accept the loopback default.
+        let vars = with_overrides(&[("CORS_ORIGINS", "http://localhost:5173")]);
+        Settings::from_pairs(&vars).expect("dev loopback CORS origin must load");
+    }
+
     /// The canonicalizer itself: a canonical entry is returned unchanged, and
     /// the non-canonical variants render the form a browser actually sends.
     #[test]
@@ -1398,7 +1468,7 @@ mod tests {
     }
 
     /// The canonical list is the SINGLE source of truth for the CORS layer,
-    /// the CSRF trusted set and the CSP's `connect-src`.
+    /// the CSRF trusted set.
     #[test]
     fn canonical_cors_origins_is_the_normalized_list() {
         let vars = with_overrides(&[(
@@ -1592,7 +1662,11 @@ mod tests {
         ] {
             // Production refuses HASH_COST<2 at boot, so pin t=2 there.
             let vars = if env == "production" {
-                with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
+                with_overrides(&[
+                    ("APP_ENV", env),
+                    ("HASH_COST", "2"),
+                    ("CORS_ORIGINS", "https://app.example.com"),
+                ])
             } else {
                 with_overrides(&[("APP_ENV", env)])
             };
@@ -1703,6 +1777,7 @@ mod tests {
                 ("APP_ENV", app_env),
                 // Production refuses HASH_COST<2 at boot.
                 ("HASH_COST", "2"),
+                ("CORS_ORIGINS", "https://app.example.com"),
                 ("DB_PASSWORD", DB_PASSWORD),
                 ("DB_NAME", "kanpad_secret_probe"),
                 ("DB_HOST", "secret-host.internal"),

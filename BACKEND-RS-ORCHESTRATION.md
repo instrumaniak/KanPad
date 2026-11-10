@@ -882,6 +882,7 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
 - **The unmigrated-DB prediction held:** the container booted against `kanpad_ci` with no migrations and the smoke passed (`/health` DB-free, `openapi.json` embedded, `/app/public/index.html` present — **superseded by T008**, which removes `/app/public` entirely). Still true: any future smoke that touches `/api/v1/*` needs `migrate run` in that job first.
 
 > T008 note: the Rust cache paths (`CARGO_HOME`/`CARGO_TARGET_DIR`) and `DATABASE_URL` guidance above still apply unchanged — only the served surface changed (API-only, no `public/`).
+> T007 note: production requires `TRUSTED_PROXIES=127.0.0.1`, `CORS_ORIGINS=https://kanpad.raziur.com`; proxy must append XFF and forward Host unchanged. See `docs/deployment.md`.
 - **Remaining CI noise (non-blocking):** GitHub annotations only — Node 20 deprecation for the SHA-pinned actions, and the `ubuntu-latest` → Ubuntu 26 migration notice (2026-10-19). Neither fails a job.
 
 ## MariaDB leg (T006)

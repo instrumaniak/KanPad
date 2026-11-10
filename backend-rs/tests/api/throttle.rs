@@ -223,6 +223,33 @@ async fn trusted_peer_honors_xff_as_client_ip() {
 }
 
 #[tokio::test]
+async fn two_trusted_xff_clients_exhaust_independent_auth_buckets() {
+    let app = throttle_app(1000, 2, "10.30.0.9");
+    for _ in 0..2 {
+        let (status, _, _) = send_ref(
+            &app,
+            login_request("10.30.0.9", Some("203.0.113.20".to_string())),
+        )
+        .await;
+        assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
+    let (status, _, _) = send_ref(
+        &app,
+        login_request("10.30.0.9", Some("203.0.113.20".to_string())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+    // A distinct client is unaffected.
+    let (status, _, _) = send_ref(
+        &app,
+        login_request("10.30.0.9", Some("203.0.113.21".to_string())),
+    )
+    .await;
+    assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn logout_and_me_exempt_from_auth_limiter() {
     let app = throttle_app(1000, 5, "");
     // Six anonymous logouts: never 429 (logout is unthrottled by the auth

@@ -43,3 +43,36 @@ host returns the SPA's `index.html`.
 - No `content-security-policy` header on any API response.
 - Cookie (`__Host-kanpad.sid`) is delivered cross-origin (same-site
   `raziur.com`, `SameSite=Lax` + `credentials: 'include'`).
+
+## Required production environment
+
+| Variable | Required value / notes |
+|---|---|
+| `APP_ENV` | `production` |
+| `CORS_ORIGINS` | `https://kanpad.raziur.com` (canonical; feeds CORS + CSRF) |
+| `TRUSTED_PROXIES` | `127.0.0.1` (exactly the Node hop) |
+| `SESSION_SECRET` | ≥32 bytes |
+| `HASH_COST` | ≥2 |
+| `DB_*` / `DATABASE_URL` | production database |
+| `DB_STARTUP_CHECK` | `require` (default) |
+| `REGISTRATION_ENABLED` | as needed |
+| `PORT` | API port |
+
+## Proxy contract (hard requirements)
+
+- LiteSpeed must be in an **append** mode ("Trusted IP Only" / "Use Last IP")
+  so the peer IP is appended to `X-Forwarded-For`. Never "Keep Header from
+  Trusted IP" (pass-through).
+- The Node wrapper (`scripts/app-proxy.js`) must forward `Host` unchanged,
+  append to `X-Forwarded-For`, and preserve `X-Forwarded-Proto` (falling back
+  to `https`).
+- If LiteSpeed runs on a non-loopback interface, add that IP to
+  `TRUSTED_PROXIES`.
+
+## Post-deploy smoke (T007)
+
+1. `curl -sSI …/health | grep -ci content-security-policy` → `0`; `served-by: rust` present.
+2. `OPTIONS /api/v1/auth/login` with `Origin: https://kanpad.raziur.com` → ACAO + credentials; with `https://evil.example` → no ACAO.
+3. Six logins from two different clients → each gets 5; the 6th of one does not 429 the other.
+4. `POST /api/auth/register` with `{}` → `400` problem+json.
+5. `GET https://api-kanpad-rs.raziur.com/boards` → `404 application/problem+json`.

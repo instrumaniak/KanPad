@@ -750,3 +750,132 @@ async fn auth_session_full_flow(pool: MySqlPool) {
     // suites with 1049). Leftover rows are harmless: per-test DBs are
     // fresh every process and no suite asserts store emptiness.
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn login_padded_email_authenticates(pool: MySqlPool) {
+    let app = || app_with_env(&pool, None, None);
+
+    let (status, _, bytes) = send(
+        app(),
+        post(
+            "/api/v1/auth/register",
+            "  PadUser@Example.COM ",
+            "Str0ng!pass",
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "register: {}", json_of(&bytes));
+
+    let (status, _, bytes) = send(
+        app(),
+        post(
+            "/api/v1/auth/login",
+            "  PADUSER@EXAMPLE.COM  ",
+            "Str0ng!pass",
+            None,
+        ),
+    )
+    .await;
+    let body = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "login: {body}");
+    assert_eq!(body["data"]["email"], "paduser@example.com");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn login_rejection_shape(pool: MySqlPool) {
+    let app = app_with_env(&pool, None, None);
+
+    // Missing fields -> 400 invalid-json.
+    let req = Request::post("/api/v1/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let (status, headers, bytes) = send(app.clone(), req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body = json_of(&bytes);
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "invalid-json",
+        "login missing fields",
+    );
+
+    // Malformed JSON -> 400 invalid-json.
+    let req = Request::post("/api/v1/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{bad"))
+        .unwrap();
+    let (status, headers, bytes) = send(app.clone(), req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body = json_of(&bytes);
+    assert_problem(status, &headers, &body, "invalid-json", "login malformed");
+
+    // Wrong content type -> 415 invalid-json.
+    let req = Request::post("/api/v1/auth/login")
+        .body(Body::from("{}"))
+        .unwrap();
+    let (status, headers, bytes) = send(app.clone(), req).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    let body = json_of(&bytes);
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "invalid-json",
+        "login wrong content type",
+    );
+
+    // Over-limit body -> 400 invalid-json.
+    let big = "a".repeat(3 * 1024 * 1024);
+    let payload = format!(r#"{{"email":"big@example.com","password":"{}"}}"#, big);
+    let req = Request::post("/api/v1/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(payload))
+        .unwrap();
+    let (status, headers, bytes) = send(app, req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body = json_of(&bytes);
+    assert_problem(status, &headers, &body, "invalid-json", "login over-limit");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_store_failure_returns_observable_5xx(pool: MySqlPool) {
+    let app = app_with_env(&pool, None, None);
+
+    let (status, _, _) = send(
+        app.clone(),
+        post(
+            "/api/v1/auth/register",
+            "fail@example.com",
+            "Str0ng!pass",
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    sqlx::query("DROP TABLE `sessions`")
+        .execute(&pool)
+        .await
+        .expect("drop sessions");
+
+    let req = post(
+        "/api/v1/auth/login",
+        "fail@example.com",
+        "Str0ng!pass",
+        None,
+    );
+    let (status, headers, _) = send(app, req).await;
+    assert!(status.is_server_error(), "expected 5xx, got {status}");
+    assert!(
+        headers.contains_key("x-request-id"),
+        "5xx must carry x-request-id"
+    );
+    assert_eq!(
+        headers.get("served-by").map(|v| v.to_str().unwrap()),
+        Some("rust")
+    );
+    assert!(headers.get("content-security-policy").is_none());
+}

@@ -33,6 +33,7 @@ The backend is rewritten from node.js to rust. The spec files related to that:
 - after implementation check for errors, run tests, fix linting or type check error
 - Follow project coding conventions & community best practices. Frontend conventions: `frontend/CONVENTIONS.md`; Rust test harness: `backend-rs/tests/README.md`.
 - add the lessons you learned while implementing tasks & fixing issues to `docs/lessons/*.md` (dated, tagged) or the relevant `specs/tasks/Txxx-*.md`; promote to a standing rule in this file only when it changes behavior.
+- T007: a reverse proxy that overwrites `X-Forwarded-For` collapses per-IP throttling into one global bucket; one canonical origin list feeds CORS and CSRF; proxies must forward `Host` unchanged; a `422 text/plain` on one route family signals an extractor bypass. See `specs/tasks/T007-...md` §Notes 4.
 - DO NOT git commit without asking & confirming first. In case you are given approval, follow the Git Commit Message Guidelines.
 
 ## Git Commit Message Guidelines

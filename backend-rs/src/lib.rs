@@ -344,8 +344,8 @@ fn per_minute_period(per_min: u32) -> Duration {
 /// T30 client-IP key extractor: peer [`ConnectInfo`] by default;
 /// `X-Forwarded-For` honored ONLY when the peer is listed in
 /// `TRUSTED_PROXIES` (default empty = never trust — direct-to-`:3001` spoof
-/// defense). Trusted entries match exact IPs or IPv4 CIDRs; the leftmost
-/// `X-Forwarded-For` entry is the client.
+/// defense). Trusted entries match exact IPs or IPv4 CIDRs; the rightmost
+/// non-trusted `X-Forwarded-For` entry is the client.
 ///
 /// Requests without `ConnectInfo` (in-process `oneshot` probes that never
 /// passed through hyper) share one fallback bucket instead of failing:
@@ -379,7 +379,7 @@ impl KeyExtractor for ClientIpExtractor {
             .trusted
             .iter()
             .any(|entry| proxy_entry_matches(entry, peer))
-            && let Some(forwarded) = first_forwarded_ip(req.headers())
+            && let Some(forwarded) = forwarded_client_ip(req.headers(), &self.trusted)
         {
             return Ok(forwarded);
         }
@@ -387,13 +387,31 @@ impl KeyExtractor for ClientIpExtractor {
     }
 }
 
-/// Leftmost `X-Forwarded-For` entry when it parses as an IP.
-fn first_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|list| list.split(',').next())
-        .and_then(|first| first.trim().parse().ok())
+/// Rightmost non-trusted `X-Forwarded-For` entry that parses as an IP.
+///
+/// Walks the append-only XFF list right-to-left, skipping entries that are
+/// themselves in `TRUSTED_PROXIES` (the proxy hops) and any entry that does
+/// not parse as an IP. Returns `None` when no usable client entry remains,
+/// so the caller falls back to the peer address.
+fn forwarded_client_ip(headers: &HeaderMap, trusted: &[String]) -> Option<IpAddr> {
+    let list = headers.get("x-forwarded-for")?.to_str().ok()?;
+    for entry in list.split(',').rev() {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let Ok(ip) = entry.parse::<IpAddr>() else {
+            continue;
+        };
+        if trusted
+            .iter()
+            .any(|trusted_entry| proxy_entry_matches(trusted_entry, ip))
+        {
+            continue;
+        }
+        return Some(ip);
+    }
+    None
 }
 
 /// A `TRUSTED_PROXIES` entry (exact IP or IPv4 CIDR) against the peer IP.

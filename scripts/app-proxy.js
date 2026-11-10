@@ -44,11 +44,15 @@ async function startServer() {
 
   // Create reverse proxy
   const server = http.createServer((clientReq, clientRes) => {
+    const forwardedFor = [clientReq.headers['x-forwarded-for'], clientReq.socket.remoteAddress]
+      .filter(Boolean)
+      .join(', ');
+
     const headers = {
       ...clientReq.headers,
-      host: `127.0.0.1:${APP_SERVER_PORT}`,
-      'x-forwarded-for': clientReq.socket.remoteAddress,
-      'x-forwarded-proto': clientReq.socket.encrypted ? 'https' : 'http',
+      'x-forwarded-for': forwardedFor,
+      'x-forwarded-proto': clientReq.headers['x-forwarded-proto'] || 'https',
+      'x-forwarded-host': clientReq.headers.host || '',
     };
 
     const proxy = http.request(
@@ -76,12 +80,21 @@ async function startServer() {
 
   // WebSocket support
   server.on('upgrade', (req, socket, head) => {
+    const forwardedFor = [req.headers['x-forwarded-for'], req.socket.remoteAddress]
+      .filter(Boolean)
+      .join(', ');
+
     const proxy = http.request({
       hostname: '127.0.0.1',
       port: APP_SERVER_PORT,
       method: req.method,
       path: req.url,
-      headers: { ...req.headers, host: `127.0.0.1:${APP_SERVER_PORT}` },
+      headers: {
+        ...req.headers,
+        'x-forwarded-for': forwardedFor,
+        'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
+        'x-forwarded-host': req.headers.host || '',
+      },
     });
 
     proxy.on('upgrade', (res, proxySocket, proxyHead) => {

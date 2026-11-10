@@ -37,7 +37,7 @@ tasks:
     critical: true
   T007:
     name: "BE-RS: production proxy, CORS & error-shape hardening"
-    status: pending
+    status: done
     depends:
       - T006
       - T008

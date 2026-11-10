@@ -1,0 +1,18 @@
+# Rust backend test harness — canonical rules
+
+Source of truth for the test plumbing rules. Referenced from root `AGENTS.md`.
+In-process suites use `backend-rs/tests/api/helpers.rs`; black-box suites use `backend-rs/tests/api/wire.rs`.
+
+## Rules
+
+- **Single owner per transport.** In-process suites (`axum::Router` + `tower::ServiceExt::oneshot`) get all plumbing from `backend-rs/tests/api/helpers.rs`. Black-box suites (raw TCP) get the transport-independent pieces from `backend-rs/tests/api/wire.rs`. Never re-declare a helper locally — the ownership header in `helpers.rs` lists the exact forbidden set AND the sanctioned exceptions.
+- **A suite MUST NOT reuse a name from the forbidden set.** The forbidden set is scoped to the IN-PROCESS suites; a local helper is only allowed when it is genuinely suite-specific, and then it must (a) take a name outside the forbidden set and (b) be listed in the header's "Sanctioned exceptions". A suite that shadows a shared name (`json_body`, `send`, `register`, `json_of`, `cookie_jar`, …) is a silent drift even when it compiles — that is how `auth_register.rs`, `throttle.rs` and `e2e_rest.rs` ended up with near-duplicate plumbing.
+- **Import EXPLICITLY, never glob.** `use super::helpers::{app_on_pool, send, …}` — a glob import lets a leftover local definition silently shadow the shared one, while an explicit import makes it a hard `E0255` compile error. That compile error IS the regression guard; a glob import removes it.
+- **Every `assert_problem` call takes a `what` label** naming the failing step, so a failure identifies the scenario instead of a line number. Keep the label short and specific.
+- **Wire vs in-process problem assertions share one core.** `helpers::assert_problem_fields` is the single assertion core; `helpers::assert_problem` and `wire::assert_problem` are thin adapters that only differ in how they read the `Content-Type`. Add new problem assertions to the core, never to one adapter. Same pattern for the cookie jar: `helpers::cookie_jar_from` is the core, `helpers::cookie_jar` / `wire::cookie_jar` are the per-transport adapters.
+- **Pick the shared variant, don't re-implement it.** `helpers::send` (owned router), `helpers::send_ref` (borrowed router — for a suite driving ONE app repeatedly, e.g. the throttle flood probes), `helpers::send_json` (pre-parsed body). The wire-flavored body parser is `WireResponse::json(what)`. If a suite needs a fourth shape, add it to `helpers.rs`/`wire.rs` — do not write a local copy.
+- **Session rows are per-database, not server-global.** The store follows the pool's database (`AppState::with_pool`), so under `#[sqlx::test]` each test has its own `sessions` table. Never blanket `DELETE`/`UPDATE`/`DROP` it — scope session SQL by `WHERE id = ?`.
+- **Never hardcode the session table's schema/table names in a test.** Use the unqualified `sessions` (the app database) — the store's own defaults (`tower_sessions`.`session`) are NOT what the app uses.
+- **A test that binds a port binds an EPHEMERAL one.** Use `wire::bind_blackbox()` (port 0 → OS-assigned) and drive `listener.local_addr()`; never a fixed `:3001`. Cargo runs the suites in one binary in parallel, so a shared fixed port collides, and it also breaks when a dev server already holds that port.
+- **Editing an applied sqlx migration is a checksum break.** sqlx stores a SHA-384 of each migration's bytes in `_sqlx_migrations` and refuses to re-run a migration whose bytes changed (`VersionMismatch`). A DB migrated with the old baseline must be DROPPED and re-migrated — never hand-edit `_sqlx_migrations`. The baseline is a squash (cutover always builds a fresh DB), so an empty target is unaffected.
+

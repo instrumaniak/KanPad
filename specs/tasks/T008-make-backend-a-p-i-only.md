@@ -281,3 +281,6 @@ compression-406 half is unrelated and stays.
 - `frontend/.env.example`: include the production value plus a **commented dev default**
   (`# VITE_API_URL=http://localhost:3001`).
 - CI: **add the inverted guard** `! grep -Eq 'COPY .*public/'`.
+## Lessons
+
+See `specs/tasks/T007-b-e-r-s-production-proxy-c-o-r-s-error-shape-hardening.md` → "Lessons migrated from AGENTS.md".

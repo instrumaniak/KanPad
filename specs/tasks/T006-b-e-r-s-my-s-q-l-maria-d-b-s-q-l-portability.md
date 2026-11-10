@@ -448,3 +448,14 @@ The three prod-side issues found while probing (localhost `CORS_ORIGINS` leaking
 extractor rejections bypassing problem+json) are tracked as **T007 — BE-RS: production proxy, CORS &
 error-shape hardening**. Do not fold them into this task: T006 is the MariaDB portability fix and must
 stay independently deployable.
+
+## Lessons migrated from AGENTS.md (2026-11-10)
+
+### T006 lessons (2026-11-03) — MySQL & MariaDB SQL portability
+
+1. **A test suite that only runs one RDBMS flavour cannot prove portability.** Dev/CI ran MySQL 8.4; production runs MariaDB 10.6. Every SQL statement must be exercised on both in CI, or a server-specific syntax error ships green.
+2. **An ORM/driver's "modern" syntax may be server-specific.** `AS new` is the recommended MySQL 8.0.19+ form — and a hard `1064` on MariaDB. A comment that justifies a construct by one vendor's docs is not portability proof; run it on the other server.
+3. **A middleware can replace a 200 with a 500.** `tower-sessions` converts a store-write failure into a bodyless 500 (`service.rs:252-258`), so "the endpoint's own error handling" is not the whole error surface. When a 500 has no body, look above the handler.
+4. **Split the symptom before theorising.** "Unknown email -> 401, wrong password -> 401, correct password -> 500" localises the failure to post-verify in one probe.
+5. **Rebuild the release binary from HEAD before diagnosing prod.** The deployed binary predated the T005 commits, so "prod behaves differently from the tree" had two candidate causes at once.
+

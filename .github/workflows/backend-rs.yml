@@ -287,13 +287,15 @@ jobs:
       - name: Cache sqlx-cli
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ~/.cargo/bin/sqlx
-          key: sqlx-cli-0.9.0-${{ runner.os }}
+          path: |
+            ~/.cargo/bin/sqlx
+            ~/.cargo/bin/cargo-sqlx
+          key: sqlx-cli-0.9.0-${{ runner.os }}-2
 
       - name: Install sqlx-cli 0.9.0
         run: |
           set -euo pipefail
-          if ! command -v sqlx >/dev/null 2>&1; then
+          if ! command -v cargo-sqlx >/dev/null 2>&1; then
             # T66: the CLI moves with the driver — a 0.8.6 CLI cannot
             # regenerate or validate a 0.9 `.sqlx/` cache.
             cargo install --locked sqlx-cli --version 0.9.0 --no-default-features --features mysql,rustls
@@ -520,6 +522,22 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
         run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic
+
+      - name: Cache sqlx-cli
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/bin/sqlx
+            ~/.cargo/bin/cargo-sqlx
+          key: sqlx-cli-0.9.0-${{ runner.os }}-2
+
+      - name: Install sqlx-cli 0.9.0
+        run: |
+          set -euo pipefail
+          if ! command -v cargo-sqlx >/dev/null 2>&1; then
+            cargo install --locked sqlx-cli --version 0.9.0 --no-default-features --features mysql,rustls
+          fi
+          cargo sqlx --version
 
       - name: migrate run
         working-directory: backend-rs

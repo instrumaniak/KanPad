@@ -25,7 +25,7 @@ use axum::{
 use backend_rs::config::Settings;
 use sqlx::MySqlPool;
 
-use super::helpers::{app_on_pool_with, assert_problem, cookie_jar, send_json};
+use super::helpers::{app_on_pool_with, assert_problem, cookie_jar, json_of, send, send_json};
 
 /// This suite's register payload (its own email/password ordering).
 ///
@@ -233,4 +233,74 @@ async fn register_full_flow(pool: MySqlPool) {
 
     // NO TEARDOWN WIPE/DROP: the shared session store must survive until
     // every suite in this process is done (see module docs).
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn register_rejection_shape(pool: MySqlPool) {
+    let app = app_with_registration(&pool, true);
+
+    // Missing fields -> 400 invalid-json.
+    let req = Request::post("/api/v1/auth/register")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let (status, headers, bytes) = send(app.clone(), req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body = json_of(&bytes);
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "invalid-json",
+        "register missing fields",
+    );
+
+    // Malformed JSON -> 400 invalid-json.
+    let req = Request::post("/api/v1/auth/register")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{bad"))
+        .unwrap();
+    let (status, headers, bytes) = send(app.clone(), req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body = json_of(&bytes);
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "invalid-json",
+        "register malformed",
+    );
+
+    // Wrong content type -> 415 invalid-json.
+    let req = Request::post("/api/v1/auth/register")
+        .body(Body::from("{}"))
+        .unwrap();
+    let (status, headers, bytes) = send(app.clone(), req).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    let body = json_of(&bytes);
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "invalid-json",
+        "register wrong content type",
+    );
+
+    // Over-limit body -> 400 invalid-json.
+    let big = "a".repeat(3 * 1024 * 1024);
+    let payload = format!(r#"{{"email":"big@example.com","password":"{}"}}"#, big);
+    let req = Request::post("/api/v1/auth/register")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(payload))
+        .unwrap();
+    let (status, headers, bytes) = send(app, req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body = json_of(&bytes);
+    assert_problem(
+        status,
+        &headers,
+        &body,
+        "invalid-json",
+        "register over-limit",
+    );
 }

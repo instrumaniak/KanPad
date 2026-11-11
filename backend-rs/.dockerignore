@@ -8,7 +8,7 @@
 # biggest CI/local build-speed win in this task.
 #
 # The COPY lines that MATTER (Dockerfile) are:
-#   Cargo.toml, Cargo.lock, .sqlx/, migrations/, openapi.json, src/, public/
+#   Cargo.toml, Cargo.lock, .sqlx/, migrations/, openapi.json, src/
 #
 # SCOPE DISCIPLINE: this file excludes only what is LARGE or SENSITIVE.
 # `tests/` is DELIBERATELY NOT excluded even though `cargo build --release`
@@ -37,8 +37,8 @@ docker-compose.test.yml
 # .sqlx/      committed offline query cache — the build needs NO database.
 # migrations/ compile-time inputs (sqlx::migrate! embed).
 # openapi.json include_str! embed (served + printed).
-# public/     frontend dist copied in by CI BEFORE `docker build`
-#             (the SPA fallback contract; not in git).
+# (no `public/` — the API serves no frontend asset; the SPA lives on its
+#  own origin, see docs/deployment.md.)
 # src/        the crate.
 # tests/      see SCOPE DISCIPLINE above — kept for the explicit [[test]] path.
 #

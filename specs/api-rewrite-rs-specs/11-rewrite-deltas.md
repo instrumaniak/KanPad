@@ -183,6 +183,10 @@ Neither change touches the wire contract (the cookie name is not in
 > Rationale record. **PLANNED (2026-10-22) — not yet implemented.** To be
 > folded into `10-architecture.md` (CORS + Middleware order) by T56. Do not
 > implement from the MUSTs below.
+>
+> **CSP half superseded by T008 (2026-11-09):** the API no longer serves a
+> document, so no CSP is emitted. The CSRF half (everything above the
+> `* **CSP.**` bullet) still applies and is owned by T007.
 
 * **Cross-origin check on mutating requests — the Go 1.25
   `CrossOriginProtection` algorithm.** The API authenticates with an ambient
@@ -223,8 +227,9 @@ Neither change touches the wire contract (the cookie name is not in
   (lowercase scheme+host, the scheme's default port stripped, no trailing
   slash, no path/query/fragment, no opaque origin) and a non-canonical entry
   is a **boot error naming the offending entry**; one canonical list feeds
-  `CorsLayer::allow_origin`, `CsrfLayer::add_trusted_origin` and the CSP's
-  `connect-src`; (ii) the rejection is rendered through the shared
+  `CorsLayer::allow_origin` and `CsrfLayer::add_trusted_origin` (the CSP
+  `connect-src` consumer was removed in T008); (ii) the rejection is rendered
+  through the shared
   `problem_response` + the **existing** `AppError::Forbidden` mapping, so
   **no new problem-type URI** is introduced — the change is contract-neutral;
   (iii) the `Host`-rewrite proxy caveat is recorded in the runbook.

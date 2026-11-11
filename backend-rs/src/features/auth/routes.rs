@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::State,
+    extract::{State, rejection::JsonRejection},
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
@@ -62,15 +62,16 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         (status = 409, description = "Email already registered")
     )
 )]
-#[tracing::instrument(skip(state, session, input))]
+#[tracing::instrument(skip(state, session, payload))]
 pub async fn register(
     State(state): State<AppState>,
     session: Session,
-    Json(mut input): Json<RegisterInput>,
+    payload: Result<Json<RegisterInput>, JsonRejection>,
 ) -> AppResult<impl IntoResponse> {
     if !state.settings.registration_enabled {
         return Err(AppError::Forbidden);
     }
+    let Json(mut input) = payload.map_err(AppError::Json)?;
     input.email = normalize_email(&input.email);
     input.validate().map_err(AppError::from)?;
 
@@ -134,12 +135,13 @@ pub async fn register(
         (status = 401, description = "Invalid credentials")
     )
 )]
-#[tracing::instrument(skip(state, session, input))]
+#[tracing::instrument(skip(state, session, payload))]
 pub async fn login(
     State(state): State<AppState>,
     session: Session,
-    Json(mut input): Json<LoginInput>,
+    payload: Result<Json<LoginInput>, JsonRejection>,
 ) -> AppResult<impl IntoResponse> {
+    let Json(mut input) = payload.map_err(AppError::Json)?;
     input.email = normalize_email(&input.email);
     input.validate().map_err(AppError::from)?;
 

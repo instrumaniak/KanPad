@@ -13,7 +13,7 @@ rust-version = "1.99"
 
 [dependencies]
 axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 # sqlx 0.9 (T66): `runtime-tokio-rustls` was REMOVED -> `runtime-tokio` +
 # `tls-rustls-ring-native-roots`. `mysql-rsa` is now OPT-IN and is required
 # here: the MySQL `caching_sha2_password` handshake needs the server's RSA
@@ -23,8 +23,9 @@ sqlx = { version = "0.9", features = ["mysql", "mysql-rsa", "runtime-tokio", "tl
 tower = { version = "0.5", features = ["timeout"] }
 # `timeout` and `limit` are NOT enabled: the request timeout is
 # `tower::ServiceBuilder::timeout` (the `tower` crate's feature) and the 2 MiB
-# body cap is axum's `DefaultBodyLimit`. Neither tower-http layer is used.
-# tower-http 0.7 splits the compression features, and `compression-full`
+# body cap is axum's `DefaultBodyLimit`. The `fs` feature (ServeDir) was
+# removed in T008: the API serves no static files — the SPA lives on its own
+# origin. tower-http 0.7 splits the compression features, and `compression-full`
 # would pull `zstd-sys`/`libz-sys` (a C build) for a codec **no browser
 # accepts**. The API serves JSON to browsers: `gzip` is universal and `br` is
 # supported by every browser in use — so the pair is the whole practical
@@ -34,7 +35,7 @@ tower = { version = "0.5", features = ["timeout"] }
 # `CrossOriginProtection` algorithm step for step (the cross-origin check on
 # mutating requests). The feature is **dependency-free** (an empty feature
 # list), so enabling it does not move `Cargo.lock`.
-tower-http = { version = "0.7", features = ["trace", "cors", "csrf", "request-id", "compression-gzip", "compression-br", "set-header", "fs", "sensitive-headers"] }
+tower-http = { version = "0.7", features = ["trace", "cors", "csrf", "request-id", "compression-gzip", "compression-br", "set-header", "sensitive-headers"] }
 tower-sessions = { version = "0.15", features = ["signed"] }
 # `tower-sessions-core` is the SAME version `tower-sessions 0.14` pins
 # (`=0.14.0`), so this is NOT a second core in the tree — it is the same one,

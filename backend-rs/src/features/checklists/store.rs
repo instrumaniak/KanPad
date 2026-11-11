@@ -300,13 +300,19 @@ where
 /// for the insert that follows. MUST run inside the create tx (`FOR UPDATE`
 /// outside a tx locks nothing); `MAX(INT)` decodes as `i64` (`LONGLONG`),
 /// narrowed via `try_from` (never a silent `as` cast).
+///
+/// The `max_pos!: i64` alias pins type AND nullability (`!`) so the row type
+/// is server-independent: MySQL 8.4 reports `COALESCE(MAX(...), -1)` NOT NULL
+/// while MariaDB 10.6 reports it nullable, and a bare `: i64` override does
+/// not pin nullability (sqlx wraps in `Option` whenever the server says
+/// nullable). The expression is never NULL by construction (`-1` fallback).
 #[tracing::instrument(skip(ex))]
 pub async fn max_item_position_for_update<'e, E>(ex: E, checklist_id: i32) -> Result<i32, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos: i64\" \
+        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" \
           FROM `checklist_items` WHERE `checklist_id` = ? FOR UPDATE",
         checklist_id
     )

@@ -55,12 +55,20 @@ mod helpers;
 mod labels;
 #[path = "api/metrics.rs"]
 mod metrics;
+#[path = "api/migrate_cli.rs"]
+mod migrate_cli;
 #[path = "api/notes.rs"]
 mod notes;
 #[path = "api/openapi_snapshot.rs"]
 mod openapi_snapshot;
 #[path = "api/projects.rs"]
 mod projects;
+#[path = "api/proxy_headers.rs"]
+mod proxy_headers;
+#[path = "api/serve_boot.rs"]
+mod serve_boot;
+#[path = "api/sql_portability.rs"]
+mod sql_portability;
 #[path = "api/tags.rs"]
 mod tags;
 #[path = "api/throttle.rs"]

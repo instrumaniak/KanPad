@@ -6,10 +6,21 @@
 //! readiness, never through panics, and never with credentials attached.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use sqlx::MySqlPool;
 
 use crate::{common::session_store::MySqlSessionStore, config::Settings, db, metrics::Metrics};
+
+/// [`AppState::db_state`] — no probe has completed yet. The FIRST observed
+/// failure is therefore a real transition (`Unknown → Down`) and logs at
+/// `warn`: a `warn`-mode server that comes up with the DB already down
+/// must still get ONE log line.
+pub const DB_PROBE_UNKNOWN: u8 = 0;
+/// [`AppState::db_state`] — the last completed probe reached the database.
+pub const DB_PROBE_UP: u8 = 1;
+/// [`AppState::db_state`] — the last completed probe failed.
+pub const DB_PROBE_DOWN: u8 = 2;
 
 /// Composition-root state. Handlers take `State<AppState>`.
 #[derive(Debug, Clone)]
@@ -26,19 +37,28 @@ pub struct AppState {
     pub instance_id: String,
     /// Per-state Prometheus registry (`/metrics`, T60).
     pub metrics: Arc<Metrics>,
+    /// Tri-state last-probe outcome (`DB_PROBE_*`), shared by every clone
+    /// of this state. Written by [`Self::record_db_probe`] — the SINGLE
+    /// transition logger (`Unknown→Down` = `warn` bootstrap,
+    /// `Up→Down` = `error`, `Down→Up` = `info` recovery) — so a flapping
+    /// database logs on TRANSITION, not on every probe.
+    pub db_state: Arc<AtomicU8>,
 }
 
 impl AppState {
     /// Build state from settings without I/O (test-friendly): pool connect
     /// and store migration never run here.
     pub fn from_settings(settings: Settings) -> Self {
-        let pool = match settings.database_url().parse() {
-            Ok(options) => db::pool_options(&settings).connect_lazy_with(options),
+        // `connect_options` is the SAME parse the boot-config log reports
+        // from, so "what the console says" and "what the pool dials" cannot
+        // drift apart.
+        let pool = match settings.connect_options() {
+            Some(options) => db::pool_options(&settings).connect_lazy_with(options),
             // Unreachable via `Settings::load` (a stricter parse check could
             // live in `validate`, but URL validity is the pool's decision):
             // fall back to an unroutable lazy pool so construction stays
             // total and the failure surfaces as `503` at `/ready`.
-            Err(_) => db::pool_options(&settings).connect_lazy_with(unroutable_options()),
+            None => db::pool_options(&settings).connect_lazy_with(unroutable_options()),
         };
         Self::with_pool(settings, pool)
     }
@@ -72,6 +92,79 @@ impl AppState {
             sessions,
             instance_id: new_instance_id(),
             metrics: Arc::new(Metrics::new()),
+            db_state: Arc::new(AtomicU8::new(DB_PROBE_UNKNOWN)),
+        }
+    }
+
+    /// Record one COMPLETED DB probe — the single owner of the
+    /// transition log, the `kanpad_db_up` gauge and the
+    /// `kanpad_db_connect_failures_total{class}` counter.
+    ///
+    /// Transitions (no per-probe spam — a steady DOWN logs nothing):
+    /// * first observed failure (`Unknown→Down`): `warn` — the bootstrap
+    ///   case a `DB_STARTUP_CHECK=warn` server specifically cares about;
+    /// * `Up→Down`: `error` with the full cause;
+    /// * `Down→Up`: `info` recovery.
+    ///
+    /// The log carries the SAME field set as the diagnostics kernel (`log_at`)
+    /// — host, port, database, class, mysql_number, hint — and NEVER the
+    /// password. Two concurrent probes cannot double-log a transition: only
+    /// the compare-exchange winner logs (the loser's outcome is recorded in
+    /// the metrics by its own call).
+    pub fn record_db_probe(
+        &self,
+        outcome: Result<&db::ProbeReport, &db::Diagnostics>,
+        target: &db::Target,
+        elapsed: std::time::Duration,
+    ) {
+        let (new_state, log): (u8, Box<dyn FnOnce(u8)>) = match outcome {
+            Ok(report) => {
+                self.metrics.set_db_up(true);
+                (
+                    DB_PROBE_UP,
+                    Box::new(move |previous: u8| {
+                        if previous == DB_PROBE_DOWN {
+                            tracing::info!(
+                                database = target.database.as_deref().unwrap_or("<none>"),
+                                server_version = %report.server_version,
+                                elapsed_ms = %elapsed.as_millis(),
+                                "database recovered"
+                            );
+                        }
+                    }),
+                )
+            }
+            Err(diagnostics) => {
+                self.metrics.set_db_up(false);
+                self.metrics
+                    .record_db_connect_failure(diagnostics.class.label());
+                let level = match self.db_state.load(Ordering::SeqCst) {
+                    DB_PROBE_UP => tracing::Level::ERROR,
+                    _ => tracing::Level::WARN,
+                };
+                (
+                    DB_PROBE_DOWN,
+                    Box::new(move |previous: u8| {
+                        // Unknown→Down = warn (bootstrap), Up→Down = error,
+                        // Down→Down = silent.
+                        if previous != DB_PROBE_DOWN {
+                            diagnostics.log_at(level, target, elapsed);
+                        }
+                    }),
+                )
+            }
+        };
+        // CAS: only the probe that flips the flag logs the transition (the
+        // flag's load inside the closures is the PRE-transition value —
+        // the same one the CAS compares against, so a racing winner's
+        // store cannot produce a second, stale-transition log).
+        let previous = self.db_state.load(Ordering::SeqCst);
+        if self
+            .db_state
+            .compare_exchange(previous, new_state, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            log(previous);
         }
     }
 
@@ -176,5 +269,80 @@ mod tests {
     fn session_table_lives_in_the_app_database() {
         assert_eq!(SESSION_TABLE, "sessions");
         assert!(db::is_valid_db_name(SESSION_TABLE));
+    }
+
+    /// T005: `record_db_probe` is the SINGLE transition logger —
+    /// `Unknown→Down` warns ONCE (bootstrap), a steady DOWN is silent,
+    /// `Down→Up` infos a recovery, `Up→Down` errors with the cause — and
+    /// never logs the password. The flag and the metrics move with it.
+    /// (`#[tokio::test]`: `from_settings` builds a lazy pool, which needs a
+    /// runtime context.)
+    #[tokio::test]
+    async fn record_db_probe_logs_transitions_without_per_probe_spam() {
+        let state = AppState::from_settings(Settings::default());
+        let options: sqlx::mysql::MySqlConnectOptions =
+            "mysql://kanpad:sekrit-do-not-log@127.0.0.1:1/kanpad?charset=utf8mb4"
+                .parse()
+                .expect("fixture URL parses");
+        let target = db::Target::from_options(&options, db::DbSource::DatabaseUrl);
+        let refused = db::diagnose(&sqlx::Error::Io(std::io::Error::from_raw_os_error(111)));
+        let elapsed = std::time::Duration::from_millis(7);
+
+        // 1. FIRST failure (Unknown→Down): warn + cause, password never
+        //    logged, flag + metrics set.
+        let logs = crate::test_support::capture_logs(|| {
+            state.record_db_probe(Err(&refused), &target, elapsed)
+        });
+        assert_eq!(state.db_state.load(Ordering::SeqCst), DB_PROBE_DOWN);
+        assert!(logs.contains("WARN"), "bootstrap warn: {logs}");
+        assert!(logs.contains("Connection refused"), "cause: {logs}");
+        assert!(logs.contains("class=\"refused\""), "{logs}");
+        assert!(!logs.contains("sekrit-do-not-log"), "{logs}");
+        let text = state.metrics.render(0, 0);
+        assert!(text.contains("kanpad_db_up 0"), "{text}");
+        assert!(
+            text.contains("kanpad_db_connect_failures_total{class=\"refused\"} 1"),
+            "{text}"
+        );
+
+        // 2. Steady DOWN: NO new log line (no per-probe spam), counter only.
+        let logs = crate::test_support::capture_logs(|| {
+            state.record_db_probe(Err(&refused), &target, elapsed)
+        });
+        assert!(logs.is_empty(), "steady DOWN must be silent: {logs:?}");
+        assert_eq!(state.db_state.load(Ordering::SeqCst), DB_PROBE_DOWN);
+        assert!(
+            state
+                .metrics
+                .render(0, 0)
+                .contains("kanpad_db_connect_failures_total{class=\"refused\"} 2"),
+            "the counter still moves"
+        );
+
+        // 3. Recovery (Down→Up): info, gauge flips, flag moves.
+        let report = db::ProbeReport {
+            server_version: "8.4.11".to_string(),
+            selected_database: Some("kanpad".to_string()),
+            elapsed,
+        };
+        let logs = crate::test_support::capture_logs(|| {
+            state.record_db_probe(Ok(&report), &target, elapsed)
+        });
+        assert_eq!(state.db_state.load(Ordering::SeqCst), DB_PROBE_UP);
+        assert!(logs.contains("INFO"), "recovery info: {logs}");
+        assert!(logs.contains("database recovered"), "{logs}");
+        assert!(
+            state.metrics.render(0, 0).contains("kanpad_db_up 1"),
+            "gauge flips on recovery"
+        );
+
+        // 4. Up→Down: ERROR with the full cause.
+        let logs = crate::test_support::capture_logs(|| {
+            state.record_db_probe(Err(&refused), &target, elapsed)
+        });
+        assert_eq!(state.db_state.load(Ordering::SeqCst), DB_PROBE_DOWN);
+        assert!(logs.contains("ERROR"), "outage error: {logs}");
+        assert!(logs.contains("Connection refused"), "{logs}");
+        assert!(!logs.contains("sekrit-do-not-log"), "{logs}");
     }
 }

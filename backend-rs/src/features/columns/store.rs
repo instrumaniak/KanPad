@@ -111,13 +111,19 @@ where
 /// the insert that follows. MUST run inside the create tx (`FOR UPDATE` outside
 /// a tx locks nothing); `MAX(INT)` decodes as `i64` (`LONGLONG`), narrowed via
 /// `try_from` (never a silent `as` cast).
+///
+/// The `max_pos!: i64` alias pins type AND nullability (`!`) so the row type
+/// is server-independent: MySQL 8.4 reports `COALESCE(MAX(...), -1)` NOT NULL
+/// while MariaDB 10.6 reports it nullable, and a bare `: i64` override does
+/// not pin nullability (sqlx wraps in `Option` whenever the server says
+/// nullable). The expression is never NULL by construction (`-1` fallback).
 #[tracing::instrument(skip(ex))]
 pub async fn max_position_for_update<'e, E>(ex: E, board_id: i32) -> Result<i32, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos: i64\" \
+        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" \
           FROM `columns` WHERE `board_id` = ? FOR UPDATE",
         board_id
     )
@@ -307,13 +313,19 @@ where
 /// Current `MAX(position)` on the target column (`-1` when empty), locking
 /// the range (`FOR UPDATE`) — MUST run inside the move tx. `MAX(INT)`
 /// decodes as `i64` (`LONGLONG`), narrowed via `try_from` (never silent `as`).
+///
+/// The `max_pos!: i64` alias pins type AND nullability (`!`) so the row type
+/// is server-independent: MySQL 8.4 reports `COALESCE(MAX(...), -1)` NOT NULL
+/// while MariaDB 10.6 reports it nullable, and a bare `: i64` override does
+/// not pin nullability (sqlx wraps in `Option` whenever the server says
+/// nullable). The expression is never NULL by construction (`-1` fallback).
 #[tracing::instrument(skip(ex))]
 pub async fn max_card_position_for_update<'e, E>(ex: E, target_id: i32) -> Result<i32, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos: i64\" \
+        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" \
           FROM `cards` WHERE `column_id` = ? FOR UPDATE",
         target_id
     )

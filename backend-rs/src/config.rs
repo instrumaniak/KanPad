@@ -142,6 +142,63 @@ impl<'de> serde::Deserialize<'de> for AppEnv {
     }
 }
 
+/// Boot behaviour when the startup database probe fails
+/// (`DB_STARTUP_CHECK`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StartupCheck {
+    /// Exit non-zero when the database cannot be reached (the default —
+    /// Nest parity: `@nestjs/typeorm` initialises the DataSource eagerly
+    /// and throws on failure). A wrong password still fails in ONE attempt
+    /// (permanent class) — only transient classes are retried.
+    #[default]
+    Require,
+    /// Log a warning and keep serving degraded (`/health` stays 200,
+    /// `/ready` reports 503). `warn` permits a DB-less server; it never
+    /// exempts `--auto-migrate` or admin creation from the database.
+    Warn,
+}
+
+impl StartupCheck {
+    /// The canonical lowercase spelling — the value `DB_STARTUP_CHECK`
+    /// accepts.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Require => "require",
+            Self::Warn => "warn",
+        }
+    }
+}
+
+/// Parses the canonical lowercase spelling; anything else is rejected with
+/// the same message shape [`AppEnv`] uses, so the boot error names
+/// `DB_STARTUP_CHECK` and its allowed set.
+impl std::str::FromStr for StartupCheck {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "require" => Ok(Self::Require),
+            "warn" => Ok(Self::Warn),
+            other => Err(format!(
+                "DB_STARTUP_CHECK must be one of require|warn, got {other:?}"
+            )),
+        }
+    }
+}
+
+/// Deserializes a string and runs it through [`StartupCheck::from_str`] —
+/// the boot error (via `envy`) names `DB_STARTUP_CHECK`, exactly as the
+/// [`AppEnv`] pattern does for `APP_ENV`.
+impl<'de> serde::Deserialize<'de> for StartupCheck {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Application settings. Precedence: real environment > `.env` > defaults.
 #[derive(Clone, Deserialize)]
 pub struct Settings {
@@ -190,6 +247,22 @@ pub struct Settings {
     /// is allowed and means "keep none").
     #[serde(default = "default_db_min_connections")]
     pub db_min_connections: u32,
+    /// Startup DB-probe policy (`DB_STARTUP_CHECK`): `require` (default)
+    /// exits non-zero when the database is unreachable, `warn` logs and
+    /// serves degraded. See [`StartupCheck`].
+    #[serde(default)]
+    pub db_startup_check: StartupCheck,
+    /// Total budget for the startup probe retries
+    /// (`DB_STARTUP_TIMEOUT_SECS`, default 15, range 1–300). Per-attempt
+    /// dial time is capped by [`Self::db_ready_probe_timeout`].
+    #[serde(default = "default_db_startup_timeout_secs")]
+    pub db_startup_timeout_secs: u64,
+    /// Per-attempt dial cap for the startup AND `/ready` probes
+    /// (`DB_READY_PROBE_TIMEOUT_MS`, default 500, range 50–3000). A
+    /// SYN-hanging unroutable host must not hold a request open longer
+    /// than this.
+    #[serde(default = "default_db_ready_probe_timeout_ms")]
+    pub db_ready_probe_timeout_ms: u64,
     /// Gates `POST /api/v1/auth/register` (same semantics as Nest).
     #[serde(default = "default_true")]
     pub registration_enabled: bool,
@@ -241,6 +314,14 @@ fn default_db_max_connections() -> u32 {
     10
 }
 
+fn default_db_startup_timeout_secs() -> u64 {
+    15
+}
+
+fn default_db_ready_probe_timeout_ms() -> u64 {
+    500
+}
+
 fn default_db_min_connections() -> u32 {
     1
 }
@@ -259,6 +340,46 @@ fn default_throttle_auth() -> u32 {
 
 fn default_cors_origins() -> String {
     DEFAULT_CORS_ORIGIN.to_string()
+}
+
+/// Percent-encode a URL **userinfo** component (username or password) per
+/// RFC 3986: keep the unreserved set + the sub-delims + `:`, escape every
+/// other byte as `%XX`. Used ONLY by [`Settings::database_url`] — the URL
+/// is a rendering there, and this encoding is the exact inverse of the
+/// driver's percent-decode, so a password like `pa/ss#1` round-trips
+/// through a URL unchanged.
+fn percent_encode_userinfo(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'.'
+                    | b'_'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+                    | b':'
+            )
+        {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0F) as usize] as char);
+        }
+    }
+    out
 }
 
 /// Redacting `Debug`: secrets and DB credentials render as `[redacted]`.
@@ -283,6 +404,9 @@ impl fmt::Debug for Settings {
             .field("db_name", &self.db_name)
             .field("db_max_connections", &self.db_max_connections)
             .field("db_min_connections", &self.db_min_connections)
+            .field("db_startup_check", &self.db_startup_check)
+            .field("db_startup_timeout_secs", &self.db_startup_timeout_secs)
+            .field("db_ready_probe_timeout_ms", &self.db_ready_probe_timeout_ms)
             .field("registration_enabled", &self.registration_enabled)
             .field("throttle_global_per_min", &self.throttle_global_per_min)
             .field("throttle_auth_per_min", &self.throttle_auth_per_min)
@@ -313,6 +437,9 @@ impl Default for Settings {
             db_name: default_db_name(),
             db_max_connections: default_db_max_connections(),
             db_min_connections: default_db_min_connections(),
+            db_startup_check: StartupCheck::default(),
+            db_startup_timeout_secs: default_db_startup_timeout_secs(),
+            db_ready_probe_timeout_ms: default_db_ready_probe_timeout_ms(),
             registration_enabled: true,
             throttle_global_per_min: default_throttle_global(),
             throttle_auth_per_min: default_throttle_auth(),
@@ -348,9 +475,18 @@ pub enum ConfigError {
 
 impl Settings {
     /// Load once at boot: `.env` (if present), then environment, then validate.
+    ///
+    /// Also emits the **effective** boot configuration (env + the database
+    /// this process will dial) as one `INFO` line — see
+    /// `Settings::log_boot_config`. This is the single entry point ambient
+    /// config passes through, so every DB-using subcommand (`serve`,
+    /// `migrate`, `create-admin`) logs it with no per-command call site, and
+    /// a future subcommand cannot forget to.
     pub fn load() -> Result<Self, ConfigError> {
         dotenvy::dotenv().ok();
-        Settings::load_from_env()
+        let settings = Settings::load_from_env()?;
+        settings.log_boot_config();
+        Ok(settings)
     }
 
     /// Load from the process environment **only** — no `.env` lookup.
@@ -400,22 +536,126 @@ impl Settings {
     }
 
     /// Effective DB URL: explicit `DATABASE_URL` wins, otherwise built from
-    /// the `DB_*` parts with `?charset=utf8mb4` always appended. Built in
-    /// this one function only (pool creation calls it once).
+    /// the `DB_*` parts with `?charset=utf8mb4&collation=…` always appended.
+    ///
+    /// **A rendering, not a transport** (T005 step 5): the connection is
+    /// built by [`Self::connect_options`] directly from the parts, so this
+    /// string exists only for tooling/docs/`validate`'s charset+collation
+    /// screens. The username and password are percent-encoded (RFC 3986
+    /// `userinfo` set) so the URL PARSES for special characters like
+    /// `pa/ss#1` — the encoding is the inverse of the driver's own
+    /// percent-decode, so the password still round-trips exactly.
     pub fn database_url(&self) -> String {
         if let Some(explicit) = self.database_url.as_deref() {
             return explicit.to_string();
         }
         format!(
             "mysql://{}:{}@{}:{}/{}?charset={}&collation={}",
-            self.db_username,
-            self.db_password.expose_secret(),
+            percent_encode_userinfo(&self.db_username),
+            percent_encode_userinfo(self.db_password.expose_secret()),
             self.db_host,
             self.db_port,
             self.db_name,
             "utf8mb4",
             "utf8mb4_unicode_ci"
         )
+    }
+
+    /// The **driver's own options** — the same object
+    /// [`crate::state::AppState::from_settings`] hands to the pool.
+    ///
+    /// Everything derived from it (the DB-name screen in
+    /// [`Settings::validate`], the boot-config log, the startup probe's
+    /// target line) therefore cannot disagree with the connection target,
+    /// whether it came from `DATABASE_URL` or the `DB_*` parts. This is the
+    /// ONE place options are produced: a second site is a second, silently
+    /// divergent answer to "which database is this?".
+    ///
+    /// **The `DB_*` parts are built DIRECTLY into the options object — never
+    /// round-tripped through a URL string** (T005 step 5): a password like
+    /// `pa/ss#1` is legal as a bound value but destroys a URL
+    /// (`…user:pa/ss#1@…` → the `/` terminates the authority, `#` starts a
+    /// fragment) and used to make this return `None`, which dropped the pool
+    /// to an unroutable `127.0.0.1:1` fallback. The URL string is a
+    /// rendering concern (`database_url()`, which percent-encodes), not a
+    /// transport one.
+    ///
+    /// `None` only when an explicit `DATABASE_URL` does not parse at all
+    /// (malformed URL or a percent-decode failure) — never for a merely
+    /// *unreachable* target. (T005 step 5 rejects such a URL in
+    /// [`Settings::validate`], so a `None` here is defense-in-depth.)
+    pub fn connect_options(&self) -> Option<sqlx::mysql::MySqlConnectOptions> {
+        match self.database_url.as_deref() {
+            Some(explicit) => explicit.parse().ok(),
+            None => Some(
+                sqlx::mysql::MySqlConnectOptions::new()
+                    .host(&self.db_host)
+                    .port(self.db_port)
+                    .username(&self.db_username)
+                    .password(self.db_password.expose_secret())
+                    .database(&self.db_name)
+                    .charset("utf8mb4")
+                    .collation("utf8mb4_unicode_ci"),
+            ),
+        }
+    }
+
+    /// Log the **effective** boot configuration — the values this process
+    /// will actually dial, not the raw environment variables.
+    ///
+    /// **Why it reads the parsed URL instead of the `DB_*` fields.** When
+    /// `DATABASE_URL` is set it WINS, and the `DB_*` fields are then unused
+    /// but may still be present in the environment (a leftover `.env`, a
+    /// stale compose service). Printing them would tell an operator they are
+    /// connected to a database the process never touches. The line therefore
+    /// reports what the pool will dial, plus `db_source` so the reader knows
+    /// which input won.
+    ///
+    /// **Never logs a credential**: no password, no session secret, and no
+    /// `database_url()` string (the derived URL carries the percent-encoded
+    /// password — still a credential, so the whole string stays out of the
+    /// log).
+    ///
+    /// Emitted from [`Settings::load`] only, deliberately: that is the single
+    /// place ambient config enters the process, so `serve`, `migrate` and
+    /// `create-admin` all get the line without threading a call through each
+    /// subcommand. [`Settings::load_from_env`] and [`Settings::from_pairs`]
+    /// stay side-effect-free, so the config unit tests emit no log noise.
+    /// `export-openapi` neither loads settings nor initialises tracing (its
+    /// stdout IS the OpenAPI document), so a line can never corrupt it.
+    fn log_boot_config(&self) {
+        let db_source = if self.database_url.is_some() {
+            "DATABASE_URL"
+        } else {
+            "DB_* parts"
+        };
+        match self.connect_options() {
+            Some(options) => {
+                let db_name = options.get_database().unwrap_or("<none>");
+                tracing::info!(
+                    app_env = %self.app_env,
+                    db_host = options.get_host(),
+                    db_port = options.get_port(),
+                    db_name,
+                    db_username = options.get_username(),
+                    db_source,
+                    cors_origins = ?self.canonical_cors_origins(),
+                    "boot configuration"
+                );
+            }
+            // Same condition under which `AppState::from_settings` falls back
+            // to an unroutable pool, so the warning and the 503 at `/ready`
+            // always agree. `db_source` stays: it says WHERE the bad value
+            // came from, which is the first thing an operator needs.
+            None => tracing::warn!(
+                app_env = %self.app_env,
+                db_source,
+                cors_origins = ?self.canonical_cors_origins(),
+                "boot configuration: the database URL did not parse, so the database identity is \
+                 NOT logged — the pool falls back to an unroutable target and `/ready` will \
+                 report 503"
+            ),
+        }
     }
 
     /// Parsed CORS allowlist (trimmed, empties dropped). The wildcard `"*"`
@@ -431,8 +671,8 @@ impl Settings {
     }
 
     /// The **canonical** CORS allowlist — the SINGLE source of truth for
-    /// `CorsLayer::allow_origin`, `CsrfLayer::add_trusted_origin` AND the
-    /// CSP's `connect-src` (three consumers, one list).
+    /// `CorsLayer::allow_origin` and `CsrfLayer::add_trusted_origin` (two
+    /// consumers, one list).
     ///
     /// Every entry is rendered in the exact form a **browser** sends in an
     /// `Origin` header, because both `CorsLayer` and `CsrfLayer` match
@@ -467,6 +707,18 @@ impl Settings {
     /// deny-all default).
     pub fn is_production(&self) -> bool {
         self.app_env == AppEnv::Production
+    }
+
+    /// Total budget for the startup-probe retry loop (validated range
+    /// 1–300 s).
+    pub fn db_startup_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.db_startup_timeout_secs)
+    }
+
+    /// Per-attempt dial cap for the startup and `/ready` probes (validated
+    /// range 50–3000 ms).
+    pub fn db_ready_probe_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.db_ready_probe_timeout_ms)
     }
 
     /// Session cookie name by env (`10-architecture.md` Sessions/Cookie):
@@ -508,6 +760,25 @@ impl Settings {
                 "SESSION_SECRET must be at least {MIN_SESSION_SECRET_BYTES} bytes"
             )));
         }
+        // A malformed `DATABASE_URL` is a CONFIG error, not an outage: it
+        // must fail boot HERE with the one message an operator can act on,
+        // not surface later as a probe failure, a causeless pool timeout, or
+        // the state.rs unroutable fallback (T005 step 5). Checked BEFORE the
+        // charset/collation screens — those `contains` probes would
+        // otherwise misreport a syntax error as "missing ?charset=utf8mb4".
+        // (The `state.rs` unroutable-pool fallback stays: it is the seam for
+        // hand-built `Settings` in tests.)
+        if self.database_url.as_deref().is_some_and(|explicit| {
+            explicit
+                .parse::<sqlx::mysql::MySqlConnectOptions>()
+                .is_err()
+        }) {
+            return Err(ConfigError::Invalid(
+                "DATABASE_URL does not parse as a MySQL connection URL — check the URL \
+                 syntax (the password must be percent-encoded; it is never logged)"
+                    .to_string(),
+            ));
+        }
         if !self.database_url().contains(REQUIRED_DB_CHARSET) {
             return Err(ConfigError::Invalid(
                 "DATABASE_URL must include ?charset=utf8mb4".to_string(),
@@ -531,9 +802,7 @@ impl Settings {
         // DB_NAME must fail here as a clean config error, not as a surprise
         // at the first query or in a `mysql -D`. Never echoes credentials.
         let db_name = self
-            .database_url()
-            .parse::<sqlx::mysql::MySqlConnectOptions>()
-            .ok()
+            .connect_options()
             .and_then(|options| options.get_database().map(str::to_string))
             .unwrap_or_else(|| self.db_name.clone());
         if !db::is_valid_db_name(&db_name) {
@@ -551,6 +820,24 @@ impl Settings {
             return Err(ConfigError::Invalid(format!(
                 "DB_MIN_CONNECTIONS ({}) must not exceed DB_MAX_CONNECTIONS ({})",
                 self.db_min_connections, self.db_max_connections
+            )));
+        }
+        // The startup-probe knobs are bounded so a fat-fingered value can
+        // neither disable the probe (0) nor hang boot for hours (300 s is
+        // already a hung infrastrure's worth of patience). The /ready
+        // per-attempt cap is bounded tighter: kubelet's default probe
+        // timeoutSeconds is 1, so 3000 ms is already over the line.
+        if !(1..=300).contains(&self.db_startup_timeout_secs) {
+            return Err(ConfigError::Invalid(format!(
+                "DB_STARTUP_TIMEOUT_SECS ({}) must be between 1 and 300 seconds",
+                self.db_startup_timeout_secs
+            )));
+        }
+        if !(50..=3000).contains(&self.db_ready_probe_timeout_ms) {
+            return Err(ConfigError::Invalid(format!(
+                "DB_READY_PROBE_TIMEOUT_MS ({}) must be between 50 and 3000 ms (the kubelet's \
+                 default probe timeout is 1 s)",
+                self.db_ready_probe_timeout_ms
             )));
         }
         let origins = self.cors_origin_list();
@@ -589,10 +876,24 @@ impl Settings {
                 }
             }
         }
-        if self.is_production() && origins.is_empty() {
-            return Err(ConfigError::Invalid(
-                "CORS_ORIGINS must not be empty in production (fail closed: deny-all)".to_string(),
-            ));
+        if self.is_production() {
+            if origins.is_empty() {
+                return Err(ConfigError::Invalid(
+                    "CORS_ORIGINS must not be empty in production (fail closed: deny-all)"
+                        .to_string(),
+                ));
+            }
+            for origin in &origins {
+                if let Ok(canonical) = canonical_origin(origin) {
+                    let host = origin_host(&canonical).unwrap_or_default();
+                    if is_loopback_host(&host) {
+                        return Err(ConfigError::Invalid(format!(
+                            "CORS_ORIGINS must not contain a loopback origin in production: \
+                             {origin:?}"
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -609,9 +910,9 @@ impl Settings {
 ///
 /// This function returns exactly that rendering for a well-formed entry, or
 /// an actionable reason why the entry cannot be one. It is the single
-/// definition of "canonical" for the whole service: the CORS allowlist, the
-/// CSRF trusted-origin set and the CSP's `connect-src` are all derived from
-/// it, so they can never disagree.
+/// definition of "canonical" for the whole service: the CORS allowlist and
+/// the CSRF trusted-origin set are both derived from it, so they can never
+/// disagree.
 ///
 /// The scheme's default port is **stripped** rather than rejected here: the
 /// caller ([`Settings::validate`]) compares the canonical rendering with the
@@ -700,11 +1001,26 @@ fn parse_port(raw: &str) -> Result<u16, String> {
     Ok(port)
 }
 
+/// Extract the host portion of a canonical `scheme://host[:port]` origin.
+fn origin_host(origin: &str) -> Option<String> {
+    let (_, rest) = origin.split_once("://")?;
+    let (host, _) = split_host_port(rest).ok()?;
+    Some(host.trim_matches(|c| c == '[' || c == ']').to_string())
+}
+
+/// Whether `host` is a loopback address (`localhost`, `127.0.0.1`, `::1`).
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+        || host.eq_ignore_ascii_case("::1")
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use crate::test_support::{capture_json_logs, capture_logs};
 
     // NOTE: the tests build a KEY/VALUE MAP and load from it
     // ([`Settings::from_pairs`]) — they never mutate the process
@@ -843,7 +1159,11 @@ mod tests {
     fn session_cookie_never_uses_the_express_default() {
         for env in ["development", "test", "production"] {
             let vars = if env == "production" {
-                with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
+                with_overrides(&[
+                    ("APP_ENV", env),
+                    ("HASH_COST", "2"),
+                    ("CORS_ORIGINS", "https://app.example.com"),
+                ])
             } else {
                 with_overrides(&[("APP_ENV", env)])
             };
@@ -876,7 +1196,11 @@ mod tests {
         }
         // Production needs HASH_COST>=2 to get past the cost floor.
         {
-            let vars = with_overrides(&[("APP_ENV", "production"), ("HASH_COST", "2")]);
+            let vars = with_overrides(&[
+                ("APP_ENV", "production"),
+                ("HASH_COST", "2"),
+                ("CORS_ORIGINS", "https://app.example.com"),
+            ]);
             Settings::from_pairs(&vars).expect("production APP_ENV must load");
         }
         let vars = with_overrides(&[("PORT", "0")]);
@@ -1067,6 +1391,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn production_rejects_loopback_cors_origin() {
+        for entry in [
+            "http://localhost:5173",
+            "https://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://127.0.0.1:5173",
+            "http://[::1]:5173",
+            "https://[::1]:5173",
+        ] {
+            let vars = with_overrides(&[
+                ("APP_ENV", "production"),
+                ("HASH_COST", "2"),
+                ("CORS_ORIGINS", entry),
+            ]);
+            let err = Settings::from_pairs(&vars)
+                .expect_err("a loopback CORS origin must fail boot in production");
+            let message = err.to_string();
+            assert!(
+                message.contains("CORS_ORIGINS"),
+                "the error must name the key: {message}"
+            );
+            assert!(
+                message.contains(entry),
+                "the error must name the offending entry {entry:?}: {message}"
+            );
+        }
+        // Dev/test still accept the loopback default.
+        let vars = with_overrides(&[("CORS_ORIGINS", "http://localhost:5173")]);
+        Settings::from_pairs(&vars).expect("dev loopback CORS origin must load");
+    }
+
     /// The canonicalizer itself: a canonical entry is returned unchanged, and
     /// the non-canonical variants render the form a browser actually sends.
     #[test]
@@ -1112,7 +1468,7 @@ mod tests {
     }
 
     /// The canonical list is the SINGLE source of truth for the CORS layer,
-    /// the CSRF trusted set and the CSP's `connect-src`.
+    /// the CSRF trusted set.
     #[test]
     fn canonical_cors_origins_is_the_normalized_list() {
         let vars = with_overrides(&[(
@@ -1146,6 +1502,70 @@ mod tests {
         assert!(settings.registration_enabled);
         assert_eq!(settings.throttle_global_per_min, 120);
         assert_eq!(settings.throttle_auth_per_min, 5);
+    }
+
+    /// T005: startup-probe knobs default sane, parse, and are BOUNDED — a
+    /// fat-fingered value must be a clean boot error, not a hung process
+    /// (`0` would disable the probe; an unbounded budget would hang boot
+    /// for hours; `DB_READY_PROBE_TIMEOUT_MS` over 3000 would hold a
+    /// kubelet probe past its 1 s default).
+    #[test]
+    fn db_probe_knobs_default_and_bounded() {
+        let settings = Settings::from_pairs(&base_vars()).expect("defaults must load");
+        assert_eq!(settings.db_startup_check, StartupCheck::Require);
+        assert_eq!(settings.db_startup_check.as_str(), "require");
+        assert_eq!(settings.db_startup_timeout_secs, 15);
+        assert_eq!(settings.db_ready_probe_timeout_ms, 500);
+        assert_eq!(
+            settings.db_startup_timeout(),
+            std::time::Duration::from_secs(15)
+        );
+        assert_eq!(
+            settings.db_ready_probe_timeout(),
+            std::time::Duration::from_millis(500)
+        );
+
+        // Explicit values parse (envy is case-insensitive on the env names).
+        let vars = with_overrides(&[
+            ("DB_STARTUP_CHECK", "warn"),
+            ("DB_STARTUP_TIMEOUT_SECS", "30"),
+            ("DB_READY_PROBE_TIMEOUT_MS", "250"),
+        ]);
+        let settings = Settings::from_pairs(&vars).expect("explicit probe knobs must load");
+        assert_eq!(settings.db_startup_check, StartupCheck::Warn);
+        assert_eq!(settings.db_startup_timeout_secs, 30);
+        assert_eq!(settings.db_ready_probe_timeout_ms, 250);
+
+        // Bounds: each out-of-range value is a clean, named boot error.
+        for (value, why) in [("0", "below the floor"), ("301", "above the ceiling")] {
+            let vars = with_overrides(&[("DB_STARTUP_TIMEOUT_SECS", value)]);
+            let err = Settings::from_pairs(&vars)
+                .expect_err("out-of-range DB_STARTUP_TIMEOUT_SECS must fail boot");
+            let message = err.to_string();
+            assert!(
+                message.contains("DB_STARTUP_TIMEOUT_SECS"),
+                "{why} ({value}): unexpected error {message}"
+            );
+        }
+        for value in ["49", "3001"] {
+            let vars = with_overrides(&[("DB_READY_PROBE_TIMEOUT_MS", value)]);
+            let err = Settings::from_pairs(&vars)
+                .expect_err("out-of-range DB_READY_PROBE_TIMEOUT_MS must fail boot");
+            assert!(
+                err.to_string().contains("DB_READY_PROBE_TIMEOUT_MS"),
+                "value {value}: unexpected error {err}"
+            );
+        }
+
+        // An unknown policy value is rejected at DESERIALIZATION, naming
+        // `DB_STARTUP_CHECK` and the allowed set (the AppEnv pattern).
+        let vars = with_overrides(&[("DB_STARTUP_CHECK", "silent")]);
+        let err = Settings::from_pairs(&vars).expect_err("unknown DB_STARTUP_CHECK must fail boot");
+        let message = err.to_string();
+        assert!(
+            message.contains("DB_STARTUP_CHECK") && message.contains("require|warn"),
+            "unexpected error: {message}"
+        );
     }
 
     #[test]
@@ -1242,7 +1662,11 @@ mod tests {
         ] {
             // Production refuses HASH_COST<2 at boot, so pin t=2 there.
             let vars = if env == "production" {
-                with_overrides(&[("APP_ENV", env), ("HASH_COST", "2")])
+                with_overrides(&[
+                    ("APP_ENV", env),
+                    ("HASH_COST", "2"),
+                    ("CORS_ORIGINS", "https://app.example.com"),
+                ])
             } else {
                 with_overrides(&[("APP_ENV", env)])
             };
@@ -1257,5 +1681,230 @@ mod tests {
         assert_eq!(settings.session_cookie_name(), "kanpad.sid");
         settings.app_env = AppEnv::Production;
         assert_eq!(settings.session_cookie_name(), "__Host-kanpad.sid");
+    }
+
+    /// Env matrix driving the `DB_*` parts instead of an explicit
+    /// `DATABASE_URL` (the URL wins, so it must be removed). Every value is
+    /// DISTINCTIVE: a value that equals a default (`localhost`, `3306`,
+    /// `kanpad`) would let an assertion pass by coincidence.
+    fn parts_vars() -> Vec<(&'static str, &'static str)> {
+        const PARTS: &[(&str, &str)] = &[
+            ("DB_HOST", "db.parts.internal"),
+            ("DB_PORT", "3337"),
+            ("DB_NAME", "kanpad_parts"),
+            ("DB_USERNAME", "parts_user"),
+            ("DB_PASSWORD", "parts-password-do-not-log"),
+        ];
+        let mut vars = base_vars();
+        vars.retain(|(key, _)| *key != "DATABASE_URL");
+        vars.extend_from_slice(PARTS);
+        vars
+    }
+
+    /// AC (boot-config log): the parts-derived target is reported EXACTLY as
+    /// the pool will dial it — host, port, database, user, env — and the
+    /// derived URL's embedded password never is.
+    #[test]
+    fn boot_config_log_reports_the_effective_db_from_the_parts() {
+        let settings = Settings::from_pairs(&parts_vars()).expect("parts config must load");
+        let logs = capture_logs(|| settings.log_boot_config());
+
+        assert_eq!(
+            logs.matches("boot configuration").count(),
+            1,
+            "exactly one boot line expected: {logs}"
+        );
+        assert!(logs.contains("app_env=test"), "{logs}");
+        assert!(logs.contains("db_host=\"db.parts.internal\""), "{logs}");
+        assert!(logs.contains("db_port=3337"), "{logs}");
+        assert!(logs.contains("db_name=\"kanpad_parts\""), "{logs}");
+        assert!(logs.contains("db_username=\"parts_user\""), "{logs}");
+        assert!(logs.contains("db_source=\"DB_* parts\""), "{logs}");
+        // The derived URL carries the password (percent-encoded in
+        // `database_url()` since T005 step 5 — still a credential), so
+        // neither it nor the URL may be logged.
+        assert!(!logs.contains("parts-password-do-not-log"), "{logs}");
+        assert!(!logs.contains("mysql://"), "{logs}");
+    }
+
+    /// `DATABASE_URL` WINS over the `DB_*` parts, and the line must show the
+    /// URL's target. A stale `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`
+    /// still sitting in the environment is UNUSED — printing it would make a
+    /// reader believe the process dials a database it never touches.
+    #[test]
+    fn boot_config_log_follows_database_url_and_hides_the_stale_parts() {
+        let vars = with_overrides(&[
+            (
+                "DATABASE_URL",
+                "mysql://url_user:url-pw-secret@url-host.internal:3307/url_db?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+            ),
+            ("DB_HOST", "stale-host.internal"),
+            ("DB_PORT", "3999"),
+            ("DB_NAME", "stale_db"),
+            ("DB_USERNAME", "stale_user"),
+        ]);
+        let settings = Settings::from_pairs(&vars).expect("URL config must load");
+        let logs = capture_logs(|| settings.log_boot_config());
+
+        assert!(logs.contains("db_host=\"url-host.internal\""), "{logs}");
+        assert!(logs.contains("db_port=3307"), "{logs}");
+        assert!(logs.contains("db_name=\"url_db\""), "{logs}");
+        assert!(logs.contains("db_username=\"url_user\""), "{logs}");
+        assert!(logs.contains("db_source=\"DATABASE_URL\""), "{logs}");
+        for hidden in [
+            "stale-host.internal",
+            "stale_db",
+            "stale_user",
+            "3999",
+            "url-pw-secret",
+        ] {
+            assert!(
+                !logs.contains(hidden),
+                "{hidden:?} must never appear in the boot line: {logs}"
+            );
+        }
+    }
+
+    /// No credential of ANY kind reaches the line — in dev/test (human
+    /// format) AND in production (JSON), since the FIELDS are the same and
+    /// only the renderer differs.
+    #[test]
+    fn boot_config_log_never_prints_secrets() {
+        const SESSION_SECRET: &str = "test-session-secret-that-is-longer-than-32-bytes";
+        const DB_PASSWORD: &str = "hunter2-db-password";
+        for app_env in ["test", "production"] {
+            let mut vars = with_overrides(&[
+                ("APP_ENV", app_env),
+                // Production refuses HASH_COST<2 at boot.
+                ("HASH_COST", "2"),
+                ("CORS_ORIGINS", "https://app.example.com"),
+                ("DB_PASSWORD", DB_PASSWORD),
+                ("DB_NAME", "kanpad_secret_probe"),
+                ("DB_HOST", "secret-host.internal"),
+            ]);
+            vars.retain(|(key, _)| *key != "DATABASE_URL");
+            let settings = Settings::from_pairs(&vars).expect("config must load");
+
+            // Production renders through the JSON subscriber (`log_json`).
+            let (logs, reported) = if app_env == "production" {
+                (
+                    capture_json_logs(|| settings.log_boot_config()),
+                    "\"db_name\":\"kanpad_secret_probe\"",
+                )
+            } else {
+                (
+                    capture_logs(|| settings.log_boot_config()),
+                    "db_name=\"kanpad_secret_probe\"",
+                )
+            };
+            assert!(
+                logs.contains(reported),
+                "env {app_env}: the target itself must still be reported: {logs}"
+            );
+            for secret in [DB_PASSWORD, SESSION_SECRET] {
+                assert!(
+                    !logs.contains(secret),
+                    "env {app_env}: secret leaked into the boot line: {logs}"
+                );
+            }
+        }
+    }
+
+    /// T005 step 5: the `DB_*` parts build the driver options DIRECTLY —
+    /// a special-character password (`pa/ss#1` destroys a URL: the `/`
+    /// terminates the authority, `#` starts a fragment) must round-trip
+    /// EXACTLY through `connect_options()`, which must be `Some` (no
+    /// silent unroutable fallback), with every part and the T66
+    /// charset+collation pins intact.
+    #[test]
+    fn parts_path_special_password_round_trips_without_a_url() {
+        let mut vars = base_vars();
+        vars.retain(|(key, _)| *key != "DATABASE_URL");
+        vars.extend_from_slice(&[
+            ("DB_HOST", "db.internal"),
+            ("DB_PORT", "3337"),
+            ("DB_USERNAME", "app"),
+            ("DB_PASSWORD", "pa/ss#1"),
+            ("DB_NAME", "kanpad"),
+        ]);
+        let settings = Settings::from_pairs(&vars).expect("special-char password must load");
+        let options = settings.connect_options().expect(
+            "parts-built options are ALWAYS Some — a special-char password must never \
+             fall back to the unroutable default",
+        );
+        assert_eq!(options.get_host(), "db.internal");
+        assert_eq!(options.get_port(), 3337);
+        assert_eq!(options.get_username(), "app");
+        assert_eq!(options.get_database(), Some("kanpad"));
+        assert_eq!(options.get_charset(), "utf8mb4");
+        assert_eq!(options.get_collation(), Some("utf8mb4_unicode_ci"));
+        // No public password getter (sqlx 0.9 keeps the field `pub(crate)`);
+        // the plain `#[derive(Debug)]` rendering is the byte-exact witness.
+        let rendered = format!("{options:?}");
+        assert!(
+            rendered.contains(r#"password: Some("pa/ss#1")"#),
+            "the password must round-trip byte-exactly: {rendered}"
+        );
+    }
+
+    /// T005 step 5: `database_url()` percent-encodes the userinfo, so the
+    /// derived URL PARSES for a special-character password (the encoding is
+    /// the inverse of the driver's percent-decode — the same password, not
+    /// a mangled one, reaches the driver when the URL is used for tooling).
+    #[test]
+    fn derived_url_percent_encodes_the_userinfo() {
+        let mut vars = base_vars();
+        vars.retain(|(key, _)| *key != "DATABASE_URL");
+        vars.extend_from_slice(&[
+            ("DB_HOST", "db.internal"),
+            ("DB_PORT", "3337"),
+            ("DB_USERNAME", "app"),
+            ("DB_PASSWORD", "pa/ss#1"),
+            ("DB_NAME", "kanpad"),
+        ]);
+        let settings = Settings::from_pairs(&vars).expect("config must load");
+        let url = settings.database_url();
+        assert_eq!(
+            url,
+            "mysql://app:pa%2Fss%231@db.internal:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+            "the raw `/` and `#` must be escaped, everything else kept"
+        );
+        assert!(
+            !url.contains("pa/ss#1"),
+            "the raw password must not appear in the URL: {url}"
+        );
+        // The rendered URL is still a valid connection target.
+        let reparsed: Result<sqlx::mysql::MySqlConnectOptions, _> = url.parse();
+        assert!(
+            reparsed.is_ok(),
+            "the encoded URL must parse back: {url} → {reparsed:?}"
+        );
+    }
+
+    /// T005 step 5: an unparseable `DATABASE_URL` fails `Settings::load`
+    /// (via `from_pairs` → `validate`) with a message naming `DATABASE_URL`
+    /// — a malformed URL is a CONFIG error, never a silent unroutable
+    /// fallback or a later causeless pool timeout. (The spec URL carries
+    /// charset+collation, so the syntax check is what rejects it.)
+    #[test]
+    fn unparseable_database_url_fails_boot_naming_the_variable() {
+        let vars = with_overrides(&[(
+            "DATABASE_URL",
+            "mysql://u:p@h:notaport/db?charset=utf8mb4&collation=utf8mb4_unicode_ci",
+        )]);
+        let err = Settings::from_pairs(&vars).expect_err("a malformed URL must fail boot");
+        match err {
+            ConfigError::Invalid(message) => {
+                assert!(
+                    message.contains("DATABASE_URL"),
+                    "the message must name the variable: {message}"
+                );
+                assert!(
+                    message.contains("percent-encoded"),
+                    "the message must carry the actionable hint: {message}"
+                );
+            }
+            other => panic!("expected ConfigError::Invalid, got {other:?}"),
+        }
     }
 }

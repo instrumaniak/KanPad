@@ -578,7 +578,8 @@ still UNCOMMITTED (the user is preparing the commits by hand).
 
 - **T67 MERGED `a0b25543`** (ff into `dev-rs-local`; worktree + branch deleted).
 - **tower-http 0.7.1** (both behaviour changes TEST-LOCKED: the compression **406** and the `ServeDir`
-  **trailing slash** — `tests/api/tower_http_07.rs`, 4 tests) · **tower-sessions 0.15 + core 0.15** (one
+  **trailing slash** — `tests/api/tower_http_07.rs`, 4 tests; the trailing-slash half is **superseded by
+  T008**, which removes `ServeDir` entirely) · **tower-sessions 0.15 + core 0.15** (one
   core) · **utoipa 6 + swagger-ui 10** (the OpenAPI union ordering changed → `openapi.json` **and**
   `schema.d.ts` regenerated **in this PR**; the typegen diff is 98 lines, all union re-ordering) ·
   **argon2 0.6 + bcrypt 0.19** (the PHC types moved to the `phc` crate; the salt is generated internally
@@ -741,7 +742,7 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
   fixed by T62 (commit `e2ec5773` removes the line). `HEALTHCHECK /health`
   (DB-free; uses `$PORT`) and digest-pinned bases (`rust` + `debian-slim`)
   also land with T62 (`e2ec5773`). `.dockerignore` excludes `target/`
-  (1.2 GB context reduction) and `.env`, keeps `.sqlx/` + `tests/` + `public/`.
+  (1.2 GB context reduction) and `.env`, keeps `.sqlx/` + `tests/` (no `public/` — API-only, T008).
 
 - **Gates re-verified today on `396b2d8b` + T70 + T62** (DB `kanpad-rs-testdb`
   restarted, tmpfs → `applied: 2 pending: 0`): `fmt` 0 | `clippy -D warnings -A
@@ -878,5 +879,25 @@ each step by hand. Before the first push, fix the **fourth latent red** (T62 own
 
 - **All three jobs passed:** `backend` 5m39s, `web` 44s, `docker-e2e` **6m37s** — the FIRST fully green `backend-rs CI` run. Every previously-unrun step executed for the first time and passed: `Dockerfile contract gates` (the re-aimed one), `docker build backend-rs`, `Image must not bake DATABASE_URL`, `Serve :3001 + smoke test`, `npm ci`, `vitest`, `playwright pinned`.
 - **The release build is not a problem:** `#20 [builder 8/8] RUN cargo build --locked --release` compiled **293 crates** and finished in **2m54s** (`lto = "thin"` + `codegen-units = 1` included). So the layer-cache/cargo-chef optimization discussed during the fix is UNNECESSARY — the job already exports `cache-to: type=gha,mode=max`, and a cold build fits comfortably in the budget.
-- **The unmigrated-DB prediction held:** the container booted against `kanpad_ci` with no migrations and the smoke passed (`/health` DB-free, `openapi.json` embedded, `/app/public/index.html` present). Still true: any future smoke that touches `/api/v1/*` needs `migrate run` in that job first.
+- **The unmigrated-DB prediction held:** the container booted against `kanpad_ci` with no migrations and the smoke passed (`/health` DB-free, `openapi.json` embedded, `/app/public/index.html` present — **superseded by T008**, which removes `/app/public` entirely). Still true: any future smoke that touches `/api/v1/*` needs `migrate run` in that job first.
+
+> T008 note: the Rust cache paths (`CARGO_HOME`/`CARGO_TARGET_DIR`) and `DATABASE_URL` guidance above still apply unchanged — only the served surface changed (API-only, no `public/`).
+> T007 note: production requires `TRUSTED_PROXIES=127.0.0.1`, `CORS_ORIGINS=https://kanpad.raziur.com`; proxy must append XFF and forward Host unchanged. See `docs/deployment.md`.
 - **Remaining CI noise (non-blocking):** GitHub annotations only — Node 20 deprecation for the SHA-pinned actions, and the `ubuntu-latest` → Ubuntu 26 migration notice (2026-10-19). Neither fails a job.
+
+## MariaDB leg (T006)
+
+Production runs MariaDB 10.6.28. A second test container runs MariaDB 10.6 on host `:3338`:
+
+```bash
+docker compose -f backend-rs/docker-compose.test.yml up -d mariadb --wait
+# leg 2 (MariaDB 10.6, tmpfs)
+export DATABASE_URL='mysql://root:@127.0.0.1:3338/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci'
+```
+
+Run the same suites as the MySQL leg against it:
+`cargo test -p backend-rs --lib common::session_store`,
+`cargo test -p backend-rs --test api sql_portability`,
+`cargo test -p backend-rs --test api auth_session`.
+
+Both legs must be green; the MariaDB leg is what catches server-specific SQL (e.g. the `AS new` row alias that broke production login).

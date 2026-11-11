@@ -18,8 +18,41 @@ tasks:
     phase: 0
     critical: false
   T004:
-    name: "fix e2e issues & others"
+    name: fix e2e issues & others
     status: pending
     depends: ~
+    phase: 0
+    critical: false
+  T005:
+    name: "BE-RS: DB connectivity & error logging"
+    status: done
+    depends: ~
+    phase: 0
+    critical: false
+  T006:
+    name: "BE-RS: MySQL & MariaDB SQL portability"
+    status: done
+    depends: ~
+    phase: 0
+    critical: true
+  T007:
+    name: "BE-RS: production proxy, CORS & error-shape hardening"
+    status: done
+    depends:
+      - T006
+      - T008
+    phase: 0
+    critical: true
+  T008:
+    name: Make backend API only
+    status: done
+    depends: ~
+    phase: 0
+    critical: true
+  T009:
+    name: "BE-RS: MariaDB CI leg — replace prepare --check with online describe gate"
+    status: done
+    depends:
+      - T006
     phase: 0
     critical: false

@@ -201,9 +201,26 @@ $MYSQL -e "DROP DATABASE IF EXISTS kanpad_rs_dev;
            CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 cd backend-rs
-cargo run migrate run      # ✓ prints:  migrations applied: 2
+cargo run migrate run
+# ✓ FIRST a boot line on stdout, then:  the probe line, then:  migrations applied: 2
+#   The boot line names the database and user the process dials — read it
+#   BEFORE trusting the run, it is the only place the output says WHICH
+#   database it touched:
+#     INFO backend_rs::config: boot configuration app_env=development
+#       db_host="127.0.0.1" db_port=3306 db_name="kanpad_rs_dev"
+#       db_username="user" db_source="DB_* parts"
+#   db_source tells you which input won: "DATABASE_URL" or "DB_* parts". If it
+#   says DATABASE_URL, the DB_* values in `.env` are IGNORED — they are not
+#   what the process connects to.
+#   The NEXT line is the T005 boot probe (direct dial, transient-only retry):
+#     INFO backend_rs::database: database connected database="kanpad_rs_dev"
+#       server_version=8.4.11 selected_database="kanpad_rs_dev" attempts=1 elapsed_ms=50
+#   ...and only then the migration lines. "database connected" is the SAME
+#   probe the /ready handler runs (bounded dial + transition log); the
+#   attempts count is 1 on a healthy DB, the failure classes never burn it.
 cargo run migrate info
-# ✓ prints three lines; the LAST one must be:  applied: 2 pending: 0
+# ✓ prints one boot line (same shape as above) + the probe line (same) +
+#   migration lines; the LAST one must be:  applied: 2 pending: 0
 #   (the exact string is "applied: 2 pending: 0" — 2 = the number of migration
 #    FILES, not tables; the baseline creates 12 app tables + sessions, and
 #    0002 converts those 12 to utf8mb4)
@@ -430,6 +447,9 @@ cd "$ROOT/backend-rs"
 # dotenvy never overrides an already-set variable); every other DB_* key still
 # comes from .env, so no password ever reaches the command line.
 DB_NAME=kanpad_rs_ref cargo run migrate run      # ✓ prints:  migrations applied: 2
+# ✓ the boot line above it must read db_name="kanpad_rs_ref" — if it still says
+#   the dev database, the override did not take and you are about to build the
+#   reference schema in the wrong place.
 cd "$ROOT"
 ```
 
@@ -745,6 +765,12 @@ $MYSQL -e "DROP DATABASE kanpad_nest_restore;
 | 11 | `migrate run` dies with `1050 (42S01): Table '…' already exists` | You ran it on a **populated** database. `0001` has no `IF NOT EXISTS` by design and sqlx 0.8.6 has no stamp command, so the Rust schema can only be built on an empty DB. Drop and re-create the staging DB from step 3 — and clear the dirty journal row first (see #12). |
 | 12 | `error: migration 1 is partially applied; fix and remove row from '_sqlx_migrations'` | A previous `migrate run` failed mid-flight and left `success=0` behind (sqlx records the row *before* running it). `DELETE FROM _sqlx_migrations WHERE success = 0;` — then fix the real cause before re-running. Never hand-edit a `success=1` row: sqlx checksums are SHA-384s over the migration file's bytes. |
 | 13 | `1553 Cannot drop index 'X': needed in a foreign key constraint`, or `1826 Duplicate foreign key constraint name 'X'` | Rules for reshaping indexes by hand: (a) never `DROP INDEX` an index that backs a FK — drop the FK first, in its **own** statement; (b) never `DROP FOREIGN KEY x` and `ADD CONSTRAINT x` in the *same* ALTER — same-name duplicate (1826); (c) to rename an index use `ALTER TABLE t RENAME INDEX old TO new` — it works on FK-backing indexes (MariaDB ≥ 10.5.2, MySQL ≥ 5.7) and the FK follows the rename and stays enforced. |
+| 14 | `migrate`/`serve`/`create-admin` exits 1 (create-admin: 3) with `cannot connect to the database (attempts: 1, …): access denied (1045) — MySQL rejected the credentials: check DB_USERNAME / DB_PASSWORD` | The old behavior printed `applied: 0 pending: 2` ("fresh database") and exited **0** — treat any connectivity line as the real outcome now. 1045 is a permanent error, so the probe fails on the FIRST attempt (no retry). Fix the credentials in `.env` (or `DATABASE_URL`) and re-run. The password is never echoed — do not put it on the command line. |
+| 15 | exits 1 with `connection refused — nothing is listening on host:port — check DB_HOST/DB_PORT` after several `(attempts: N` | The probe RETRIES transient failures (refused, timeout, DNS) until `DB_STARTUP_TIMEOUT_SECS` (default 15) and then reports the attempt count. The shared test container is on **:3337** — if you pointed `DB_PORT`/`DATABASE_URL` at 3306, fix the port. Check the container is up (`docker ps`), then re-run. |
+| 16 | exits 1 with `unknown database (1049) — the database does not exist: CREATE DATABASE …` | The server answered but the database named by `DB_NAME`/`DATABASE_URL` is absent (a legit "fresh" state only for the `kanpad_cli_*` test DBs the CLI suite mints). Create it with the exact command from the hint (charset **utf8mb4**, collation **utf8mb4_unicode_ci** — both are enforced by `Settings::validate`), then `migrate run`. |
+| 17 | boot refuses with `DATABASE_URL does not parse as a MySQL connection URL — … (the password must be percent-encoded…)` (serve/`migrate *` exit 1, create-admin exits 3) | A malformed URL is a **config** error, not an outage — it used to silently degrade the pool to an unroutable `127.0.0.1:1`. Percent-encode special characters in the userinfo (`/` → `%2F`, `#` → `%23`, `@` → `%40`; `Settings::database_url()` does this automatically for the `DB_*` parts path). The `DB_*` parts path (`DB_PASSWORD='pa/ss#1'`) needs NO encoding — it never passes through a URL. |
+| 18 | `access denied` with **`1130`** (host not allowed for the account) | The probe classifies it distinctly (not a credential error) and prints the `1130` hint: add the matching account — `CREATE USER 'user'@'host' + GRANT …`. |
+| 19 | the boot line says `db_source="DATABASE_URL"` but `.env` only defines `DB_*` keys | The URL **wins**. A leftover `DATABASE_URL` in `.env` (or the environment) overrides every `DB_*` value — the boot line tells you which input won, so check both. |
 
 ---
 
@@ -876,3 +902,7 @@ runbook's current shape.
   the same migrations) **before** seeding the default labels
 - seed the default labels, then re-check `labels` with the seed-aware gates
 - log in by hand; then blue-green cutover with backup-restore-only rollback
+
+## Appendix — production flavour (T006)
+
+Production runs **MariaDB 10.6.28** (not MySQL 8). The Rust backend must run on both MySQL 8.0.19+ and MariaDB 10.6+; see `specs/api-rewrite-rs-specs/30-db-schema.md` ("Supported servers") for the portable-SQL rules. Post-deploy gate: `POST /api/auth/login` -> 200 + `Set-Cookie: __Host-kanpad.sid=...` (the login smoke), plus one row in `sessions` per login.

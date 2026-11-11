@@ -101,6 +101,12 @@ pub struct Metrics {
     latency: Mutex<Histogram>,
     acquire: Mutex<Histogram>,
     throttle_rejections: AtomicU64,
+    /// `kanpad_db_up` — last probe outcome (1 up / 0 down; 0 until the
+    /// first probe completes — there is NO background monitor).
+    db_up: AtomicI64,
+    /// `kanpad_db_connect_failures_total{class}` — failed probe/connect
+    /// attempts by diagnostics class.
+    db_connect_failures: Mutex<BTreeMap<String, u64>>,
 }
 
 impl Metrics {
@@ -148,6 +154,25 @@ impl Metrics {
     /// One request rejected by the rate limiter (HTTP 429).
     pub fn inc_throttle_rejection(&self) {
         self.throttle_rejections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a completed DB probe outcome (`kanpad_db_up`). Refresh
+    /// points: `/ready` scrapes + the boot/startup probe — there is NO
+    /// background monitor, so the gauge is only as fresh as its last probe.
+    pub fn set_db_up(&self, up: bool) {
+        self.db_up.store(if up { 1 } else { 0 }, Ordering::Relaxed);
+    }
+
+    /// One failed DB connection attempt, labelled by the diagnostics class
+    /// (`access denied`, `refused`, … — `DbClass::label`, a valid
+    /// Prometheus label value).
+    pub fn record_db_connect_failure(&self, class: &str) {
+        self.db_connect_failures
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(class.to_string())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
     }
 
     /// Prometheus text exposition (version 0.0.4). `pool_size`/`pool_idle`
@@ -224,6 +249,41 @@ impl Metrics {
         );
         let rejections = self.throttle_rejections.load(Ordering::Relaxed);
         out.push_str(&format!("kanpad_throttle_rejections_total {rejections}\n"));
+
+        // The refresh points are stated in the HELP text ON PURPOSE: an
+        // operator must not expect `/metrics` alone to flip the gauge (no
+        // background monitor exists — only `/ready` scrapes and the boot
+        // probe write it).
+        header(
+            &mut out,
+            "kanpad_db_up",
+            "gauge",
+            "Database reachability as observed by the readiness probe and the boot probe \
+             (1 = up, 0 = down; 0 until the first probe completes; there is NO background \
+             monitor).",
+        );
+        let db_up = self.db_up.load(Ordering::Relaxed);
+        out.push_str(&format!("kanpad_db_up {db_up}\n"));
+
+        header(
+            &mut out,
+            "kanpad_db_connect_failures_total",
+            "counter",
+            "Failed database connection attempts by diagnostics class (observed by the \
+             readiness probe and the boot probe).",
+        );
+        {
+            let failures = self
+                .db_connect_failures
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for (class, count) in failures.iter() {
+                let class = escape_label(class);
+                out.push_str(&format!(
+                    "kanpad_db_connect_failures_total{{class=\"{class}\"}} {count}\n"
+                ));
+            }
+        }
 
         process_metrics(&mut out);
 
@@ -444,6 +504,41 @@ mod tests {
         assert!(
             text.contains("kanpad_throttle_rejections_total 1"),
             "{text}"
+        );
+    }
+
+    /// T005: the DB-up gauge renders 0 before the first probe, flips with
+    /// `set_db_up`, and the failure counter folds two failures of the SAME
+    /// class into one labelled line (`refused 2`).
+    #[test]
+    fn db_up_gauge_and_labelled_failure_counter_render() {
+        let metrics = Metrics::new();
+        let before = metrics.render(0, 0);
+        assert!(before.contains("kanpad_db_up 0"), "{before}");
+        assert!(
+            !before.contains("kanpad_db_connect_failures_total{"),
+            "no failure series before the first failure: {before}"
+        );
+
+        metrics.record_db_connect_failure("refused");
+        metrics.record_db_connect_failure("refused");
+        metrics.record_db_connect_failure("access denied");
+        metrics.set_db_up(false);
+        let down = metrics.render(0, 0);
+        assert!(down.contains("kanpad_db_up 0"), "{down}");
+        assert!(
+            down.contains("kanpad_db_connect_failures_total{class=\"refused\"} 2"),
+            "{down}"
+        );
+        assert!(
+            down.contains("kanpad_db_connect_failures_total{class=\"access denied\"} 1"),
+            "{down}"
+        );
+
+        metrics.set_db_up(true);
+        assert!(
+            metrics.render(0, 0).contains("kanpad_db_up 1"),
+            "recovery flips the gauge"
         );
     }
 

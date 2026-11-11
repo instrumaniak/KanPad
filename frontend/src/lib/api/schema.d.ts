@@ -772,11 +772,23 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Readiness probe: `SELECT 1` through the pool. `200 {status:"ok",db:"up"}`
-         *     when MySQL answers, `503` problem+json otherwise — ANY pool error maps to
-         *     `503` (a wrong password is "not ready", not a 500). Fixed strings only:
-         *     driver errors can name users/hosts, so neither the error nor the URL is
-         *     interpolated into the body or the logs.
+         * Readiness probe: a DIRECT-dial probe (`db::wait_until_ready`) — the same
+         *     diagnostics the boot path uses — bounded by `DB_READY_PROBE_TIMEOUT_MS`
+         *     (default 500 ms, calibrated to the kubelet's 1 s `timeoutSeconds`
+         *     default; probe `timeoutSeconds ≥ 2×` the budget). `200
+         *     {status:"ok",db:"up"}` when MySQL answers, `503` problem+json otherwise.
+         * @description **Why NOT `SELECT 1` through the pool**: a pooled acquire retries
+         *     refused errors internally until `acquire_timeout` and then returns a
+         *     causeless `PoolTimedOut` (`sqlx-core-0.9.0/pool/inner.rs:325-385`,
+         *     upstream #3808/#3929) — the probe could not even see the failure it
+         *     probes for, and a refused port held the request for seconds. The direct
+         *     dial classifies on attempt 1 and is budget-bounded.
+         *
+         *     The outcome is recorded via `AppState::record_db_probe` (transition log
+         *     + `kanpad_db_up` + `kanpad_db_connect_failures_total{class}`). ANY
+         *     failure maps to the same `503` body (fixed strings only — driver errors
+         *     can name users/hosts, so neither the error nor the URL is interpolated
+         *     into the body or the logs).
          */
         get: operations["ready"];
         put?: never;

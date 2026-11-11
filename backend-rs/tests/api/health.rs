@@ -1,10 +1,8 @@
-//! T05 config/observability/versioning/SPA probes.
+//! T05 config/observability/versioning probes.
 //!
 //! DB-free except `ready_200_when_db_up`, which uses `DATABASE_URL` when the
 //! environment provides one (CI always sets it; otherwise it reports the skip
 //! and passes — the DB-down paths below are the deterministic core).
-
-use std::sync::Mutex;
 
 use axum::body::to_bytes;
 use axum::http::{Method, Request, StatusCode, header};
@@ -15,8 +13,6 @@ use tower::ServiceExt;
 use super::helpers::{PROBLEM_BASE, test_app, test_settings};
 
 const WRONG_PASSWORD: &str = "this-password-is-wrong-xyz";
-
-static PUBLIC_LOCK: Mutex<()> = Mutex::new(());
 
 /// Pool that can never connect (unroutable port): refused fast, so the test
 /// stays deterministic with no live DB.
@@ -64,6 +60,10 @@ fn assert_transport_headers(headers: &axum::http::HeaderMap) {
     assert_eq!(
         headers.get("referrer-policy").unwrap(),
         "strict-origin-when-cross-origin"
+    );
+    assert!(
+        headers.get("content-security-policy").is_none(),
+        "API-only backend must not emit a CSP header"
     );
 }
 
@@ -126,6 +126,7 @@ async fn openapi_stub_served() {
 #[tokio::test]
 async fn ready_503_when_db_down_no_password_leak() {
     let app = broken_pool_app();
+    let started = std::time::Instant::now();
     let response = app
         .oneshot(
             Request::get("/ready")
@@ -134,6 +135,7 @@ async fn ready_503_when_db_down_no_password_leak() {
         )
         .await
         .unwrap();
+    let elapsed = started.elapsed();
 
     let (status, headers, body) = read_body(response).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
@@ -151,6 +153,44 @@ async fn ready_503_when_db_down_no_password_leak() {
         "password leaked in body: {raw}"
     );
     assert!(!raw.contains("127.0.0.1:1"), "dial address leaked: {raw}");
+    // T005: the probe is DIRECT-dial and budget-bounded (DB_READY_PROBE_TIMEOUT_MS,
+    // default 500 ms) — the old pooled `SELECT 1` waited out the pool's
+    // internal retry loop (seconds) and returned a causeless PoolTimedOut.
+    // The kubelet's default probe timeout is 1 s, so the 503 must land well
+    // inside it.
+    assert!(
+        elapsed < std::time::Duration::from_millis(1500),
+        "the readiness probe must be budget-bounded, took {elapsed:?}"
+    );
+}
+
+/// T005: a failed readiness probe moves the tri-state flag
+/// (`Unknown → Down`) — the transition the boot `warn` path and the
+/// `Up→Down` error log key on. The body contract above is unchanged.
+#[tokio::test]
+async fn ready_failure_records_the_tri_state() {
+    let settings = Settings {
+        database_url: Some(format!(
+            "mysql://kanpad:{WRONG_PASSWORD}@127.0.0.1:1/kanpad?charset=utf8mb4"
+        )),
+        ..test_settings()
+    };
+    let state = build_state(settings);
+    let app = create_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::get("/ready")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        state.db_state.load(std::sync::atomic::Ordering::SeqCst),
+        backend_rs::state::DB_PROBE_DOWN,
+        "the failed probe must move the flag Unknown → Down"
+    );
 }
 
 #[tokio::test]
@@ -301,52 +341,54 @@ async fn swagger_ui_and_openapi_are_not_rewritten() {
 }
 
 #[tokio::test]
-async fn spa_fallback_serves_index_html_for_non_api_miss() {
-    // No other test touches `public/`, so the lock only needs to cover
-    // fixture setup/teardown, never the awaits in between.
-    let index = std::path::Path::new("public").join("index.html");
-    let created_dir: bool;
-    {
-        let _guard = PUBLIC_LOCK.lock().unwrap();
-        let dir = std::path::Path::new("public");
-        created_dir = !dir.exists();
-        if created_dir {
-            std::fs::create_dir(dir).unwrap();
+async fn non_api_path_is_problem_json_404() {
+    // Every non-API path is the shared problem+json 404 — no SPA, no HTML.
+    let paths = ["/", "/boards", "/index.html", "/assets/app.js"];
+    let methods = [Method::GET, Method::HEAD, Method::POST];
+    for method in methods {
+        for path in paths {
+            let app = test_app();
+            let request = Request::builder()
+                .method(method.clone())
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "path {path} method {method}"
+            );
+            assert_transport_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(
+                content_type, "application/problem+json",
+                "path {path} method {method}"
+            );
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body_str = String::from_utf8_lossy(&body);
+            assert!(
+                !body_str.contains("<html"),
+                "body must not contain HTML: {body_str}"
+            );
+            if !body.is_empty() {
+                let json: Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    json["type"], "https://kanpad.dev/problems/not-found",
+                    "path {path} method {method}"
+                );
+                assert!(
+                    !json["instance"].as_str().unwrap_or("").is_empty(),
+                    "instance must be non-empty: {json}"
+                );
+            }
         }
-        std::fs::write(&index, "<!doctype html><html>T05-SPA-MARKER</html>").unwrap();
-    }
-
-    let get = |path: &str| Request::get(path).body(axum::body::Body::empty()).unwrap();
-    let app = test_app();
-    let response = app.oneshot(get("/some/spa/route")).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_transport_headers(response.headers());
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned();
-    assert!(
-        content_type.contains("text/html"),
-        "SPA fallback must serve html, got: {content_type}"
-    );
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(
-        body.windows(14).any(|w| w == b"T05-SPA-MARKER"),
-        "SPA fallback must serve index.html"
-    );
-
-    let app = test_app();
-    let response = app.oneshot(get("/")).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(body.windows(14).any(|w| w == b"T05-SPA-MARKER"));
-
-    std::fs::remove_file(&index).unwrap();
-    if created_dir {
-        std::fs::remove_dir("public").unwrap();
     }
 }
 

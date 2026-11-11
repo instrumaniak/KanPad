@@ -1,5 +1,5 @@
-//! CORS preflight guard (T55, `54` B3) + the cross-origin / CSP guards
-//! (T56, `54` B4 + B7).
+//! CORS preflight guard (T55, `54` B3) + the cross-origin guard
+//! (T56, `54` B4).
 //!
 //! **The bug the preflight guard exists to prevent.** `CorsLayer::allow_methods`
 //! is a hand-written list — axum does not expose the registered route table,
@@ -26,12 +26,7 @@
 //! passes, `cross-site|same-site` passes ONLY for a trusted `Origin`, a
 //! request with neither header passes (curl/proxy/native), and an `Origin`
 //! whose authority equals the request's effective host passes (the safety net
-//! that makes an EMPTY production allowlist workable for a same-origin SPA).
-//!
-//! **The CSP guard (T56).** The Rust service serves the SPA itself, so it
-//! MUST carry a `Content-Security-Policy`. The policy's `script-src` allows
-//! the SPA's inline theme bootstrap by its **hash** — computed at boot from
-//! the `public/index.html` the server actually serves, never hand-written.
+//! that makes an EMPTY production allowlist workable).
 //!
 //! DB-free: a preflight never reaches the handler (the CORS layer answers it),
 //! and the cross-origin probes target a path with no route (an allowed
@@ -41,9 +36,9 @@
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},
-    response::Response,
 };
-use backend_rs::{build_state, config::Settings, create_app, create_app_with_csp};
+use backend_rs::config::AppEnv;
+use backend_rs::{build_state, config::Settings, create_app};
 use tower::ServiceExt;
 
 use super::helpers::{assert_problem, json_of, send, test_app, test_settings};
@@ -54,13 +49,6 @@ const ORIGIN: &str = "http://localhost:5173";
 /// Every verb the API serves. `PUT` is the one that drifted — it is here
 /// because `PUT /api/v1/cards/{id}/labels/{label_id}` is a real route.
 const SERVED_VERBS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE"];
-
-/// The served SPA index, as a FIXTURE (`backend-rs/public/` is not in git —
-/// the Dockerfile copies `frontend/dist/` into it before the image build, so
-/// the file does not exist in a dev tree). The fixture mirrors the real
-/// `frontend/index.html`: ONE inline theme bootstrap + ONE external module
-/// script.
-const SPA_INDEX_FIXTURE: &str = include_str!("../fixtures/spa-index.html");
 
 /// A path with no route: an ALLOWED request ends on the API's JSON 404, a
 /// REJECTED one on the cross-origin layer's 403 — both before any DB work.
@@ -96,33 +84,6 @@ fn probe(
         builder = builder.header(header::HOST, host);
     }
     builder.body(Body::empty()).expect("request builds")
-}
-
-/// The `Content-Security-Policy` header of a response, if present.
-fn csp_of(response: &Response) -> Option<String> {
-    response
-        .headers()
-        .get("content-security-policy")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string)
-}
-
-/// The value of one `;`-separated CSP directive (everything AFTER its name —
-/// `directive(p, "default-src") == Some("'self'")`).
-///
-/// Assertions are made PER DIRECTIVE (`script-src`, `connect-src`, …) rather
-/// than on the whole policy string: `'unsafe-inline'` is legitimate in
-/// `style-src` and fatal in `script-src`, so a substring check over the whole
-/// header cannot tell the two apart.
-fn directive<'a>(policy: &'a str, name: &str) -> Option<&'a str> {
-    policy.split(';').map(str::trim).find_map(|part| {
-        let mut words = part.split_whitespace();
-        if words.next() != Some(name) {
-            return None;
-        }
-        // `part` starts with `name`, so this slice is a char boundary.
-        Some(part[name.len()..].trim())
-    })
 }
 
 /// Every served verb must survive a preflight (the drift guard).
@@ -407,7 +368,7 @@ async fn the_compose_dev_topology_same_site_origin_is_trusted() {
     );
 }
 
-/// The `Origin`/`Host` fallback: a same-origin SPA works with an **EMPTY**
+/// The `Origin`/`Host` fallback: an empty allowlist works with the
 /// allowlist — the operator does not have to configure `CORS_ORIGINS` for
 /// the production single-origin deployment to keep working.
 #[tokio::test]
@@ -426,19 +387,18 @@ async fn same_origin_is_allowed_with_an_empty_allowlist() {
     );
 }
 
-/// ONE canonical list feeds THREE consumers: the CORS allowlist, the
-/// cross-origin trusted set and the CSP's `connect-src`. If they could
-/// disagree, the API would answer a preflight for an origin it then
-/// rejects — or advertise an origin in the CSP it does not serve.
+/// ONE canonical list feeds TWO consumers: the CORS allowlist and the
+/// cross-origin trusted set. If they could disagree, the API would answer a
+/// preflight for an origin it then rejects.
 ///
 /// The configured entry is deliberately **NOT** in canonical form (uppercase
 /// scheme + host). A `Settings` built by hand never passes boot validation,
 /// so this is exactly the shape a mis-written config would take — and if any
-/// of the three consumers read the RAW list instead of the canonicalizer, the
+/// of the two consumers read the RAW list instead of the canonicalizer, the
 /// uppercase spelling would leak into its output and the assertions below
 /// would see it.
 #[tokio::test]
-async fn one_canonical_list_feeds_cors_cross_origin_and_csp() {
+async fn one_canonical_list_feeds_cors_cross_origin_and_csrf() {
     const RAW: &str = "HTTPS://APP.EXAMPLE.COM";
     const CANONICAL: &str = "https://app.example.com";
     let settings = Settings {
@@ -447,25 +407,7 @@ async fn one_canonical_list_feeds_cors_cross_origin_and_csp() {
     };
     let app = create_app(build_state(settings));
 
-    // 1. the CSP's connect-src names the CANONICAL origin (not the raw one).
-    let response = app
-        .clone()
-        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let csp = csp_of(&response).expect("the CSP header must be present");
-    let connect_src = directive(&csp, "connect-src").expect("connect-src is part of the policy");
-    let sources: Vec<&str> = connect_src.split_whitespace().collect();
-    assert!(
-        sources.contains(&CANONICAL),
-        "the CSP's connect-src must name the canonical origin: {csp}"
-    );
-    assert!(
-        !sources.contains(&RAW),
-        "the raw (non-canonical) entry must never reach the CSP: {csp}"
-    );
-
-    // 2. the CORS layer allows the canonical origin.
+    // 1. the CORS layer allows the canonical origin.
     let preflight = app
         .clone()
         .oneshot(
@@ -489,7 +431,7 @@ async fn one_canonical_list_feeds_cors_cross_origin_and_csp() {
         "the CORS layer must allow the canonical origin"
     );
 
-    // 3. the cross-origin layer trusts it (a cross-site request from it is
+    // 2. the cross-origin layer trusts it (a cross-site request from it is
     //    therefore allowed).
     let request = probe("POST", Some("cross-site"), Some(CANONICAL), None);
     let (status, _, _) = send(app, request).await;
@@ -500,156 +442,50 @@ async fn one_canonical_list_feeds_cors_cross_origin_and_csp() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// T56 — the CSP header
-// ---------------------------------------------------------------------------
-
-/// The CSP header must be on a 200 **and** on a 404.
 #[tokio::test]
-async fn csp_header_is_present_on_a_200_and_on_a_404() {
-    let app = test_app();
-    let ok = app
-        .clone()
-        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(ok.status(), StatusCode::OK);
-    let policy = csp_of(&ok).expect("a 200 must carry the CSP header");
-    assert_eq!(
-        directive(&policy, "default-src"),
-        Some("'self'"),
-        "unexpected policy: {policy}"
-    );
-    assert_eq!(
-        directive(&policy, "frame-ancestors"),
-        Some("'none'"),
-        "unexpected policy: {policy}"
-    );
-    assert_eq!(
-        directive(&policy, "base-uri"),
-        Some("'self'"),
-        "unexpected policy: {policy}"
-    );
-    assert_eq!(
-        directive(&policy, "form-action"),
-        Some("'self'"),
-        "unexpected policy: {policy}"
-    );
-    // `style-src 'unsafe-inline'` is REQUIRED (the frontend uses inline
-    // `style={{…}}` props); a browser ignores `'unsafe-inline'` in
-    // `script-src` when a hash is present, but the directive must not carry
-    // it at all — nor `'unsafe-eval'`.
-    let style_src = directive(&policy, "style-src").expect("style-src is part of the policy");
-    assert!(
-        style_src
-            .split_whitespace()
-            .any(|src| src == "'unsafe-inline'"),
-        "the frontend needs inline styles: {policy}"
-    );
-    let script_src = directive(&policy, "script-src").expect("script-src is part of the policy");
-    assert!(
-        !script_src.contains("'unsafe-inline'"),
-        "script-src must not allow inline scripts: {policy}"
-    );
-    assert!(
-        !script_src.contains("'unsafe-eval'"),
-        "script-src must not allow eval: {policy}"
-    );
+async fn production_canonical_origin_feeds_cors_and_csrf_without_localhost() {
+    let settings = Settings {
+        app_env: AppEnv::Production,
+        hash_cost: 2,
+        cors_origins: "https://kanpad.raziur.com".to_string(),
+        ..test_settings()
+    };
+    let app = create_app(build_state(settings));
 
-    let missing = app
+    // Preflight echoes the canonical origin.
+    let preflight = app
+        .clone()
         .oneshot(
-            Request::get("/api/v1/definitely-not-a-route")
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/api/v1/cards/1/labels/2")
+                .header(header::ORIGIN, "https://kanpad.raziur.com")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
-    assert!(
-        csp_of(&missing).is_some(),
-        "a 404 must carry the CSP header too"
-    );
-}
+    let allow_origin = preflight
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(allow_origin, "https://kanpad.raziur.com");
 
-/// `connect-src` must be `'self'` **plus the CORS allowlist** — in the
-/// shipped dev topology the SPA is served by Vite at `http://localhost:5173`
-/// and calls the API at `http://localhost:3001` (cross-origin), so
-/// `'self'` alone would have the browser block every API call.
-#[tokio::test]
-async fn csp_connect_src_lists_the_cors_allowlist() {
-    let app = test_app();
-    let response = app
-        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let policy = csp_of(&response).expect("the CSP header must be present");
-    let connect_src = directive(&policy, "connect-src").expect("connect-src is part of the policy");
-    let sources: Vec<&str> = connect_src.split_whitespace().collect();
-    assert!(
-        sources.contains(&"'self'"),
-        "connect-src must always allow the serving origin: {policy}"
+    // Cross-origin trusted POST passes the CSRF layer.
+    let request = probe(
+        "POST",
+        Some("cross-site"),
+        Some("https://kanpad.raziur.com"),
+        None,
     );
-    assert!(
-        sources.contains(&ORIGIN),
-        "connect-src must name the allowlisted origin {ORIGIN}: {policy}"
-    );
-}
+    let (status, _, _) = send(app.clone(), request).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
-/// The inline theme bootstrap is allowed by its **hash**, computed from the
-/// served index — never a hand-maintained constant.
-///
-/// The expected hash below is derived **out of band** (`openssl dgst -sha256
-/// -binary | base64` over the exact bytes between the fixture's `<script>`
-/// tags), NOT by calling the implementation again: recomputing with the code
-/// under test would assert only that it agrees with itself. This way an EDIT
-/// to the fixture's inline script fails the test — which is the whole point
-/// of the drift gate ("drift fails the test, not the page").
-const EXPECTED_INLINE_SCRIPT_HASH: &str = "'sha256-QMHClxD2saan54ttd7m7mAvax7fxuvMeq2qVTMbRZ4k='";
-
-#[tokio::test]
-async fn csp_script_src_carries_the_hash_of_the_served_inline_script() {
-    let hashes = backend_rs::inline_script_hashes(SPA_INDEX_FIXTURE.as_bytes());
-    assert_eq!(
-        hashes.len(),
-        1,
-        "the fixture has exactly ONE inline script (the external module \
-         script is covered by script-src 'self')"
-    );
-    assert_eq!(
-        hashes[0], EXPECTED_INLINE_SCRIPT_HASH,
-        "the recomputed hash of the fixture's inline script must match the \
-         independently derived one — an edited script must fail HERE"
-    );
-    let app = create_app_with_csp(build_state(test_settings()), hashes.clone());
-    let response = app
-        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let policy = csp_of(&response).expect("the CSP header must be present");
-    let script_src = directive(&policy, "script-src").expect("script-src is part of the policy");
-    let sources: Vec<&str> = script_src.split_whitespace().collect();
-    assert!(
-        sources.contains(&"'self'"),
-        "script-src must still allow the served bundles: {policy}"
-    );
-    assert!(
-        sources.contains(&EXPECTED_INLINE_SCRIPT_HASH),
-        "the CSP's script-src must carry the inline script's hash \
-         {EXPECTED_INLINE_SCRIPT_HASH}: {policy}"
-    );
-}
-
-/// The Swagger UI is a developer surface, not the SPA: it is EXCLUDED from
-/// the CSP.
-#[tokio::test]
-async fn csp_excludes_the_swagger_ui() {
-    let app = test_app();
-    let response = app
-        .oneshot(Request::get("/swagger-ui").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert!(
-        csp_of(&response).is_none(),
-        "the Swagger UI must be excluded from the CSP"
-    );
+    // No CSP on any response.
+    let request = Request::get("/health").body(Body::empty()).unwrap();
+    let (status, headers, _) = send(app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get("content-security-policy").is_none());
 }

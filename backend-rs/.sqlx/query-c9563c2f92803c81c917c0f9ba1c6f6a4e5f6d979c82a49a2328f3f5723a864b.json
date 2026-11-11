@@ -1,0 +1,26 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" FROM `cards` WHERE `column_id` = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max_pos!: i64",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | BINARY",
+          "collation": 63,
+          "max_size": 11
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c9563c2f92803c81c917c0f9ba1c6f6a4e5f6d979c82a49a2328f3f5723a864b"
+}

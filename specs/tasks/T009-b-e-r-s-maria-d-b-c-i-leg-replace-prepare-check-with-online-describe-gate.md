@@ -1,7 +1,7 @@
 # T009: BE-RS: MariaDB CI leg — replace prepare --check with online describe gate
 
-> **STATUS (2026-11-11): implementation COMPLETE, reviewed, and landed on `dev`** (merged from
-> `dev-local` @ `ec83f489`). See the Log for the CI outcome. This file doubles as the **review
+> **STATUS (2026-11-11): implementation COMPLETE, reviewed, landed on `dev`, and CI-verified green**
+> (run `43010525748`; merged from `dev-local` @ `ec83f489`). This file doubles as the **review
 > handoff**: give a reviewer agent this file plus `git diff` and it needs nothing else. See
 > §Review checklist.
 
@@ -149,7 +149,8 @@ and the AC line at ~346 corrected to per-leg wording).
 - [x] `export-openapi` output byte-identical to the committed `openapi.json`.
 - [x] `.sqlx/` diff limited to the 5 affected queries; no unrelated drift.
 - [x] Lesson appended (`docs/lessons/ci-quality.md`, dated) + T006 spec's false assumption corrected.
-- [ ] **CI green on `dev`** — pending commit/push (the only outstanding item).
+- [x] **CI green on `dev`** — run `43010525748` (2026-11-11): `backend`, `backend-mariadb`, `web`, and
+      the docker/vitest job all green.
 
 ## Notes
 
@@ -259,8 +260,9 @@ are part of the task record. `AGENTS.md` is unrelated and committed separately).
 - [2026-11-11 16:36] Implementation complete + locally verified on both legs (MySQL 8.4: 242 tests, prepare --check green; MariaDB 10.6: 20 tests + online describe gate green). All changes UNCOMMITTED on dev-local @ ec83f489 — awaiting review of the uncommitted diff against this file.
 - [2026-11-11 17:14] Review applied: lesson error count corrected (20, not 18), cache-count and
   checklist wording fixed, the T009 spec + `status.yaml` added to the landing set, and the
-  out-of-scope full-suite MariaDB result recorded in §Notes 3. Landed on `dev`; CI outcome follows
-  in the run list.
+  out-of-scope full-suite MariaDB result recorded in §Notes 3. Landed on `dev`.
+- [2026-11-11 17:40] CI green on `dev` at `78a82826` — run `43010525748`: all four jobs succeeded,
+  including `backend-mariadb` (the first green run of the leg).
 
 ## Lessons (2026-11-11)
 

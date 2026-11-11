@@ -5,7 +5,7 @@ KanPad is a  _project management & note taking_ tool.
 Tech stack:
 - _Frontend_: TypeScript, React, Vite : `frontend/`
 - _Backend_ : Rust, Axum, sqlx : `backend-rs`
-- _Database_: MySQL
+- _Database_: MySQL/MariaDB
 
 ## Project Specification References
 
@@ -45,10 +45,11 @@ Keep the summary line strictly between **20 and 50 characters** with no ending p
 
 - development, testing, production - all must follow the exact db migration patterns for safe, reproducible data persistence behavior.
 
-## Backend E2E Test Pattern: Must Always Verify DB Persists
+## Backend E2E Test Pattern: Must Always Verify DB Persists & MySQL/MariaDB compatibility check
 
 - For ALL data modification endpoints, tests MUST verify actual database state, not just API response.
 - For every PATCH/POST/DELETE test, add ONE additional assertion that verifies persistence via a different API call or DB query.
+- The backend must work on both MySQL & MariaDB
 
 ## Frontend API Layer Conventions
 

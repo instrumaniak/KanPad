@@ -56,3 +56,120 @@ tasks:
       - T006
     phase: 0
     critical: false
+  T010:
+    name: Fractional sort-key ordering for positions
+    status: pending
+    depends: ~
+    phase: 0
+    critical: false
+  T011:
+    name: Automated DB backups + restore drill
+    status: pending
+    depends: ~
+    phase: 0
+    critical: true
+  T012:
+    name: Repair compose.yaml + frontend Dockerfile
+    status: pending
+    depends: ~
+    phase: 0
+    critical: true
+  T013:
+    name: Session cache hygiene on logout/login
+    status: pending
+    depends: ~
+    phase: 0
+    critical: true
+  T014:
+    name: Global 401 handling + query retry policy + timeouts
+    status: pending
+    depends:
+      - T013
+    phase: 0
+    critical: false
+  T015:
+    name: Board error states + error boundary resetKeys
+    status: pending
+    depends: ~
+    phase: 0
+    critical: false
+  T016:
+    name: "Fix bundle: route chunks + lazy mermaid + CI size budget"
+    status: pending
+    depends: ~
+    phase: 0
+    critical: false
+  T017:
+    name: Retarget Playwright to backend-rs + enable in CI
+    status: pending
+    depends:
+      - T016
+    phase: 0
+    critical: false
+  T018:
+    name: Secrets hygiene + dependency declarations
+    status: pending
+    depends:
+      - T016
+    phase: 0
+    critical: false
+  T019:
+    name: Docs/README/proxy sync
+    status: pending
+    depends:
+      - T012
+    phase: 0
+    critical: false
+  T020:
+    name: Tx-retry helper for position-shifting transactions
+    status: pending
+    depends:
+      - T010
+    phase: 1
+    critical: true
+  T021:
+    name: "Board render perf: virtualization + dragOver throttle"
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
+  T022:
+    name: Pagination UX + page ceilings
+    status: pending
+    depends:
+      - T021
+    phase: 1
+    critical: false
+  T023:
+    name: FULLTEXT search index
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
+  T024:
+    name: "Metrics fixes: acquire_timed + db probe + route labels"
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
+  T025:
+    name: "Monitoring runbook: uptime + log retention"
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
+  T026:
+    name: Capacity smoke + headroom doc
+    status: pending
+    depends:
+      - T020
+      - T021
+      - T022
+    phase: 1
+    critical: false
+  T027:
+    name: Collaboration design spec
+    status: pending
+    depends: ~
+    phase: 2
+    critical: false

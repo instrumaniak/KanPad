@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT k.`id`, k.`title`, k.`column_id`, k.`position`, (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' THEN 1 ELSE 0 END) AS \"has_description: i64\", k.`due_date` AS \"due_date: chrono::NaiveDateTime\", k.`created_at` AS \"created_at: chrono::NaiveDateTime\", k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `cards` k WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) ORDER BY k.`column_id` ASC, k.`position` ASC",
+  "query": "SELECT k.`id`, k.`title`, k.`column_id`, k.`position`, (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' THEN 1 ELSE 0 END) AS \"has_description!: i64\", k.`due_date` AS \"due_date: chrono::NaiveDateTime\", k.`created_at` AS \"created_at: chrono::NaiveDateTime\", k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `cards` k WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) ORDER BY k.`column_id` ASC, k.`position` ASC",
   "describe": {
     "columns": [
       {
@@ -69,7 +69,7 @@
       },
       {
         "ordinal": 4,
-        "name": "has_description: i64",
+        "name": "has_description!: i64",
         "type_info": {
           "type": "LongLong",
           "flags": "NOT_NULL | BINARY",
@@ -141,5 +141,5 @@
       false
     ]
   },
-  "hash": "859138d76558965e308e5029c16fb4a4a2b1be5df39278f54f05751498db1ece"
+  "hash": "0e15d092e4814c30d37bce5a5cb57043d54b3406a8b92250039201c32bc12f2d"
 }

@@ -1,16 +1,16 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT EXISTS(SELECT 1 FROM `sessions` WHERE `id` = ?)",
+  "query": "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" FROM `cards` WHERE `column_id` = ? FOR UPDATE",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "EXISTS(SELECT 1 FROM `sessions` WHERE `id` = ?)",
+        "name": "max_pos!: i64",
         "type_info": {
           "type": "LongLong",
           "flags": "NOT_NULL | BINARY",
           "collation": 63,
-          "max_size": 1
+          "max_size": 11
         },
         "origin": "Expression"
       }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "b8c1f6969f1dfb98b8b2bfb048e19722088b4d99467af1334bb111a14de22eb5"
+  "hash": "c9563c2f92803c81c917c0f9ba1c6f6a4e5f6d979c82a49a2328f3f5723a864b"
 }

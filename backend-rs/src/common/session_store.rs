@@ -90,8 +90,18 @@ impl MySqlSessionStore {
     async fn id_exists(&self, conn: &mut MySqlConnection, id: &Id) -> Result<bool> {
         // MySQL's `EXISTS` is an integer expression (1/0), and sqlx infers
         // it as `i64` — not as a `bool`.
+        //
+        // `exists!: i64` pins type AND nullability so the scalar type is
+        // server-independent: MariaDB 10.6 reports `EXISTS` as a 32-bit `Long`
+        // where MySQL 8.4 reports `LongLong` (bare → `i32` vs `i64`). `EXISTS`
+        // is never NULL, and sqlx's `i64` decode accepts MariaDB's `Long`
+        // (widening `int_decode`; `int_compatible` accepts non-unsigned
+        // `Long`), so `!: i64` is safe on both. The explicit alias is
+        // REQUIRED: the raw expression contains `?`, which defeats sqlx's
+        // column-override parser (it splits the column name at the first
+        // `:`/`!`/`?`), so the override must live in an alias.
         let exists: i64 = sqlx::query_scalar!(
-            "SELECT EXISTS(SELECT 1 FROM `sessions` WHERE `id` = ?)",
+            "SELECT EXISTS(SELECT 1 FROM `sessions` WHERE `id` = ?) AS \"exists!: i64\"",
             id.to_string()
         )
         .fetch_one(conn)

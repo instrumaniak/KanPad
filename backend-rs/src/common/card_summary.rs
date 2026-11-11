@@ -133,10 +133,16 @@ pub async fn fetch_board_cards<'e, E>(ex: E, board_id: i32) -> Result<Vec<Summar
 where
     E: MySqlExecutor<'e>,
 {
+    // `has_description!: i64` — the `!` pins NULLABILITY (a `: i64` override
+    // alone does NOT: sqlx still wraps in `Option` whenever the server says
+    // nullable). MySQL 8.4 reports this `CASE ... END` as NOT NULL, MariaDB
+    // 10.6 reports it nullable, so without the pin the macro yields `i64` on
+    // one server and `Option<i64>` on the other. The pin makes the row type
+    // server-independent; the expression is never NULL by construction.
     let card_rows = sqlx::query!(
         "SELECT k.`id`, k.`title`, k.`column_id`, k.`position`, \
           (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' \
-            THEN 1 ELSE 0 END) AS \"has_description: i64\", \
+            THEN 1 ELSE 0 END) AS \"has_description!: i64\", \
           k.`due_date` AS \"due_date: chrono::NaiveDateTime\", \
           k.`created_at` AS \"created_at: chrono::NaiveDateTime\", \
           k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \

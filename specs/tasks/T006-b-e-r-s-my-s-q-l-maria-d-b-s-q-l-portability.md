@@ -100,8 +100,11 @@ External references (verified 2026-11-02 — do not re-litigate):
   (profile or second service on `:3338`), so a developer can run the suite against production's flavour.
 - `.github/workflows/backend-rs.yml` (repo root — GitHub ignores anything under `backend-rs/.github/`;
   T55 already relocated it) — add a `test-mariadb` job (service `mariadb:10.6`) running the session-store +
-  auth/login + `sql_portability` suites at minimum. **Set `SQLX_OFFLINE=true` on the `prepare --check` step**
-  (it is currently unset there) so the cache is validated against the repo, not the job's DB name.
+  auth/login + `sql_portability` suites at minimum. Its cache step is **not** `prepare --check`: sqlx-cli
+  forces `SQLX_OFFLINE=false` and byte-compares describe JSON, so a check against the MySQL-generated
+  `.sqlx/` cache can never pass on MariaDB 10.6 — the leg runs an online `SQLX_OFFLINE=false cargo check`
+  gate instead (see Step 4), while the `SQLX_OFFLINE=true` `prepare --check` cache gate stays in the
+  `backend` (MySQL) job.
 - `backend-rs/.sqlx/` — **regenerated** (`cargo sqlx prepare`) because the session upsert text changes.
 - `backend-rs/tests/api.rs` — `#[path = "api/sql_portability.rs"] mod sql_portability;` (+ `mariadb_login`
   if created), explicit, alphabetical.
@@ -271,9 +274,17 @@ Also verify the **connection** side on MariaDB:
 ### Step 4 — P1: the offline cache + CI checks
 
 - `cargo sqlx prepare` after Step 1 (pinned sqlx 0.9 CLI) and commit `backend-rs/.sqlx/` changes.
-- Set `SQLX_OFFLINE=true` on the `prepare --check` step (it is currently unset there — see the audit).
-  sqlx 0.9 binds cache filenames to DB-qualified names (`kanpad.checklists` vs `kanpad_ci.checklists`); the
-  cache must be validated against the repo, not against whichever server the job happens to run.
+- ~~Set `SQLX_OFFLINE=true` on the `prepare --check` step~~ — **superseded (false assumption)**: the env
+  flip cannot work there. sqlx-cli FORCES `SQLX_OFFLINE=false` on its inner build (src/prepare.rs), so the
+  step's env is ignored, and `--check` byte-compares the regenerated describe JSON against the committed
+  cache — generated on MySQL 8.4, while MariaDB 10.6 legitimately describes `CASE`/`COALESCE(MAX())` as
+  nullable and `EXISTS()` as INT. The MariaDB leg's step is therefore an **online describe gate**:
+  `SQLX_OFFLINE=false cargo check --locked --workspace --all-targets` after a forced
+  `cargo clean -p backend-rs` (SQLX_OFFLINE is not part of cargo's fingerprint — without the clean the
+  macros don't re-expand and the gate passes vacuously). Row types are pinned server-independent with `!`
+  nullability overrides in the column alias (`AS "max_pos!: i64"`, `AS "exists!: i64"`). The canonical
+  `SQLX_OFFLINE=true cargo sqlx prepare --check` cache gate stays in the `backend` (MySQL) job, where the
+  DB-qualified cache names align (`kanpad` in both).
 - Confirm the workflow is at the **repo root** `.github/workflows/` (a workflow under `backend-rs/.github/`
   is never discovered — that mistake already happened once) and that the new job actually starts.
 
@@ -343,7 +354,11 @@ Also verify the **connection** side on MariaDB:
       proven red by re-introducing the `AS new` upsert and green after reverting.
 - [ ] `@@collation_connection` is `utf8mb4_unicode_ci` on both servers (the T66 pin still holds).
 - [ ] The full suite is green on `mysql:8.4` **and** `mariadb:10.6`.
-- [ ] `.sqlx/` is regenerated and `cargo sqlx prepare --check` (with `SQLX_OFFLINE=true`) is green.
+- [ ] `.sqlx/` is regenerated on **MySQL 8.4** and the MySQL (`backend`) job's
+      `cargo sqlx prepare --check` (with `SQLX_OFFLINE=true`) is green — that gate belongs to the MySQL
+      leg. The MariaDB leg does NOT run `prepare --check` (byte-comparing against a MySQL-generated cache
+      can never pass on MariaDB 10.6); its gate is the online `SQLX_OFFLINE=false cargo check --locked
+      --workspace --all-targets` after `cargo clean -p backend-rs`.
 - [ ] `cargo fmt --check` 0 · `cargo clippy --workspace --all-targets -- -D warnings -A clippy::pedantic` 0
       · `cargo deny check advisories bans licenses` ok · every CI grep gate passes.
 - [ ] `openapi.json` and `frontend/src/lib/api/schema.d.ts` are unchanged.

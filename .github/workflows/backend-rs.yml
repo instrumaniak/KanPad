@@ -547,11 +547,30 @@ jobs:
           cargo sqlx migrate run
           cargo sqlx migrate info
 
-      - name: sqlx prepare --check
+      # -- online describe gate (MariaDB leg) ------------------------------
+      # WHY NOT `cargo sqlx prepare --check` here: sqlx-cli FORCES
+      # SQLX_OFFLINE=false on its inner build (src/prepare.rs), so the
+      # SQLX_OFFLINE=true convention is ignored — and `--check` then
+      # byte-compares the regenerated .sqlx JSON against the committed cache,
+      # which is generated on MySQL 8.4. MariaDB 10.6 legitimately describes
+      # the same SQL differently (nullable flags for CASE / COALESCE(MAX())
+      # expressions; EXISTS() as INT vs LONGLONG), so that comparison can
+      # NEVER pass here. The canonical cache gate stays in the `backend`
+      # (MySQL) job.
+      # What this step proves instead: every query! in the workspace prepares
+      # on MariaDB 10.6 and the code type-checks against MariaDB-derived row
+      # types — no MySQL-only SQL, no server-dependent row types.
+      - name: online check against MariaDB (every query prepares)
         working-directory: backend-rs
         env:
-          SQLX_OFFLINE: "true"
-        run: cargo sqlx prepare --check --workspace --all -- --locked --all-targets
+          SQLX_OFFLINE: "false"
+        run: |
+          set -euo pipefail
+          # SQLX_OFFLINE is NOT part of cargo's fingerprint: without a forced
+          # rebuild the macros would not re-expand and this check would pass
+          # vacuously (sqlx-cli does the same via setup_minimal_project_recompile).
+          cargo clean -p backend-rs
+          cargo check --locked --workspace --all-targets
 
       - name: session-store (lib) + auth + sql_portability (api) suites
         working-directory: backend-rs

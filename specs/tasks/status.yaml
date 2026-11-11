@@ -49,3 +49,10 @@ tasks:
     depends: ~
     phase: 0
     critical: true
+  T009:
+    name: "BE-RS: MariaDB CI leg — replace prepare --check with online describe gate"
+    status: done
+    depends:
+      - T006
+    phase: 0
+    critical: false

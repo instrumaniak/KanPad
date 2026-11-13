@@ -85,7 +85,7 @@ describe('notes.api', () => {
 
   describe('fetchNotes', () => {
     it('fetches the note page (paginated envelope, no content key in items)', async () => {
-      const { content: _content, ...summary } = mockNote;
+      const { content, ...summary } = mockNote;
       const page = { data: [summary], page: 1, limit: 50, total: 1 };
       mockApiFetch.mockResolvedValueOnce(page);
 
@@ -93,6 +93,7 @@ describe('notes.api', () => {
       expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/notes`);
       expect(result).toEqual(page);
       expect('content' in result.data[0]).toBe(false);
+      expect(content).toBe('# Hello');
     });
 
     it('fetches with search filter', async () => {

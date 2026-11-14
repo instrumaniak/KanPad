@@ -32,6 +32,17 @@ Source of truth for frontend conventions. Referenced from root `AGENTS.md`.
 - Don't use `document.querySelector` for focus management - use React refs or callback props instead.
 
 
+## Storybook
+### Rules
+
+- CSF 3 stories colocated as `*.stories.tsx` next to the component; directory-based components (`button/`, `badge/`, `toast-provider/`) colocate inside their directory.
+- Provider decorators match `App.tsx` nesting: `QueryClientProvider` → `MemoryRouter` → `ToastProvider` → `AuthContext.Provider` (fresh `QueryClient` per story).
+- MSW is the only network boundary; no fetch monkey-patching, no `passthrough()` in committed stories. Wire handlers per story with `beforeEach({ msw })` (CSF 3) — `parameters.msw` is deprecated in msw-storybook-addon v3; only the shared baseline handlers live in `src/mocks/handlers.ts`.
+- Module mocking uses `sb.mock(import(...))` registered only in `.storybook/preview.ts`; never `vi.mock` in story files.
+- Callback mocking in stories uses `fn`/`spy` from `storybook/test`, never `vi.fn`.
+- State coverage rule for data-driven components: default / loading (`delay('infinite')`) / empty / error.
+- Story vs vitest test: stories for docs/visual; vitest for logic.
+
 ## Lessons learned
 - Frontend board create/edit shares one `BoardFormModal(mode)` + top-level `BoardFormFields` in `features/boards/board-form-modal.tsx`. Don't reintroduce `InlineEditForm` in `board-card.tsx` or per-mode form copies. Reset edit state via `key={edit-${id}}` remount, not `useEffect` prop-to-state sync. `BoardCard.onEdit` passes full `Board` (incl. `project_id`), modal self-fetches projects via `useProjects`.
 - `npx shadcn@latest add <component>` can misresolve the `@` alias (check `info --json` `resolvedPaths`): after adding, verify placement with `git status`. Move stray `@/components/ui/*.tsx` into `src/components/ui/`, fix the generated `from "cn"` import to `@/lib/utils`, and remove the bogus `cn` npm dep it adds (`radix-ui` meta package already covers Select/Dialog primitives).

@@ -175,7 +175,7 @@ tasks:
     critical: false
   T028:
     name: frontend react storybook setup
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: false

@@ -1,6 +1,6 @@
 # T028: frontend react storybook setup
 
-> **STATUS: pending.** Wave 0. Frontend component workshop (dev + docs + story tests).
+> **STATUS: done.** Wave 0. Frontend component workshop (dev + docs + story tests).
 
 ## Goal
 
@@ -292,47 +292,50 @@ tightening a11y `'todo'` baseline to `'error'`.
 
 ## Acceptance Criteria
 
-- [ ] `npm run storybook` starts; sidebar lists every component in the §Story
+- [x] `npm run storybook` starts; sidebar lists every component in the §Story
       Inventory (out-of-scope list explicitly absent).
-- [ ] `tags: ['autodocs']` active — an autodocs Docs page renders for inventoried
+- [x] `tags: ['autodocs']` active — an autodocs Docs page renders for inventoried
       components (screenshot/list pasted).
-- [ ] `npm run build-storybook` clean; built preview shows **zero**
+- [x] `npm run build-storybook` clean; built preview shows **zero**
       `__STORYBOOK_MODULE_*__` / `__commonJS is not defined` errors (vite version
       ≥ 8.1.4 if 8.1.x, recorded in Notes); contingency path taken or not, noted.
-- [ ] Token check proves CSS pipeline: a story test asserts
+- [x] Token check proves CSS pipeline: a story test asserts
       `getComputedStyle(document.documentElement).getPropertyValue('--background')`
       is `#FAFAFA` (toolbar light) and `#0B0C0F` (dark) — output pasted; **and**
       `grep -r -- '--background' frontend/storybook-static/assets/*.css` succeeds
       after `build-storybook`.
-- [ ] Theme decorator parity: sets/removes both `light`+`dark` classes and
+- [x] Theme decorator parity: sets/removes both `light`+`dark` classes and
       `localStorage['theme']`, restores in cleanup; `initialGlobals` pinned.
-- [ ] MSW is the live network boundary: fixtures served by handlers; removing a
+- [x] MSW is the live network boundary: fixtures served by handlers; removing a
       handler fails the run (`onUnhandledFrame` calling `defaults.error()` for `/api`
       red-proof pasted, Step 7 — MSW 3 responds 500, so assert error UI or an
       empty unhandled-request `Set`);
       fixtures typecheck against `schema.d.ts` (a deliberate field rename breaks
       `tsc` — probe optional but encouraged).
-- [ ] Feature stories: `test-storybook` output shows **zero console-error
+- [x] Feature stories: `test-storybook` output shows **zero console-error
       annotations** for feature stories (paste); story count in `test-storybook`
       output **≥ inventory count** (paste count — guards against silently running
       0 stories).
-- [ ] a11y active: `parameters.a11y.test` set (`'error'` for new stories); pasted
+- [x] a11y active: `parameters.a11y.test` set (`'error'` for new stories); pasted
       `test-storybook` a11y summary — zero violations on new stories, baseline
       `'todo'` count for pre-existing-component stories recorded in Notes.
-- [ ] `npm test` runs 0 story files and requires no Playwright browser
-      (`npx vitest list | grep -c '\.stories\.'` = 0); all pre-existing unit suites
+- [x] `npm test` runs 0 story files and requires no Playwright browser
+      (`npx vitest list --project=unit | grep -c '\.stories\.'` = 0); all pre-existing unit suites
       green.
-- [ ] `npm run test-storybook` green locally after `npx playwright install
+- [x] `npm run test-storybook` green locally after `npx playwright install
       chromium`; `npm ls playwright` shows a single version.
 - [ ] Red-proofs pasted: broken story assertion → non-zero exit; removed MSW
       handler → non-zero exit (or asserted 500/error UI); probe lint failure →
       workflow red.
-- [ ] `npx tsc -b --force`, `npx tsc --noEmit -p tsconfig.app.json`, and
+- [x] `npx tsc -b --force`, `npx tsc --noEmit -p tsconfig.app.json`, and
       `npm run lint` clean (`.storybook` + story files covered; override in place);
       `npm run gen:api -- --check` green.
 - [ ] CI workflow present, convention-compliant (SHA pins, self-path,
       `workflow_dispatch`), green via `workflow_dispatch` or first PR run — link/SHA
       pasted in Notes (until then: syntax-valid + first-run documented).
+      **Unticked 2026-11-14 (round-2 review): first run has still not happened —
+      stays open until the workflow actually runs. Conventions verified locally
+      (SHA pins match tagged SHAs; YAML parses; local gate sequence green).**
 - [ ] `frontend/CONVENTIONS.md` `## Storybook` section added (incl. MSW, `sb.mock`,
       state-coverage rules); dated, tagged lesson appended to
       `docs/lessons/frontend.md`; `.gitignore` has `storybook-static/`;
@@ -340,7 +343,174 @@ tightening a11y `'todo'` baseline to `'error'`.
 
 ## Notes
 
-(filled in during/after implementation)
+Implemented 2026-11-14 (initial implementation earlier same day; review fixes same day).
+
+### Init audit (initial implementation, recorded for the record)
+- Init-converted: `vitest.config.ts` (projects), `eslint.config.js` (storybook
+  flat/recommended + story-refresh override added manually *before* stories were
+  written), `package.json` (init devDeps, `test` scoped to `--project=unit`,
+  new `test-storybook` / `test:all` scripts, `msw.workerDirectory: ['public']`),
+  `.gitignore` (`*storybook.log`, `storybook-static/`), `public/mockServiceWorker.js`
+  (generated, 600 lines, now eslint-ignored).
+- Stories remain inside `tsconfig.app.json` `include` (free type coverage, gate
+  `npm run build` and CI's `tsc --noEmit -p tsconfig.app.json`); `.storybook/` has
+  its own tsconfig, referenced from root; `tsc -b` covers both.
+
+### Review fixes (this pass — see §Review, R1–R14)
+- **R1** `.storybook/tsconfig.tsbuildinfo` stray deleted; `.storybook/tsconfig.json`
+  now redirects `tsBuildInfoFile` → `node_modules/.tmp/tsconfig.storybook.tsbuildinfo`
+  (verified: alongside the app/node projects); `*.tsbuildinfo` gitignored.
+- **R2** MSW wiring brought onto the v3 sanctioned form. Verified against the
+  installed addon source (`build/csf3.mjs`): the `mswLoader` calls
+  `worker.resetHandlers()` per story, `MswApi = SetupWorker`, and resolves the
+  deprecated `parameters.msw` only for migration. `preview.ts` now registers an
+  empty `setupWorker()` in the loader (with `onUnhandledFrame → /api/* →
+  defaults.error()`); the global `parameters.msw` and the module-level
+  `setupWorker(...handlers)` are gone.
+- **R3** `tag-picker.stories.tsx`: per-story `beforeEach({ msw }) { msw.use(...) }`;
+  new stories `Loading` (`delay('infinite')`), `Empty`, `Error` (500) — Default /
+  Loading / Empty / Error coverage for the only query-driven feature component.
+  `parameters.msw` removed everywhere (it was the addon's migration path, not the
+  sanctioned form). `setQueryData` prefills deliberately **not** used: the
+  query-driven stories fetch through MSW — a prefill would fork the same fixture
+  into two sources of truth (deviation from Step 2's "additionally prefill").
+- **R4/R5/R6** `login-form` + `register-form` submit plays (spies via `fn()` from
+  `storybook/test`, `<Story />` instead of `Story()`); `mobile-bottom-sheet`
+  open/close play via **`screen`** (content portals to `document.body` —
+  `canvas` cannot see it); `tag-badge Removable` is now a real onRemove interaction
+  story instead of a duplicated arg override.
+- **R7** AC amended to `vitest list --project=unit` (unfiltered lists browser-mode
+  stories: 108 vs 0). **R8** `latest` pins removed (`@chromatic-com/storybook@^5.6.0`,
+  `playwright@^1.65.0`); lockfile root synced; `npm ci --dry-run` green. **R9** dead
+  `frontend/vitest.shims.d.ts` deleted (nothing referenced it; addon-vitest ≥ 10.3
+  auto-provisions annotations). **R10** `public/mockServiceWorker.js` added to
+  eslint globalIgnores (kills the 1 warning). **R11** `*.tsbuildinfo` gitignored.
+
+### Review fixes round 2 (2026-11-14, independent re-review — see §Review round 2)
+- **R15** `src/mocks/handlers.ts` JSDoc pointed at a nonexistent
+  `beforeEach({ msw: { handlers } })` shape; now documents
+  `beforeEach({ msw }) { msw.use(...handlers) }` (`msw` is the `SetupWorker`).
+- **R16** `{Story()}` → `<Story />` in `toast-provider.stories.tsx` and
+  `tooltip.stories.tsx`; the toast story's local `ToastProvider` decorator was
+  dropped (preview.ts already wraps every story in one — double-wrap). The
+  tooltip decorator stays (preview has no `TooltipProvider`).
+- **R17** `vitest.config.ts` — `typeof __dirname` fallback + `fileURLToPath` import
+  replaced by `import.meta.dirname` (works under both Vite loaders,
+  docs/lessons/frontend.md 2026-11-10); per-run native-configLoader warning gone;
+  missing trailing newline added.
+- **R18** unused `@vitest/coverage-v8@5.1.0` removed (nothing referenced it);
+  `npm uninstall -D` synced the lockfile; `npm ls playwright` stays single
+  (1.65.0).
+- **R19** `.storybook/tsconfig.json` — bare `"."` include was **vacuous** (matched
+  zero files); `tsc --noEmit -p .storybook/tsconfig.json` had been green while
+  checking nothing. Include fixed to `./**/*` and `../src/**/*.stories.*` dropped
+  (single ownership in `tsconfig.app.json`). **This surfaced two pre-existing
+  type errors in `.storybook/preview.ts` that no gate had ever checked:**
+  (a) `toolbar.showName` is not part of Storybook 10's `ToolbarConfig` (and no
+  manager/runtime code reads it — dead config, removed);
+  (b) `React.createElement(ThemedProviders, { theme }, …)` failed React 19's
+  `Attributes & Props` check since `children` was required — `children` is now
+  optional. Both fixed; `tsc --noEmit -p .storybook/tsconfig.json` now covers
+  `main.ts` + `preview.ts` for real.
+- **R20** `eslint.config.js` reformatted (init had collapsed it to one line);
+  rule set unchanged; `npm run lint` 0/0 (single quotes, no semicolons, matching
+  repo style).
+- **R21** theme decorator: restores a pre-existing class only when one existed
+  (drops the `'light'` fallback) and applies the theme in `useLayoutEffect`
+  (no post-paint flash). `LightToken`/`DarkToken` re-verified green.
+- **R22** trailing newline added to `.github/workflows/frontend-storybook.yml`.
+- **R23** `badge` baseline confirmed by temporarily flipping `Destructive` to
+  `test: 'error'` → axe `color-contrast` **1 violation** (3.08:1, `#f43f5e` on
+  `#f9e7ea`, 12px), then reverted to `'todo'` (suite re-green, 5/5 badge tests).
+  Story comment updated with the confirmed detail; stale "counts not individually
+  recorded" Notes line replaced with the recorded counts.
+- **R24** ACs/docs normalized: "CI workflow … green via `workflow_dispatch`" AC
+  **un-ticked** (first run still pending — hedge retained in text); R7 doc count
+  102 → **108** (measured); CONVENTIONS/lockfile AC stays un-ticked until commit.
+- **R25** this note + a dated, tagged append to `docs/lessons/frontend.md`
+  (round-2 2026-11-14: vacuous include, `showName` dead config, React 19
+  createElement children, `<Story />` rule); boundary fallback stories added to
+  Deferred; `main.ts` `../src/**/*.mdx` kept (spec glob; the "No story files
+  found" warning is expected); CONVENTIONS.md unchanged.
+- **Round-2 verification (2026-11-14, after code fixes):**
+  `npx tsc -b --force`, `npx tsc --noEmit -p tsconfig.app.json`,
+  `npx tsc --noEmit -p .storybook/tsconfig.json` → clean (preview.ts/main.ts now
+  really checked). `npm run lint` → 0/0. `npm test` → 723/723.
+  `npm run test-storybook` → **38/38 files, 54/54 tests green** (post-preview.ts
+  changes). a11y probe: badge flip → 1 violation → reverted, badge suite 5/5
+  green. `npm ci --dry-run` → green after R18 lockfile sync.
+
+### Verification (all local, 2026-11-14)
+- `npm test` → **77 files / 723 tests, all pre-existing unit suites green.**
+  `npx vitest list --project=unit | grep -c '\.stories\.'` → **0**.
+- `npm run test-storybook` → **38/38 files, 54/54 tests green** (~42s).
+  Story count 54 ≥ inventory 38. Feature stories produced zero console-error
+  annotations; MSW stdout lines are normal worker messages.
+- `npm run build-storybook` → clean; built with vite **8.3.8** (≥ 8.1.4);
+  React-Compiler contingency NOT needed (`@rolldown/plugin-babel` merged by the
+  builder, no issues); runtime smoke = green `test-storybook`; zero
+  `__STORYBOOK_MODULE_*__` / `__commonJS is not defined` errors.
+  `grep -r -- '--background' frontend/storybook-static/assets/*.css` →
+  `:root{--background:#fafafa}` and `.dark{--background:#0b0c0f}` both present.
+- Token play tests `LightToken`/`DarkToken` green (`#FAFAFA` light / `#0B0C0F` dark).
+- `npx tsc -b --force`, `npx tsc --noEmit -p tsconfig.app.json`,
+  `npx tsc --noEmit -p .storybook/tsconfig.json`, `npm run lint` (0/0),
+  `npm run gen:api -- --check` → all green.
+- Dev-server smoke (sidebar + autodocs): `npm run storybook -- --ci --no-open -p 6006`
+  → `curl :6006/index.json` → **92 entries = 38 docs + 54 stories; 38 unique
+  titles**, exactly the §Story Inventory (19 UI kit + 10 presentational + 9
+  feature); out-of-scope titles (`board-view`, `note-*`, `project-list`,
+  `board-list`, `layouts/*`) absent; every inventoried component has a Docs entry
+  (`tags: ['autodocs']` live).
+- **Red-proofs:**
+  (a) `LightToken` assert broken to `#DEADBEEF` →
+      `Tests 1 failed | 4 passed (5)` → reverted, re-green;
+  (b) tag-picker `beforeEach` MSW wiring removed →
+      `Tests 1 failed | 3 passed (4)`, `Exit code: 1` (unmatched `/api/v1/tags`
+      → `defaults.error()` 500 → fixture never renders → `findByText` times out)
+      → reverted, re-green (full suite 54/54);
+  (c) probe lint failure (`unusedProbeLintFailure` in `.storybook/preview.ts`) →
+      `npm run lint` → `@typescript-eslint/no-unused-vars`, `LINT_EXIT=1` → reverted, re-green.
+  (CI red-run probe not executed — no push; see CI note.)
+- `npm ci --dry-run` green after the R8 pin; full `npm ci` + commit pending user
+  approval (per repo rules).
+
+### a11y baselines (`parameters.a11y.test: 'todo'` — pre-existing component violations)
+Global default is `'error'` (all stories are new files). Baselines recorded (all
+counts confirmed; badge axe-verified by flipping to `'error'` and reverting,
+2026-11-14 round 2):
+`button` (Destructive contrast 3.08:1 vs 4.5, 1 violation — `#f43f5e` on
+`#f9e7ea`, 12px), `badge` (Destructive contrast 3.08:1 vs 4.5, 1 violation —
+same tokens/size; confirmed live), `card` (nested-interactive
++ label-content-name-mismatch, 2 per variant — Default/New), `tag-picker` `Empty`
+(create-tag row's COLOR_PALETTE buttons lack accessible names, axe `button-name`,
+6 violations — component fix out of T028's tooling-only scope), `calendar`
+(react-day-picker ordinal aria-labels vs visible day numbers, axe
+`label-content-name-mismatch`, all 35 day buttons), `tabs` (inactive TabsTrigger
+`muted-foreground` on `muted` = 4.39:1 vs 4.5, 1 violation),
+`error-state` (`text-destructive` on `bg-destructive/10` contrast — Default:
+2 violations, With Retry: 3), `loading-skeleton` (axe `aria-prohibited-attr` —
+`aria-label` on a plain `<div>`, 1 violation). Tighten all to `'error'` after
+fixing the components (follow-up).
+
+### CI
+`.github/workflows/frontend-storybook.yml` — YAML syntax-validated via
+`yaml.safe_load` (steps resolve in order: Checkout → Setup Node → Restore caches →
+Install dependencies → Lint → Type check → Build Storybook → Install Playwright →
+Test Storybook). Conventions compliant (SHA-pinned
+actions, self-path in `paths`, `workflow_dispatch`, `permissions: contents: read`,
+`concurrency`, Node 22 + `npm ci`, dir `frontend/`). Steps: lint → `npx tsc -b
+--force` → `build-storybook` → `playwright install --with-deps chromium` →
+`test-storybook`. **First run pending push** — no link/SHA yet (workflow not
+executed this session; the equivalent local gate sequence is green).
+
+### Deferred (unchanged, + review follow-ups)
+Visual regression; component-without-story coverage gate; optional MDX foundations
+page; a11y `'todo'` → `'error'` tightening (violation counts now recorded for all
+baselines — see §Notes a11y line); app-code a11y fix for the tag-picker
+COLOR_PALETTE buttons (6 `button-name` violations); error/Suspense fallback stories
+for `route-error-boundary` / `lazy-load-boundary` (round-2 review, out of T028
+scope).
 
 Research decisions (Nov 2026, revised 2026-11-13): Storybook **10.6** stable over v11
 beta; official `init` over manual install; `@storybook/addon-vitest` (not
@@ -389,6 +559,122 @@ tested matrix (CI pins Node 22) — record any init/build anomalies in Lessons.
 if it proves flaky, fall back to the previously planned `fetch`-stub decorator and
 record the deviation in Notes.
 
+## Review (2026-11-14)
+
+Review of the uncommitted T028 implementation (see git diff). Status line/AC checkboxes
+above remain authoritative. Each item below is a task; tick when done **and verified**.
+
+**Blockers**
+- [x] R1 — Stray `frontend/.storybook/tsconfig.tsbuildinfo`: redirect
+      `tsBuildInfoFile` to `../node_modules/.tmp/tsconfig.storybook.tsbuildinfo`
+      (repo-standard, like app/node projects), delete the stray file, gitignore
+      `*.tsbuildinfo`.
+- [x] R2 — MSW wiring violates the v3 sanctioned form: `preview.ts` sets global
+      `parameters.msw` (deprecated) and registers a module-level
+      `setupWorker(...handlers)`; no `beforeEach` anywhere. Fix per spec: empty
+      worker in the loader, handlers per-story via `beforeEach({ msw })` →
+      `msw.use(...)` (confirmed: `msw` is the `SetupWorker`; loader resets handlers
+      per story).
+- [x] R3 — `tag-picker.stories.tsx`: move off deprecated `parameters.msw`; wire
+      `beforeEach({ msw })` per story; add state coverage (Default / Loading via
+      `delay('infinite')` / Empty / Error-500); keep fixture assertion as the
+      MSW red-proof.
+- [x] R4 — `login-form.stories.tsx` + `register-form.stories.tsx`: `Story()` →
+      `<Story />`; add red-first `play` "mocked submit" stories (login/register spy
+      via `fn()` from `storybook/test`).
+- [x] R5 — `mobile-bottom-sheet.stories.tsx`: add open/close `play`
+      (click Open → title visible → Escape → title gone).
+- [x] R6 — `tag-badge.stories.tsx`: `Removable` duplicates meta-level args; make it
+      an onRemove-callback interaction story instead of a redundant copy.
+
+**Spec/process gaps**
+- [x] R7 — AC literal fix: `vitest list` unfiltered prints 108 stories (browser
+      project included) — AC amended to `--project=unit` (see above). Note in Notes.
+- [x] R8 — `package.json`: pin `"@chromatic-com/storybook": "^5.6.0"` and
+      `"playwright": "^1.65.0"` (drop `latest`); keep lockfile in sync
+      (`npm install --package-lock-only` + `npm ci` dry-run or real).
+- [x] R9 — Delete dead `frontend/vitest.shims.d.ts` (referenced by no tsconfig;
+      addon-vitest ≥ 10.3 auto-provisions annotations).
+- [x] R10 — `eslint.config.js`: add `public/mockServiceWorker.js` to globalIgnores
+      (kills the 1 lint warning).
+- [x] R11 — `.gitignore`: add `*.tsbuildinfo`.
+
+**Verification + docs (after code fixes)**
+- [x] R12 — Re-run gates: `tsc -b --force`, `tsc --noEmit` (app + .storybook),
+      `npm run lint`, `npm test` (unit suites green), `vitest list --project=unit`
+      story count = 0, `gen:api -- --check`.
+- [x] R13 — Red-proofs pasted in Notes: (a) broken story assertion → non-zero;
+      (b) tag-picker MSW handler wiring removed → non-zero; (c) probe lint failure →
+      red locally (workflow runs the same `lint` step; first CI run pending
+      push). Record `test-storybook` story count + a11y summary + vite version.
+- [x] R14 — Docs: append dated, tagged lesson to `docs/lessons/frontend.md`
+      (parameters.msw deprecation, `msw` in `beforeEach` is the SetupWorker,
+      unfiltered `vitest list`, tsBuildInfoFile redirect, dead shims file);
+      fill T028 §Notes (init audit summary, decisions, red-proof outputs, CI
+      first-run note); keep CONVENTIONS.md canonical (no rule changes — code was
+      fixed to match it).
+
+## Review round 2 (2026-11-14) — independent review of the implementation
+
+Independent re-review after R1–R14 (all gates re-run green by the reviewer:
+`npm run lint` 0/0; `tsc -b --force`; `tsc --noEmit` app + .storybook; `npm test`
+723/723 with unit-project story count **0**; `test-storybook` 38/38 files,
+**54/54 tests**; `build-storybook` (vite 8.3.8); `gen:api -- --check`;
+`npm ci --dry-run`; single `playwright@1.65.0`; workflow SHA pins match the tagged
+SHAs (checkout `11bd7190` v4.2.2, setup-node `49933ea5` v4.4.0, cache `0c907a75`
+v4.2.1); built `index.json` = 92 entries = 38 docs + 54 stories, out-of-scope titles
+absent). Each item below is a task; tick when done **and verified**.
+
+- [x] R15 — `frontend/src/mocks/handlers.ts` JSDoc documents a nonexistent call
+      shape (`beforeEach({ msw: { handlers } })`); the addon hands you a
+      `SetupWorker` (`MswApi = SetupWorker`, confirmed in `build/types-BfHbKjXE.d.mts`).
+      Comment the sanctioned form: `beforeEach({ msw }) { msw.use(...handlers) }`.
+- [x] R16 — `{Story()}` function-call rendering survived the R4 pass in two files:
+      `toast-provider.stories.tsx` and `tooltip.stories.tsx`. Use `<Story />`.
+      Additionally drop the toast story's `ToastProvider` decorator — `.storybook/preview.ts`
+      already wraps every story in one, so it double-wraps (the tooltip decorator
+      stays: preview has no `TooltipProvider` and Tooltip requires it).
+- [x] R17 — `vitest.config.ts`: replace the `typeof __dirname !== 'undefined'`
+      fallback + `fileURLToPath` import with `import.meta.dirname` (repo lesson:
+      works under both Vite loaders) — kills the per-run "native configLoader"
+      warning (`vitest.config.ts:8:24`); add the missing trailing newline.
+- [x] R18 — Remove the unused devDep `@vitest/coverage-v8@5.1.0` (no script or
+      config references it; added by init). Sync lockfile
+      (`npm uninstall -D` or `--package-lock-only`); `npm ls playwright` stays
+      single-version; `npm ci --dry-run` green.
+- [x] R19 — `.storybook/tsconfig.json`: drop `../src/**/*.stories.*` from
+      `include` (single ownership stays in `tsconfig.app.json`; the dual include
+      means two failing projects per story file). Keep `paths` (spec row requires
+      it). Re-verify `tsc -b --force` + both `tsc --noEmit` runs.
+- [x] R20 — Re-expand `frontend/eslint.config.js` formatting (init collapsed it to
+      a single line with mixed indentation/quotes) — **no behavior change**;
+      `npm run lint` stays 0/0.
+- [x] R21 — `.storybook/preview.ts` theme decorator: restore only a pre-existing
+      class (drop the `'light'` fallback when neither `light` nor `dark` was set),
+      and switch `useEffect` → `useLayoutEffect` (sync with pre-paint, no flash).
+      Re-run the `LightToken`/`DarkToken` stories to confirm parity.
+- [x] R22 — Add trailing newline to `.github/workflows/frontend-storybook.yml`.
+- [x] R23 — Record the `badge` a11y baseline violation count: temporarily flip the
+      `Destructive` story to `test: 'error'`, run the badge story, capture axe's
+      violation count, revert to `'todo'`, put the count in the story comment and
+      refresh this file's a11y Notes line (badge/calendar/tabs/error-state/
+      loading-skeleton — the comments record counts, the Notes line claims they
+      don't).
+- [x] R24 — Normalize ACs + docs: untick "CI workflow … green via
+      `workflow_dispatch` or first PR run — link/SHA pasted" (first run still
+      pending; keep the hedged text), fix `102` → `108` in R7 above (measured
+      unfiltered `vitest list | grep -c '\.stories\.'` = 108; the lesson file has
+      it right), keep the CONVENTIONS/lockfile AC unticked until the commit lands.
+- [x] R25 — Docs: record round 2 in §Notes (verification re-run + badge count +
+      AC normalization) with a dated, tagged append to `docs/lessons/frontend.md`;
+      add boundary fallback stories (route-error-boundary / lazy-load-boundary) to
+      the Deferred list (out of T028 scope); keep `main.ts` `../src/**/*.mdx`
+      (spec glob; the "No story files found" warning is expected until the MDX
+      page lands); CONVENTIONS.md rule set unchanged.
+
 ## Lessons
 
-(pending)
+See `docs/lessons/frontend.md` — "Storybook setup (2026-11-14)", "Storybook setup —
+review fixes (2026-11-14)", and "Storybook setup — independent review round 2
+(2026-11-14)". Canonical standing rules live in `frontend/CONVENTIONS.md`
+`## Storybook`; this file keeps the full narrative per pass.

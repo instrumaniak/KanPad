@@ -179,3 +179,17 @@ tasks:
     depends: ~
     phase: 0
     critical: false
+  T029:
+    name: sql query observability
+    status: pending
+    depends:
+      - T024
+    phase: 1
+    critical: false
+  T030:
+    name: Sentry + OpenTelemetry observability stack
+    status: pending
+    depends:
+      - T029
+    phase: 1
+    critical: false

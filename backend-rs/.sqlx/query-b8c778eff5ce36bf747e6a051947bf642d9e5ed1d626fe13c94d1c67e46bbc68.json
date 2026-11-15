@@ -1,14 +1,14 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT c.`id`, c.`board_id` AS \"board_id: i32\", c.`name`, c.`position`, c.`created_at`, c.`updated_at` FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` WHERE c.`id` = ? AND b.`user_id` = ?",
+  "query": "SELECT c.`id` AS \"id!\", c.`board_id` AS \"board_id!: i32\", c.`name` AS \"name!\", (SELECT COUNT(*) FROM `columns` p WHERE p.`board_id` = c.`board_id` AND p.`sort_key` < c.`sort_key`) AS \"position!: i64\", c.`created_at` AS \"created_at!\", c.`updated_at` AS \"updated_at!\" FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` WHERE c.`id` = ? AND b.`user_id` = ?",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
+        "name": "id!",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "flags": "PRIMARY_KEY | AUTO_INCREMENT",
           "collation": 63,
           "max_size": 11
         },
@@ -21,10 +21,10 @@
       },
       {
         "ordinal": 1,
-        "name": "board_id: i32",
+        "name": "board_id!: i32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "flags": "MULTIPLE_KEY | NO_DEFAULT_VALUE",
           "collation": 63,
           "max_size": 11
         },
@@ -37,10 +37,10 @@
       },
       {
         "ordinal": 2,
-        "name": "name",
+        "name": "name!",
         "type_info": {
           "type": "VarString",
-          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "flags": "NO_DEFAULT_VALUE",
           "collation": 224,
           "max_size": 1020
         },
@@ -53,26 +53,21 @@
       },
       {
         "ordinal": 3,
-        "name": "position",
+        "name": "position!: i64",
         "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
+          "type": "LongLong",
+          "flags": "BINARY",
           "collation": 63,
-          "max_size": 11
+          "max_size": 21
         },
-        "origin": {
-          "Table": {
-            "table": "kanpad.columns",
-            "name": "position"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 4,
-        "name": "created_at",
+        "name": "created_at!",
         "type_info": {
           "type": "Datetime",
-          "flags": "NOT_NULL | BINARY",
+          "flags": "BINARY",
           "collation": 63,
           "max_size": 26
         },
@@ -85,10 +80,10 @@
       },
       {
         "ordinal": 5,
-        "name": "updated_at",
+        "name": "updated_at!",
         "type_info": {
           "type": "Datetime",
-          "flags": "NOT_NULL | BINARY",
+          "flags": "BINARY",
           "collation": 63,
           "max_size": 26
         },
@@ -104,13 +99,13 @@
       "Right": 2
     },
     "nullable": [
-      false,
-      false,
-      false,
-      false,
-      false,
-      false
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "86c64f99f9fef96ff6ff8114b063497a9f07ebaea1b79ecc368824468b0ef546"
+  "hash": "b8c778eff5ce36bf747e6a051947bf642d9e5ed1d626fe13c94d1c67e46bbc68"
 }

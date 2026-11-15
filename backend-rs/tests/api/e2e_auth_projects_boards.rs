@@ -663,18 +663,17 @@ async fn e2e_auth_projects_boards_blackbox(pool: MySqlPool) {
     }
     // DB re-read: board row + exactly 3 dense columns (Rust target only).
     if target.is_rust() {
-        let column_rows: Vec<(String, i32)> = sqlx::query_as(
-            "SELECT `name`, `position` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+        let column_names: Vec<String> = sqlx::query_scalar(
+            "SELECT `name` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC",
         )
         .bind(board_one_id)
         .fetch_all(&pool)
         .await
         .expect("created columns re-read");
-        assert_eq!(column_rows.len(), 3, "tx created exactly 3 columns");
         assert_eq!(
-            column_rows.iter().map(|row| row.1).collect::<Vec<_>>(),
-            vec![0, 1, 2],
-            "columns dense 0..N"
+            column_names,
+            vec!["To Do", "In Progress", "Done"],
+            "tx created exactly the 3 default columns in order"
         );
     }
 
@@ -789,7 +788,7 @@ async fn e2e_auth_projects_boards_blackbox(pool: MySqlPool) {
         );
     }
 
-    // 15. Board detail → 200 nested `position ASC` (second-GET re-read).
+    // 15. Board detail → 200 nested in sort-key order (second-GET re-read).
     let response = owner
         .request("GET", &format!("/api/v1/boards/{board_one_id}"), None)
         .await;
@@ -800,14 +799,18 @@ async fn e2e_auth_projects_boards_blackbox(pool: MySqlPool) {
         .as_array()
         .expect("detail nests columns");
     assert_eq!(columns.len(), 3, "detail carries the 3 columns");
-    // Ordering IS contract on Rust (`position ASC` hardening); Nest loads
+    // Ordering IS contract on Rust (sort-key hardening); Nest loads
     // the relation unordered, so the Nest path asserts membership only.
     let positions: Vec<i64> = columns
         .iter()
         .map(|column| column["position"].as_i64().expect("position"))
         .collect();
     if target.is_rust() {
-        assert_eq!(positions, vec![0, 1, 2], "columns ordered position ASC");
+        assert_eq!(
+            positions,
+            vec![0, 1, 2],
+            "columns ordered by the wire order"
+        );
     } else {
         let mut sorted = positions.clone();
         sorted.sort();

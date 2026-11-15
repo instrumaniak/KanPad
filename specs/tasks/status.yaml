@@ -58,7 +58,7 @@ tasks:
     critical: false
   T010:
     name: Fractional sort-key ordering for positions
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: false

@@ -22,7 +22,9 @@ services:
       start_period: 2s
 
   mariadb:
-    image: mariadb:10.6
+    # T010: bumped 10.6 (EOL 2026-07-06) -> 11.4 LTS — matches CI
+    # `backend-mariadb` and the AGENTS.md floor.
+    image: mariadb:11.4
     container_name: kanpad-rs-mariadb
     ports:
       - "3338:3306"

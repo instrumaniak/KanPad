@@ -190,3 +190,72 @@ No self-service erasure endpoint ships in v1. Erasure is manual, owner-run:
 4. Optional hardening (out of scope for the rewrite, noted for T52): scoped
    `DELETE /api/v1/auth/me` self-erasure or a `delete-user` CLI subcommand
    reusing the same cascade + session purge.
+
+## 12. T010 — fractional `sort_key` ordering (2026-11-15)
+
+`columns`, `cards` and `checklist_items` no longer store `position`. Each
+row carries a fractional `sort_key` (`VARCHAR(255) CHARACTER SET ascii
+COLLATE ascii_bin NOT NULL` — base62, LexoRank-style integer+float,
+nearest-neighbour keys never exhaust precision). Every position change is now
+a single-row write; siblings are never renumbered. The wire contract is
+unchanged: integer 0-based `position` on the wire, COMPUTED at read (list
+`enumerate` for pages/lists, correlated `COUNT(*) … sort_key < ?` for
+single-row reads, per-group counters for grouped fetches) and accepted as a
+target index on writes (translated to a between-neighbours key server-side).
+`sort_key` never leaks to the wire.
+
+New/changed wire semantics (additive; typegen is additive-only):
+
+- `position` in **responses** is the computed contiguous 0-based index
+  (unchanged shape, now computed).
+- **Additive optional field** on `PATCH /api/v1/columns/:id` and
+  `PATCH /api/v1/checklist-items/:id` bodies: `position?: number|null`
+  (clamped to `[0, N-1]`, never 400 — same card-move convention; documented
+  intra-entity inconsistency: checklist-item **create** still 400s on
+  negatives, PATCH move clamps).
+- New move endpoints: `PATCH /api/v1/columns/:id{position}` (the long-missing
+  column-reorder endpoint) and `PATCH /api/v1/checklist-items/:id{position}`
+  (the long-missing item-reorder endpoint) — both single-row writes.
+
+Behaviour normalizations (this is the full list; all existing clients keep
+working untouched):
+
+- Checklist-item positions are contiguous computed indexes (were verbatim —
+  an explicit-position insert used to write duplicates and a delete never
+  closed gaps; holes persisted). The explicit-position create path clamps to
+  `[0, N]` instead of writing verbatim.
+- Duplicate positions anywhere are now impossible (`UNIQUE(parent, sort_key)`).
+- Deletes never renumber siblings anywhere (`columns`, `cards`,
+  `checklist_items`) — the stored key is untouched and the wire order is
+  recomputed dense.
+- All order queries gain a deterministic `id` tiebreak (`sort_key, id`).
+- `DELETE /api/v1/columns/:id` and `DELETE /api/v1/cards/:id` no longer
+  "close the gap" — same 204, same no-adjacent-write contract.
+- `PATCH /:id{sort_order:asc|desc}` (columns) rewrites card keys by
+  `created_at` in TWO phases (park at `tmp-<id>`, then assign even keys
+  `a0…an`) — no transient unique-index violation.
+
+Migration `0003_sort_key_fractional_ordering.sql` (single release, seconds
+of downtime by policy): adds `sort_key`, backfills partitioned per parent
+(`ROW_NUMBER() OVER (PARTITION BY board_id|column_id|checklist_id ORDER BY
+position, id)`; row 1 → `c000`, big-endian base62 thirds, monotonic to
+62³ = 238,328 rows/parent), adds `UQ_columns_board_sort_key` /
+`UQ_cards_column_sort_key` / `UQ_checklist_items_checklist_sort_key`, drops
+the old non-unique `(parent, position)` indexes and the `position` columns.
+`.sqlx/` regenerated on MySQL 8.4 (DB `kanpad`).
+
+Concurrency (D3): `UNIQUE(parent, sort_key)` turns race losers into `1062`.
+`1213`/`1205` and **constraint-scoped `1062`** on `UQ_*_sort_key` retried
+(≤5 attempts, linear backoff; same-card-race `Restart` preserved; unrelated
+unique violations never retried). Column and checklist-item appends keep the
+serialized `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` contract (no 1062 path
+there); neighbor reads for moves are unlocked (last-write-wins —
+unique index decides). `READ COMMITTED` for the move tx as before.
+Rebalance: any generated key > 64 chars → the parent's keys are rewritten
+evenly in two phases (park at `tmp-<id>`, then assign) inside the caller's
+tx; a forced-bloat test proves no transient unique violation and evenly
+distributed final keys. Jira rebalances at 128; we catch it at 64.
+
+MariaDB floor moves to **11.4 LTS** (10.6 EOL 2026-07-06) — the
+`backend-mariadb` CI leg runs `mariadb:11.4` and executes the
+migration/backfill + ordering suites, not just fmt/clippy/`migrate run`.

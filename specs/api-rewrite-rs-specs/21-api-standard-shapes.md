@@ -64,7 +64,7 @@ Boards (`boards.controller.ts:45-246`):
 | `GET /api/boards?projectId&archived` (manual `parseInt`, NaN ignored) | `GET /api/v1/boards?project_id&archived&sort&order&page&limit` → `Page<Board>`; garbage→`400` |
 | `GET /api/boards/archived` (duplicate, matchit hack) | **deleted** — use `?archived=true` |
 | `POST /api/boards` (non-atomic) | `POST /api/v1/boards` → `201+Location`; board + 3 columns (`To Do/In Progress/Done` 0/1/2) in one tx; foreign `project_id`→`404` |
-| `GET /api/boards/:id` (board+columns, no cards) | `GET /api/v1/boards/:id` → `200` unpaginated (`position ASC`), keep shape |
+| `GET /api/boards/:id` (board+columns, no cards) | `GET /api/v1/boards/:id` → `200` unpaginated (fractional `sort_key` order; wire `position` computed, never stored), keep shape |
 | `PATCH /api/boards/:id` | `PATCH /api/v1/boards/:id {name?,background_color?,project_id?\|null,view_mode?}` → `200` |
 | `DELETE /api/boards/:id` → `200 {message}` | `DELETE /api/v1/boards/:id` → `204` (hard) |
 | `PATCH /:id/archive`, `/:id/restore` (verbs) | **deleted** — `PATCH /api/v1/boards/:id {is_archived:true\|false}` (idempotent) |
@@ -74,24 +74,24 @@ Columns (`columns.controller.ts:44-169`):
 
 | Nest | Rewrite |
 |---|---|
-| `GET /api/boards/:boardId/columns` (embeds cards) | `GET /api/v1/boards/:boardId/columns` → `200 {data[]}` unpaginated `position ASC`, keep embed |
-| `POST /api/boards/:boardId/columns` | `POST ...` → `201+Location`, `MAX(position)+1` via `SELECT ... FOR UPDATE` in tx, default `New Column` |
-| `PATCH /api/columns/:id` | `PATCH /api/v1/columns/:id {name}` → `200` |
-| `DELETE /api/columns/:id` (no gap-close/tx) | `DELETE /api/v1/columns/:id` → `204`, cascade cards + set-based gap-close (`position - 1` range) in tx |
-| `PATCH /api/columns/:id/sort {order}` (verb) | `PATCH /api/v1/columns/:id {sort_order:asc\|desc}` → `200` (rewrite by `created_at`) |
-| `POST /api/columns/:id/move-all {targetColumnId}` (verb phrase) | `POST /api/v1/columns/:id/move-cards {target_column_id}` → `200 {moved_count}`; same-board/same-id→`400`, empty→`200 {moved_count:0}`; append at `MAX+1` in tx with source `ORDER BY position ASC` (target mirrors source order); set-based, no reload+save loop | sub-path `move-cards` (plain Axum route — NOT a colon-suffix `:move-cards` custom verb; `matchit` treats `:` literally and `{id}:move-cards` would not match as intended) |
+| `GET /api/boards/:boardId/columns` (embeds cards) | `GET /api/v1/boards/:boardId/columns` → `200 {data[]}` unpaginated in fractional `sort_key` order, keep embed |
+| `POST /api/boards/:boardId/columns` | `POST ...` → `201+Location`, serialized last-key `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` + `key_between` in tx, default `New Column` |
+| `PATCH /api/columns/:id` | `PATCH /api/v1/columns/:id {name?,position?,sort_order?}` → `200` (new `position` key: sibling move, one between-neighbours `sort_key` write, clamp `[0, N-1]`, never 400) |
+| `DELETE /api/columns/:id` (no gap-close/tx) | `DELETE /api/v1/columns/:id` → `204`, cascade cards; sibling `sort_key`s are never renumbered (no gap exists) |
+| `PATCH /api/columns/:id/sort {order}` (verb) | `PATCH /api/v1/columns/:id {sort_order:asc\|desc}` → `200` (two-phase park-then-assign rewrite by `created_at`) |
+| `POST /api/columns/:id/move-all {targetColumnId}` (verb phrase) | `POST /api/v1/columns/:id/move-cards {target_column_id}` → `200 {moved_count}`; same-board/same-id→`400`, empty→`200 {moved_count:0}`; appended after the target's last `sort_key` in tx with source `ORDER BY sort_key ASC, id ASC` (target mirrors source order) | sub-path `move-cards` (plain Axum route — NOT a colon-suffix `:move-cards` custom verb; `matchit` treats `:` literally and `{id}:move-cards` would not match as intended) |
 
 Cards (`cards.controller.ts:40-128`):
 
 | Nest | Rewrite |
 |---|---|
 | `GET /api/columns/:col/cards` (bare array) | `GET /api/v1/columns/:col/cards?page&limit` → `Page<CardSummary>` (no TEXT; `has_description` + `checklist_progress?`) |
-| `POST /api/cards {title,column_id,...}` (flat, explicit position writes verbatim → dupes) | `POST /api/v1/cards` → `201+Location` (keep flat body; explicit `position` = insert-with-open-gap, default `MAX+1` via `FOR UPDATE`) |
-| `PATCH /api/cards/:id` (scalar+move, clamp bug) | `PATCH /api/v1/cards/:id` → `200`; set-based range `UPDATE`s + `FOR UPDATE` per `11 A3`; cross-column without position appends `max+1`; write clamped value |
+| `POST /api/cards {title,column_id,...}` (flat, explicit position writes verbatim → dupes) | `POST /api/v1/cards` → `201+Location` (keep flat body; explicit `position` = between-neighbours `sort_key` insert, clamp `[0, N]`; default appends via serialized last-key `FOR UPDATE` + `key_between`) |
+| `PATCH /api/cards/:id` (scalar+move, clamp bug) | `PATCH /api/v1/cards/:id` → `200`; ONE between-neighbours `sort_key` `UPDATE` per move; neighbor reads unlocked (last-write-wins on same-gap drops); moving row `FOR UPDATE` (same-card race → tx restart); cross-column without position appends after the target's last key; clamped value written |
 | `GET /api/cards/:id` | `GET /api/v1/cards/:id` → `200 CardDetail{checklists{items},labels}` |
 | `POST /api/cards/:id/labels {labelId}` → `200` | `PUT /api/v1/cards/:id/labels/:label_id` → `200 {data:Card}` idempotent (keep `POST` alias one release, deprecated — alias body `{label_id}`, legacy `{labelId}` also accepted) |
 | `DELETE /api/cards/:id/labels/:labelId` → `200 {message}` | `DELETE ...` → `204`; unassigned→`404` |
-| `DELETE /api/cards/:id` → `200 {message}` (bare, no gap-close) | `DELETE /api/v1/cards/:id` → `204` + gap-close in same tx (dense re-read) |
+| `DELETE /api/cards/:id` → `200 {message}` (bare, no gap-close) | `DELETE /api/v1/cards/:id` → `204`; siblings never renumbered (wire order recomputed dense) |
 
 Labels / tags (`labels.controller.ts:33-77`, `tags.controller.ts:50-94`):
 
@@ -109,8 +109,8 @@ Checklists (`checklists.controller.ts:77-168`):
 | `POST /api/cards/:cardId/checklists` | `POST /api/v1/cards/:cardId/checklists` → `201+Location` |
 | (missing list) | **added** `GET /api/v1/cards/:cardId/checklists` → `200 {data[]}` (small-N, unpaginated, documented) |
 | `GET/PATCH/DELETE /api/checklists/:id` | `GET /api/v1/checklists/:id` → `200`; `PATCH` → `200`; `DELETE` → `204` |
-| `POST /api/checklists/:id/items` | `POST /api/v1/checklists/:id/items` → `201+Location`; `position` int `≥0` (reject negatives/floats `400`) |
-| `PATCH/DELETE /api/checklist-items/:id` (stem mix) | `PATCH /api/v1/checklist-items/:id` → `200`; `DELETE` → `204` (lock stem; document nested alternative, don't ship both) |
+| `POST /api/checklists/:id/items` | `POST /api/v1/checklists/:id/items` → `201+Location`; `position` int `≥0` (reject negatives/floats `400`); out-of-range clamps to `[0, N]`; default appends via serialized last-key `FOR UPDATE` + `key_between` |
+| `PATCH/DELETE /api/checklist-items/:id` (stem mix) | `PATCH /api/v1/checklist-items/:id` → `200` (`position?` reorder via one between-neighbours `sort_key` write, clamp `[0, N-1]`, never 400); `DELETE` → `204` (lock stem; document nested alternative, don't ship both) |
 
 Notes (`notes.controller.ts:67-138`):
 

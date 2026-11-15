@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `name`, `position` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+  "query": "SELECT `id`, `sort_key` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
   "describe": {
     "columns": [
       {
@@ -21,33 +21,17 @@
       },
       {
         "ordinal": 1,
-        "name": "name",
+        "name": "sort_key",
         "type_info": {
           "type": "VarString",
-          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "flags": "NOT_NULL | BINARY | NO_DEFAULT_VALUE",
           "collation": 224,
           "max_size": 1020
         },
         "origin": {
           "Table": {
             "table": "kanpad.columns",
-            "name": "name"
-          }
-        }
-      },
-      {
-        "ordinal": 2,
-        "name": "position",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "collation": 63,
-          "max_size": 11
-        },
-        "origin": {
-          "Table": {
-            "table": "kanpad.columns",
-            "name": "position"
+            "name": "sort_key"
           }
         }
       }
@@ -57,9 +41,8 @@
     },
     "nullable": [
       false,
-      false,
       false
     ]
   },
-  "hash": "f7c16218d5f971ffa18d1efd0f6f7587ab59278591514b8be9f21023ed11721d"
+  "hash": "9fc52117f65f5c8577c35a18b813b1c3f28b67a4d7d14a5f2ac575c80bbb5a37"
 }

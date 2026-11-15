@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `text`, `is_completed`, `checklist_id` AS \"checklist_id: i32\", `position`, `created_at`, `updated_at` FROM `checklist_items` WHERE `checklist_id` = ? ORDER BY `position` ASC",
+  "query": "SELECT `id`, `text`, `is_completed`, `checklist_id` AS \"checklist_id: i32\", `created_at`, `updated_at` FROM `checklist_items` WHERE `checklist_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
   "describe": {
     "columns": [
       {
@@ -69,22 +69,6 @@
       },
       {
         "ordinal": 4,
-        "name": "position",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "collation": 63,
-          "max_size": 11
-        },
-        "origin": {
-          "Table": {
-            "table": "kanpad.checklist_items",
-            "name": "position"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
         "name": "created_at",
         "type_info": {
           "type": "Datetime",
@@ -100,7 +84,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "updated_at",
         "type_info": {
           "type": "Datetime",
@@ -125,9 +109,8 @@
       false,
       false,
       false,
-      false,
       false
     ]
   },
-  "hash": "f754855933acafbc5da0f76002d213deac1c1a7524bcfde522bb32b579d50a57"
+  "hash": "10d784aa1bb20341f9b5f2d9cbcc83a87cee5321ddea79c94e37a868618980fe"
 }

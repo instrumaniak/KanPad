@@ -13,7 +13,7 @@
 //!
 //! Covered (red first: cards routes do not exist yet):
 //! `POST {title,column_id,position?,description?,due_date?} → 201 {data} +
-//! Location` (explicit `position` = insert-with-open-gap, default `MAX+1` via
+//! Location` (explicit `position` = between-neighbours sort key, default =
 //! `FOR UPDATE`); `PATCH` scalars-only `→ 200`; `DELETE → 204` (gap-close in
 //! same tx, dense `0..N` on re-read); `GET /:id → 200 CardDetail`
 //! (checklists{items}, labels); `GET /columns/:col/cards?page&limit → 200
@@ -175,13 +175,13 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
         .to_str()
         .expect("Location is ASCII");
     assert_eq!(location, format!("/api/v1/cards/{card_id}"));
-    let stored: (String, i32) =
-        sqlx::query_as("SELECT `title`, `position` FROM `cards` WHERE `id` = ?")
+    let stored: (String, String) =
+        sqlx::query_as("SELECT `title`, `sort_key` FROM `cards` WHERE `id` = ?")
             .bind(card_id)
             .fetch_one(&pool)
             .await
             .expect("created card re-reads");
-    assert_eq!(stored, ("First card".to_string(), 0));
+    assert_eq!(stored, ("First card".to_string(), "a0".to_string()));
     // Second GET proves persistence (not an echo).
     let (status, _, bytes) = send(
         app(),
@@ -203,7 +203,7 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
         "no progress key without checklists: {detail}"
     );
 
-    // 3. Default position appends MAX+1; explicit position opens a gap.
+    // 3. Default position appends (last-key `FOR UPDATE`); explicit position
     for title in ["Second card", "Third card"] {
         let (status, _, bytes) = send(
             app(),
@@ -220,22 +220,16 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
         let body = json_of(&bytes);
         assert_eq!(status, StatusCode::CREATED, "append {title}: {body}");
     }
-    let positions: Vec<(String, i32)> = sqlx::query_as(
-        "SELECT `title`, `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    let titles: Vec<String> = sqlx::query_scalar(
+        "SELECT `title` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(col_id)
     .fetch_all(&pool)
     .await
-    .expect("positions re-read");
-    assert_eq!(
-        positions,
-        vec![
-            ("First card".to_string(), 0),
-            ("Second card".to_string(), 1),
-            ("Third card".to_string(), 2),
-        ]
-    );
-    // Explicit position=1 shifts 1..N up by one (never a verbatim duplicate).
+    .expect("sort-key order re-read");
+    assert_eq!(titles, vec!["First card", "Second card", "Third card"]);
+    // Explicit position=1 lands between the first and second card (never a
+    // verbatim duplicate).
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -252,22 +246,17 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
     assert_eq!(status, StatusCode::CREATED, "insert at 1: {inserted}");
     let inserted_id = inserted["data"]["id"].as_i64().expect("inserted id");
     assert_eq!(inserted["data"]["position"], 1);
-    let positions: Vec<(String, i32)> = sqlx::query_as(
-        "SELECT `title`, `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    let titles: Vec<String> = sqlx::query_scalar(
+        "SELECT `title` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(col_id)
     .fetch_all(&pool)
     .await
-    .expect("gap-open re-read");
+    .expect("sort-key order re-read");
     assert_eq!(
-        positions,
-        vec![
-            ("First card".to_string(), 0),
-            ("Inserted card".to_string(), 1),
-            ("Second card".to_string(), 2),
-            ("Third card".to_string(), 3),
-        ],
-        "explicit position opens a gap"
+        titles,
+        vec!["First card", "Inserted card", "Second card", "Third card"],
+        "explicit position inserts between neighbours"
     );
 
     // 4. Quote payload is stored literally (injection regression).
@@ -486,8 +475,8 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
         .await
         .expect("checklist id");
     sqlx::query(
-        "INSERT INTO `checklist_items` (`text`, `is_completed`, `checklist_id`, `position`) VALUES \
-         ('Write test', 0, ?, 0), ('Pass test', 1, ?, 1)",
+        "INSERT INTO `checklist_items` (`text`, `is_completed`, `checklist_id`, `sort_key`) VALUES \
+         ('Write test', 0, ?, 'a0'), ('Pass test', 1, ?, 'a1')",
     )
     .bind(checklist)
     .bind(checklist)
@@ -758,8 +747,17 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
     assert_eq!(status, StatusCode::CREATED, "alias create: {aliased}");
     assert_eq!(aliased["data"]["title"], "Alias card");
 
-    // 11. DELETE a middle card → 204 empty body; positions close to dense
-    //     0..N on re-read; re-GET 404s.
+    // 11. DELETE a middle card → 204 empty body; sibling sort keys are
+    //     NOT renumbered; wire positions are recomputed dense.
+    // Capture the siblings' keys BEFORE the delete to prove byte-identical keys after.
+    let sibling_keys_before: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `cards` WHERE `column_id` = ? AND `id` != ? ORDER BY `sort_key` ASC, `id` ASC",
+    )
+    .bind(col_id)
+    .bind(inserted_id)
+    .fetch_all(&pool)
+    .await
+    .expect("sibling sort keys before delete");
     let (status, headers, bytes) = send(
         app(),
         authed_request(
@@ -782,15 +780,19 @@ async fn cards_crud_list_flow(pool: MySqlPool) {
         String::from_utf8_lossy(&bytes)
     );
     drop(headers);
-    let positions: Vec<i32> = sqlx::query_scalar(
-        "SELECT `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    // Sibling keys captured BEFORE the delete must be byte-identical (the
+    // core no-adjacent-impact invariant).
+    let sibling_keys_after: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(col_id)
     .fetch_all(&pool)
     .await
-    .expect("positions re-read");
-    let dense: Vec<i32> = (0..positions.len() as i32).collect();
-    assert_eq!(positions, dense, "gap closed, dense 0..N");
+    .expect("sibling sort keys after delete");
+    assert_eq!(
+        sibling_keys_after, sibling_keys_before,
+        "sibling sort keys are not renumbered on delete"
+    );
     let (status, _, bytes) = send(
         app(),
         authed_request(

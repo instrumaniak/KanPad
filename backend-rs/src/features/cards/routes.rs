@@ -25,14 +25,19 @@ use crate::{
 
 use super::{
     store::{
-        CardPatch, apply_card_patch, clamp_position, close_card_gap, count_cards_in_column,
-        delete_card_label_link, delete_card_row, fetch_card_owned, fetch_card_page,
+        CardPatch, apply_card_patch, count_cards_in_column, delete_card_label_link,
+        delete_card_row, fetch_card_keys_in_column, fetch_card_owned, fetch_card_page,
         fetch_card_spot_for_update, fetch_detail_checklists, fetch_detail_items,
-        fetch_detail_labels, fetch_page_labels, fetch_page_progress, insert_card,
-        insert_card_label_link, lock_cards_for_update, max_position_for_update, open_card_gap,
-        point_move_card, shift_cards_down, shift_cards_up, to_detail, to_summaries,
+        fetch_detail_labels, fetch_last_sort_key_for_update, fetch_page_labels,
+        fetch_page_progress, insert_card, insert_card_label_link, point_move_card, to_detail,
+        to_summaries,
     },
     types::{AttachLabelInput, CardBody, CreateCardInput, UpdateCardInput, parse_due_date},
+};
+use crate::common::{
+    order_key::{clamp_position, key_between, key_for_index, needs_rebalance},
+    rebalance::{RebalanceScope, rebalance_sort_keys},
+    retry::{MAX_ATTEMPTS, is_transient_lock_error},
 };
 
 /// Feature router (no `with_state` inside; the caller applies state once).
@@ -73,11 +78,13 @@ async fn load_detail(
 }
 
 /// `POST /api/v1/cards{title,column_id,position?,description?,due_date?} →
-/// 201 {data} + Location`. An explicit `position` clamps to `[0, max + 1]`
-/// then opens a gap with a single range shift (never a verbatim duplicate
-/// write); the default appends `MAX(position) + 1` taken under `SELECT ...
-/// FOR UPDATE` in the create tx. A foreign/missing `column_id` rolls back to
-/// 404 (no oracle, never 403).
+/// 201 {data} + Location`. An explicit `position` clamps to `[0, N]` and gets
+/// the between-neighbours sort key (never a verbatim write); the default
+/// appends via a serialized `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` read
+/// + `key_between`. A foreign/missing `column_id` rolls back to 404 (no
+/// oracle, never 403). Duplicate-key races on the unique
+/// `(column_id, sort_key)` index retry (`1213`/`1205`/scoped `1062`), like a
+/// move.
 #[utoipa::path(
     post,
     path = "/api/v1/cards",
@@ -96,31 +103,87 @@ pub async fn create_card(
     ValidJson(input): ValidJson<CreateCardInput>,
 ) -> Result<impl IntoResponse, AppError> {
     let user_id = auth.user_id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    check_column_owned(&mut *tx, user_id, input.column_id).await?;
-    let max = max_position_for_update(&mut *tx, input.column_id).await?;
-    let position = match input.position {
-        Some(requested) => requested.clamp(0, max + 1),
-        None => max + 1,
-    };
-    if input.position.is_some() {
-        open_card_gap(&mut *tx, input.column_id, position).await?;
-    }
     let due_date = input
         .due_date
         .as_deref()
         .map(|raw| parse_due_date(raw).ok_or(AppError::Internal(Internal)))
         .transpose()?;
-    let id = insert_card(
-        &mut *tx,
-        input.column_id,
-        &input.title,
-        position,
-        input.description.as_deref(),
-        due_date,
-    )
-    .await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    let mut id = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        // Same READ COMMITTED scoping as the move path (the statement runs
+        // the retry matcher).
+        let mut connection = state.pool.acquire().await.map_err(AppError::Db)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *connection)
+            .await
+            .map_err(AppError::Db)?;
+        let mut tx = connection.begin().await.map_err(AppError::Db)?;
+        let step: Result<i32, AppError> = async {
+            check_column_owned(&mut *tx, user_id, input.column_id).await?;
+            let sort_key = match input.position {
+                Some(requested) => {
+                    let others = fetch_card_keys_in_column(&mut *tx, input.column_id, None).await?;
+                    let target = clamp_position(
+                        requested,
+                        i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?,
+                    ) as usize;
+                    let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+                    key_for_index(&keys, target)?
+                }
+                None => match fetch_last_sort_key_for_update(&mut *tx, input.column_id).await? {
+                    Some(last) => key_between(Some(&last), None)?,
+                    None => key_between(None, None)?,
+                },
+            };
+            let id = insert_card(
+                &mut *tx,
+                input.column_id,
+                &input.title,
+                &sort_key,
+                input.description.as_deref(),
+                due_date,
+            )
+            .await?;
+            if needs_rebalance(&sort_key) {
+                rebalance_sort_keys(
+                    &mut tx,
+                    RebalanceScope::Cards {
+                        column_id: input.column_id,
+                    },
+                )
+                .await?;
+            }
+            Ok(id)
+        }
+        .await;
+        match step {
+            Ok(created) => {
+                tx.commit().await.map_err(AppError::Db)?;
+                id = Some(created);
+                break;
+            }
+            Err(error) => {
+                // 1213 already rolled the WHOLE transaction back, but 1205
+                // rolls back only the CURRENT STATEMENT — always ROLLBACK
+                // explicitly before deciding to retry.
+                let _ = tx.rollback().await;
+                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MAX_ATTEMPTS,
+                        error = %error,
+                        "retrying a card create after a transient failure"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+    let Some(id) = id else {
+        return Err(AppError::Internal(Internal));
+    };
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_card_owned(&state.pool, user_id, id).await?;
     let body = load_detail(&state.pool, row).await?;
@@ -160,15 +223,14 @@ pub async fn get_card(
 /// `PATCH /api/v1/cards/{id} → 200 {data:CardDetail}` (scalars +
 /// move/reorder, T24b): `title`/`description`/`due_date` patch as in T24a
 /// (explicit `null` clears; empty `{}` is a no-op 200), while `column_id`
-/// and/or `position` trigger a set-based move in the SAME tx — same-column =
-/// one range shift + point update, cross-column = close-gap + open-gap +
-/// point update. Requested positions clamp ([0, N-1] same-column, [0, M]
-/// cross-column, missing cross-column position appends `M = max+1`) and the
-/// CLAMPED value is written. Columns lock ascending (`min` first) via
-/// `SELECT … FOR UPDATE`; the moving spot re-reads under `FOR UPDATE` so a
-/// same-card race restarts the tx instead of writing unlocked. A
-/// foreign/missing `column_id` rolls back to 404 (no oracle, never 403).
-/// The response re-reads the stored row (never echoes).
+/// and/or `position` trigger a single-row sort-key move in the SAME tx —
+/// same-column and cross-column are the same between-neighbours key write.
+/// Requested positions clamp ([0, N-1] same-column, [0, M] cross-column,
+/// missing cross-column position appends) and the CLAMPED index is written.
+/// The moving row locks `FOR UPDATE`; a same-card race restarts the tx
+/// instead of writing unlocked. A foreign/missing `column_id` rolls back to
+/// 404 (no oracle, never 403). The response re-reads the stored row (never
+/// echoes).
 #[utoipa::path(
     patch,
     path = "/api/v1/cards/{id}",
@@ -230,9 +292,6 @@ pub async fn update_card(
     Ok(Json(load_detail(&state.pool, row).await?))
 }
 
-/// Maximum move attempts: the first try plus four transient-lock retries.
-const MOVE_MAX_ATTEMPTS: u32 = 5;
-
 /// How one move attempt finished inside its open transaction.
 enum MoveStep {
     /// The transaction is ready to commit.
@@ -241,33 +300,17 @@ enum MoveStep {
     Restart,
 }
 
-/// Whether an error means "the transaction lost a lock race": MySQL `1213`
-/// (deadlock) or `1205` (lock-wait timeout).
-///
-/// Matched by ERROR NUMBER, never SQLSTATE: `1213` is `40001` but `1205` is
-/// `HY000`, so a `40001`-only matcher silently misses every lock-wait
-/// timeout. sqlx's `DatabaseError::code()` returns the SQLSTATE, so the
-/// MySQL-specific `number()` is reached through a downcast.
-fn is_transient_lock_error(error: &AppError) -> bool {
-    let AppError::Db(sqlx::Error::Database(database)) = error else {
-        return false;
-    };
-    database
-        .as_error()
-        .downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
-        .is_some_and(|mysql| matches!(mysql.number(), 1213 | 1205))
-}
-
-/// Move/reorder worker for [`update_card`]: set-based range `UPDATE`s + point
-/// update in a short tx (columns locked ascending, spot re-read locked, tx
-/// restarted when the card changed columns under us — see store docs).
+/// Move/reorder worker for [`update_card`]: single-row writes + point update
+/// in a short tx (the moving row re-reads under `FOR UPDATE` so a same-card
+/// race restarts the tx instead of writing unlocked — see store docs).
 /// `target_column` is `None` for same-column reorders; `requested` is `None`
-/// for cross-column appends (`max + 1`). Scalar `patch` applies in the same
-/// tx after the move. The tx runs at `READ COMMITTED` (set before `BEGIN` —
-/// MySQL rejects the statement inside a transaction with error 1568), and
-/// transient lock errors (`1213` deadlock / `1205` lock-wait timeout) are
-/// retried up to [`MOVE_MAX_ATTEMPTS`] with a small linear backoff,
-/// explicitly rolling the whole tx back first.
+/// for cross-column appends (the end of the target). Scalar `patch` applies
+/// in the same tx after the move. The tx runs at `READ COMMITTED` (set
+/// before `BEGIN` — MySQL rejects the statement inside a transaction with
+/// error 1568), and transient lock failures (`1213` deadlock / `1205`
+/// lock-wait timeout / scoped `1062` on a `UQ_*_sort_key` unique index) are
+/// retried up to [`MAX_ATTEMPTS`] with a small linear backoff, explicitly
+/// rolling the whole tx back first.
 async fn move_card(
     pool: &sqlx::MySqlPool,
     user_id: i32,
@@ -279,7 +322,7 @@ async fn move_card(
     // A same-card race (the card changed columns between our read and our
     // locks) restarts the whole tx; bounded — exhaustion is unreachable in
     // practice (it needs a concurrent move of the SAME card on every try).
-    for attempt in 0..MOVE_MAX_ATTEMPTS {
+    for attempt in 0..MAX_ATTEMPTS {
         // `SET TRANSACTION ISOLATION LEVEL` is rejected INSIDE a transaction
         // (MySQL error 1568) and the `SET SESSION` variant would leak onto
         // every later transaction on this pooled connection — so acquire the
@@ -299,54 +342,34 @@ async fn move_card(
             if target != source {
                 check_column_owned(&mut *tx, user_id, target).await?;
             }
-            // Stable lock order: `min` column first (opposite-direction moves
-            // serialize instead of deadlocking).
-            let (first, second) = if source <= target {
-                (source, target)
-            } else {
-                (target, source)
-            };
-            let first_locked = lock_cards_for_update(&mut *tx, first).await?;
-            let second_locked = if second == first {
-                Vec::new()
-            } else {
-                lock_cards_for_update(&mut *tx, second).await?
-            };
-            let (fresh_column, fresh_position) =
+            let (fresh_column, fresh_sort_key) =
                 fetch_card_spot_for_update(&mut *tx, user_id, id).await?;
             if fresh_column != source {
-                // Same-card race: the card left `source` after our read, so our
-                // locks cover the wrong column — roll back and retry with fresh
-                // values rather than writing against an unlocked column.
+                // Same-card race: the card left `source` after our read, so
+                // our lock covers the wrong column — roll back and retry with
+                // fresh values rather than writing against an unlocked column.
                 return Ok(MoveStep::Restart);
             }
-            if target == source {
-                let upper = i32::try_from(first_locked.len())
-                    .map_err(|_| AppError::Internal(Internal))?
-                    .saturating_sub(1);
-                let new_position = clamp_position(requested.unwrap_or(fresh_position), upper);
-                if new_position < fresh_position {
-                    shift_cards_up(&mut *tx, target, new_position, fresh_position).await?;
-                } else if new_position > fresh_position {
-                    shift_cards_down(&mut *tx, target, fresh_position, new_position).await?;
-                }
-                point_move_card(&mut *tx, id, target, new_position).await?;
-            } else {
-                let target_count = if target == first {
-                    first_locked.len()
-                } else {
-                    second_locked.len()
-                };
-                let target_count =
-                    i32::try_from(target_count).map_err(|_| AppError::Internal(Internal))?;
-                close_card_gap(&mut *tx, source, fresh_position).await?;
-                let new_position = requested
-                    .map(|position| clamp_position(position, target_count))
-                    .unwrap_or(target_count);
-                // Appending (`new == M`) shifts zero rows — the same `UPDATE`
-                // covers both cases, no branch needed.
-                open_card_gap(&mut *tx, target, new_position).await?;
-                point_move_card(&mut *tx, id, target, new_position).await?;
+            // Sibling keys of the TARGET (excluding the moving card). Neighbor
+            // reads stay unlocked (D3: last-write-wins for concurrent same-gap
+            // drops; the unique index breaks true same-key races).
+            let others = fetch_card_keys_in_column(&mut *tx, target, Some(id)).await?;
+            let others_len =
+                i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?;
+            let others_keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+            let fresh_index = others_keys
+                .iter()
+                .filter(|key| **key < fresh_sort_key.as_str())
+                .count();
+            let target_index = match requested {
+                Some(requested) => clamp_position(requested, others_len) as usize,
+                None if target == source => fresh_index,
+                None => others.len(),
+            };
+            let sort_key = key_for_index(&others_keys, target_index)?;
+            point_move_card(&mut *tx, id, target, &sort_key).await?;
+            if needs_rebalance(&sort_key) {
+                rebalance_sort_keys(&mut tx, RebalanceScope::Cards { column_id: target }).await?;
             }
             apply_card_patch(&mut *tx, id, patch).await?;
             Ok(MoveStep::Ready)
@@ -368,10 +391,10 @@ async fn move_card(
                 // would survive half-applied — so always ROLLBACK explicitly
                 // before deciding to retry.
                 let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MOVE_MAX_ATTEMPTS {
+                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
                     tracing::warn!(
                         attempt = attempt + 1,
-                        max_attempts = MOVE_MAX_ATTEMPTS,
+                        max_attempts = MAX_ATTEMPTS,
                         error = %error,
                         "retrying a card move after a transient lock error"
                     );
@@ -514,9 +537,9 @@ pub async fn detach_card_label(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `DELETE /api/v1/cards/{id} → 204` (hard delete, empty body). The position
-/// gap closes with a set-based range `UPDATE` in the SAME tx. Foreign/missing
-/// id → 404 (no oracle, never 403); garbage id → 400 `invalid-path`.
+/// `DELETE /api/v1/cards/{id} → 204` (hard delete, empty body). Sibling
+/// `sort_key`s are untouched (no gap to close). Foreign/missing id → 404 (no
+/// oracle, never 403); garbage id → 400 `invalid-path`.
 #[utoipa::path(
     delete,
     path = "/api/v1/cards/{id}",
@@ -536,15 +559,14 @@ pub async fn delete_card(
     let user_id = auth.user_id.get();
     let id = id.get();
     let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    let owned = fetch_card_owned(&mut *tx, user_id, id).await?;
+    fetch_card_owned(&mut *tx, user_id, id).await?;
     delete_card_row(&mut *tx, id).await?;
-    close_card_gap(&mut *tx, owned.column_id.get(), owned.position).await?;
     tx.commit().await.map_err(AppError::Db)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/v1/columns/{colId}/cards?page&limit → 200 Page<CardSummary>`
-/// (`position ASC`; never selects TEXT — no `description` key, only the
+/// (sort-key order; never selects TEXT — no `description` key, only the
 /// `has_description` flag; `checklist_progress` only when the card owns
 /// checklists). Foreign/missing column → 404 (no oracle, never 403).
 #[utoipa::path(

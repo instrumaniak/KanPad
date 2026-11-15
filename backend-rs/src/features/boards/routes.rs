@@ -147,7 +147,7 @@ pub async fn list_boards(
 }
 
 /// `GET /api/v1/boards/{id} → 200 {data:{…board,columns[]}}` (nested
-/// unpaginated, `position ASC`, no cards). Foreign/missing id → 404 (no
+/// unpaginated, sort-key order, no cards). Foreign/missing id → 404 (no
 /// oracle, never 403); garbage id → 400 `invalid-path` via `ValidPath`.
 #[utoipa::path(
     get,

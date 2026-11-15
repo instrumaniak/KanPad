@@ -1,9 +1,8 @@
 # T010: Fractional sort-key ordering for positions
 
-> **STATUS (2026-11-15): PLAN reviewed & corrected — not started.** Cross-checked against the
-> codebase, the CI workflow and upstream sources (see §Review notes 2026-11-15). Two open calls
-> remain (release strategy, new-endpoint clamp semantics); DB target is now MySQL 8.4 LTS /
-> MariaDB 11.4 LTS per AGENTS.md.
+> **STATUS (2026-11-15): DONE.** Implemented & accepted on both DB legs (MySQL 8.4.11, MariaDB 11.4.13). Open calls resolved at implementation start: single release; clamp semantics for both new endpoints. See §Implementation notes (2026-11-15) and §Review-fix pass (2026-11-15) for what actually happened.
+>
+> **Post-implementation review findings F1–F6 are applied (2026-11-15), decision F2 = (a) — see §Post-implementation review findings. Full matrix re-run green on BOTH legs: 153 api + 125 lib tests pass; `fmt` 0 · `clippy … -D warnings -A clippy::pedantic` 0 · `prepare --check` clean · `openapi.json`/`schema.d.ts` byte-fresh · frontend 723/723. Release-readiness still requires the maintainer's commit/push decision (uncommitted working tree).**
 
 ## Goal
 
@@ -194,37 +193,37 @@ TDD throughout: each step writes its failing tests first.
 
 ## Acceptance Criteria
 
-- [ ] Migration `0003` applies clean on fresh **and** existing (pre-populated, gapped,
+- [x] Migration `0003` applies clean on fresh **and** existing (pre-populated, gapped,
       duplicate-position) databases on MySQL 8.4 LTS and MariaDB 11.4 LTS; backfill is
       `PARTITION BY`-ed per parent; backfill test proves order preserved, keys unique per
       parent, first key per parent `c000`, monotonic per parent, no `position` column remains,
       **and the vendored `key_between` round-trip holds for sampled adjacent pairs**.
-- [ ] **Adjacent-unchanged proof tests** green for cards: create-at-index, same-column move
+- [x] **Adjacent-unchanged proof tests** green for cards: create-at-index, same-column move
       (up/down), cross-column move, delete, `sort_order` rewrite, bulk move-cards — siblings'
       `sort_key`s byte-identical before/after; only the intended row(s) change.
-- [ ] New endpoints `PATCH /columns/{id}{position?}` and `PATCH /checklist-items/{id}{position?}`
+- [x] New endpoints `PATCH /columns/{id}{position?}` and `PATCH /checklist-items/{id}{position?}`
       work, clamp per §Notes decision 2, and each has a persistence assertion.
-- [ ] Existing suites green unchanged in behaviour: `cards_move.rs` (race/retry),
+- [x] Existing suites green unchanged in behaviour: `cards_move.rs` (race/retry),
       `columns_sort.rs`, `columns_move_cards.rs`, `checklist_items.rs`, `golden.rs`,
       `e2e_columns_cards.rs`.
-- [ ] Duplicate-key races retry (`1062` added to the shared matcher, **scoped to the
+- [x] Duplicate-key races retry (`1062` added to the shared matcher, **scoped to the
       `UQ_*_sort_key` constraint names** — unrelated unique violations are not retried); column
       / checklist-item append paths keep their serialized last-key `FOR UPDATE` design (or this
       AC and D3 are amended together); same-card column race still restarts the tx (no
       whole-column lock remains in the codebase).
-- [ ] CI `backend-mariadb` leg runs `mariadb:11.4` with the migration/backfill + ordering
+- [x] CI `backend-mariadb` leg runs `mariadb:11.4` with the migration/backfill + ordering
       suites green (or this AC is scoped to `migrate run` + `sql_portability` by explicit
       maintainer decision, recorded in §Notes).
-- [ ] Rebalance guard rewrites a parent's keys in **two phases** (park at temporary unique
+- [x] Rebalance guard rewrites a parent's keys in **two phases** (park at temporary unique
       keys, then assign final even keys) — forced-bloat test proves no transient unique
       violation and evenly-distributed final keys; the `> 64`-char trigger fires.
-- [ ] `cargo fmt --check` 0 · `clippy … -D warnings -A clippy::pedantic` 0 ·
+- [x] `cargo fmt --check` 0 · `clippy … -D warnings -A clippy::pedantic` 0 ·
       `cargo sqlx prepare --check` green · `.sqlx/` diff limited to changed queries.
-- [ ] T52 set complete: specs amended, `CONTRACT-CHANGES.md` entry, `export-openapi`
+- [x] T52 set complete: specs amended, `CONTRACT-CHANGES.md` entry, `export-openapi`
       byte-fresh `openapi.json`, `npm run gen:api` + `-- --check` green, `tsc --noEmit` clean,
       `openapi_snapshot` green.
-- [ ] **Frontend suite passes with zero feature-code edits** (proves wire compatibility).
-- [ ] Lesson appended to `docs/lessons/rust-backend.md` (dated, tagged); §Notes below filled in.
+- [x] **Frontend suite passes with zero feature-code edits** (proves wire compatibility).
+- [x] Lesson appended to `docs/lessons/rust-backend.md` (dated, tagged); §Notes below filled in.
 
 ## Notes
 
@@ -331,15 +330,10 @@ into the plan):
   contract (D1), clamp semantics default, single-release default. `T006` notes `caching_sha2_password`
   exists in MariaDB only from 11.4.9/11.8.4/12.1 — irrelevant to CI's native-auth root login.
 
-### Open calls (confirm at implementation start)
+### Open calls (resolved 2026-11-15)
 
-1. **Release strategy:** default = single release (one migration add→backfill→unique→drop,
-   brief downtime). Alternative = two-release expand/contract (zero downtime, more ceremony).
-   *Decision: single release unless the user says otherwise.*
-2. **New-endpoint position semantics:** default = **clamp** (card-move convention —
-   drag-driven, never 400) for both new endpoints, documented as a small intra-entity
-   inconsistency (checklist-item *create* still 400s on negatives). Alternative = item-move
-   400s on negatives to match item-create. *Decision: clamp unless the user says otherwise.*
+1. **Release strategy:** **single release** (one migration add→backfill→unique→drop, brief downtime) — user confirmed at implementation start.
+2. **New-endpoint position semantics:** **clamp** (`[0, N-1]`, never 400) for both new endpoints — user confirmed at implementation start (card-move convention; drag-driven, never 400).
 
 ### Out of scope
 
@@ -350,3 +344,258 @@ into the plan):
 - Retrying `1062` for constraints other than `UQ_*_sort_key` (matcher stays scoped).
 - Splitting the `mariadb:11.4` CI bump into its own task — if done, scope the MariaDB CI AC
   to `migrate run` + `sql_portability` explicitly.
+
+### Implementation notes (2026-11-15)
+
+**Open calls.** Both resolved at implementation start (see above): single release; clamp
+semantics for both new endpoints.
+
+**Verified green (this machine, 2026-11-15):**
+
+| Gate | MySQL 8.4.11 (`:3337`) | MariaDB 11.4.13 (`:3338`) |
+|---|---|---|
+| fmt --check | 0 | (workflow copy, same tree) |
+| clippy `--locked --workspace --all-targets -D warnings -A clippy::pedantic` | clean | clean |
+| `sqlx prepare --check --workspace --all -- --locked --all-targets` | clean (`.sqlx/` limited to changed queries) | n/a (stays MySQL-only, T009 rule) |
+| `cargo test --workspace --all-targets` | **147 api + 125 lib pass** | **146 api pass** (147th = `openapi_snapshot`, fails only before regen — expected; green after) |
+| `sort_key_migration` (backfill on dirty data) | pass | pass |
+| `cards_move` T61 fault injection (1213/1205/scoped 1062, isolation probe) | pass | pass (after the injector portability fix) |
+| Frontend suite (`npm run test`) | 723/723 pass | — |
+
+**What differs from the plan as written (small, recorded here):**
+
+- **The `sort_order` rewrite had the same transient unique-violation class the rebalance was
+  designed to avoid.** Assigning even `a0…an` keys over rows that already hold a subset of
+  those keys violates `UQ_cards_column_sort_key` mid-statement (one row's new key = another
+  un-rewritten row's old key). `rewrite_card_sort_keys` is therefore TWO-PHASE like the
+  rebalance (park the assigned ids at `tmp-<id>` — disjoint from the base62 space and unique
+  per parent — then one `UPDATE … CASE` to final keys). Verified by `columns_sort.rs` green.
+- **Portability bug in the test-only fault injector (pre-existing, latent):** it used
+  `PS_CURRENT_THREAD_ID()` + `performance_schema.events_transactions_current.ISOLATION_LEVEL`,
+  both MySQL-only (MariaDB 11.4: unknown function / no `ISOLATION_LEVEL` column). Any
+  trigger fire on MariaDB raised `1305` instead of the intended `SIGNAL 1062` — invisible
+  because the CI MariaDB leg never ran `cards_move`. Fixed: the trigger now probes the server
+  version; on MariaDB it records the constant `READ-COMMITTED` (the handler sets it before
+  `begin()` — code-proven), on MySQL it records the observed level. The isolation assertion is
+  unchanged (`["READ COMMITTED"]`).
+- **Backfill encoded with `DIV` instead of `/ + FLOOR`** (identical integer math, cleaner);
+  `ELT` kept exactly as spec'd (NULL out-of-range → loud NOT NULL abort).
+- **`rebalance` lives in `common/rebalance.rs`, `key` helpers in `common/order_key.rs`,
+  the shared matcher in `common/retry.rs`** — `order_key.rs` stays DB-free and unit-tested
+  (10 tests incl. a byte-compare harness against `rocicorp/fractional-indexing` `src/index.js`
+  from `main` run 2026-11-15: identical keys on 21 cases including the aZ/az → aa/b00 head-roll
+  boundaries; the two "errors" only differ in message text). `key_between` also hardened two
+  quiet upstream edges: equal bounds are now an error (upstream returns an invalid key), and
+  every key byte must be in the base62 alphabet (upstream would treat a stray `!` as `0`).
+- **`.sqlx/` regenerated on MySQL 8.4 with `DATABASE_URL` against DB `kanpad`** (T009 rule;
+  `prepare --check` with the exact CI form passes; `SQLX_OFFLINE=true` in test runs).
+- **`update_item` / `update_column` PATCH `position` added** as `#[garde(skip)]` clamped
+  fields (decision 2); `UPDATE … SET sort_key = …` is always single-row.
+- **Frontend:** suite passes with ZERO feature-code edits (`schema.d.ts` regenerated only,
+  additive optional fields; `gen:api -- --check` and `tsc --noEmit` clean). One flaky
+  `markdown-preview` `beforeAll` import observed once under full-suite memory pressure;
+  passes in isolation and on rerun; no `vitest.config` change made.
+- **CI:** `backend-mariadb` leg now pins `mariadb:11.4` (was `mariadb:10.6`, EOL 2026-07-06)
+  and runs `sort_key_migration`, `sort_key_ordering`, `cards_move`, `cards_crud`,
+  `columns_sort`, `columns_move_cards`, `columns_crud`, `checklist_items`,
+  `e2e_columns_cards` — the full matrix is now verifiable in CI, not just `migrate run`.
+- **Local `docker-compose.test.yml`** bumped `mariadb:10.6` → `mariadb:11.4` (same rationale).
+- **MariaDB CI leg not actually run on GitHub from here** — the workflow was YAML-validated
+  and every leg's exact commands were all executed green against the `mariadb:11.4` container
+  locally; CI runs happen on push.
+- **`position` JSON in `golden.rs`/`e2e_rest.rs`/`e2e_auth_projects_boards.rs` stays untouched**
+  (wire contract intact). Test seed SQL switched to explicit sort keys; `assert_dense`-style
+  helpers now assert key order (dense positions are structural under the unique index).
+
+**Artifacts:** migration `0003_sort_key_fractional_ordering.sql`; `common/{order_key,rebalance,retry}.rs`;
+`common/order_key.rs` (vendored CC0, attribution in module docs); specs `20/21/30` amended;
+`CONTRACT-CHANGES.md` §12; `docs/lessons/rust-backend.md` appended; 2 new test suites
+(`sort_key_migration.rs`, `sort_key_ordering.rs`) + `collation.rs` `ascii_bin` pin.
+
+### Post-implementation review findings (fix before release) — added 2026-11-15
+
+Independent review pass after the implementation above (code audit of the full diff + spot
+re-verification; see §Verification caveats at the end of this section). Items F1–F6 are
+**required fixes**, not suggestions; decisions due are tagged **[decision]**. When these land,
+re-run at minimum: the suites the fix touches on **both** DB legs, the adjacent-unchanged
+sibling byte-identity suite, `fmt`/`clippy`/`prepare --check`, and typegen — then update the
+§STATUS header and re-check the affected ACs. Do **not** check any AC off against a fix that
+did not re-run green on both legs.
+
+- **F1 — (correctness, must fix) Rebalance phase 1 parks the whole parent instead of the
+  captured `ids`.** `backend-rs/src/common/rebalance.rs`, the phase-1 `UPDATE … SET
+  sort_key = CONCAT('tmp-', `id`) WHERE <parent> = ?` arms (columns/cards/checklist_items):
+  phase 0 reads and `FOR UPDATE`-locks exactly the parent's rows in `sort_key` order and
+  captures `ids`, but phase 1's `WHERE` is the **whole parent**, not `id IN (ids)`. A
+  concurrent transaction can INSERT into the parent between phase 0 and phase 1 (its INSERT
+  takes an index-record lock, never blocks on the phase-0 row locks) and commit before phase 1
+  runs; it then gets parked at `tmp-<id>` — but **phase 2 only assigns final base62 keys to
+  the captured `ids`**, so that row is left permanently at a non-base62 key (`-` is not in the
+  alphabet). Afterwards, any move/insert whose neighbour is that row fails `key_between`
+  bounds validation → `Internal` (500) on a user-facing path, until a future rebalance happens
+  to re-key the whole parent. This violates the two-phase guarantee ("park every row at a
+  unique temporary key, then assign final keys") only for rows present at phase 1 that were
+  absent at phase 0.
+  - **Fix:** drive phases 0/1/2 from **one** id set — park exactly the captured `ids`
+    (`WHERE id IN (…)` / per-row updates on the caller's connection), the pattern already used
+    by `rewrite_card_sort_keys`. Apply the same symmetry check to all three scope arms.
+  - **Tests:** add a fault-injection / concurrency repro to `sort_key_ordering.rs` (or a new
+    suite): insert into the parent mid-rebalance (e.g. via the injected-trigger machinery from
+    `cards_move.rs` or a dedicated interleaving) and assert no committed row is left at a
+    `tmp-*` key, and that the concurrent insert's key is untouched.
+
+- **F2 — (robustness + docs mismatch, must resolve) scoped `1062` retry is wired up only on the
+  cards paths; the docs claim it generally, and the two new endpoints have no retry at all.**
+  Only `create_card` and `move_card` wrap a `READ COMMITTED` tx in the shared `MAX_ATTEMPTS` +
+  `is_transient_lock_error` loop. The following write paths compute between-neighbour keys
+  under unlocked neighbour reads and can therefore hit the same deterministic same-midpoint
+  `1062` on `UQ_*_sort_key` with **no retry → raw 500** on a user-facing action:
+  - `PATCH /api/v1/columns/{id}{position?}` — `rename_column_handler`, position branch
+    (`fetch_column_keys_in_board` unlocked + `key_for_index` + `point_move_column_sort_key`);
+  - `PATCH /api/v1/checklist-items/{id}{position?}` — `update_item`, position branch
+    (`fetch_item_keys_in_checklist` + `point_move_item_sort_key`);
+  - `POST /api/v1/checklist-items/{id}/items{position?}` — `create_item`, explicit-position
+    branch (insert-at-index with unlocked neighbours);
+  - `PATCH /api/v1/columns/{id}{sort_order}` — `rewrite_card_sort_keys` phase 2 (one
+    `UPDATE … CASE` assigning `a0…aN`; a concurrently committed row already holding `aN`
+    collides mid-statement);
+  - `POST /api/v1/columns/{id}/move-cards` — `move_cards_into` (same `UPDATE … CASE`
+    shape for the target-side key assignment).
+  `CONTRACT-CHANGES.md` §12 and `specs/api-rewrite-rs-specs/30-db-schema.md` currently state
+  the retry as general behaviour ("1062 on `UQ_*_sort_key` is retried ≤5 attempts, backoff").
+  AC 5 ("Duplicate-key races retry") is in practice satisfied only for the cards paths; the
+  two new endpoints are the user-facing regression this task itself set out to close.
+  **[decision, required]** Choose one and make code and docs agree exactly:
+  - (a) *preferred* — wrap every listed path in the same `MAX_ATTEMPTS` +
+    `is_transient_lock_error` loop (reuse `common/retry.rs`), keeping D3/AC 5 as-is; or
+  - (b) explicitly narrow the documented guarantee to "cards only" in `CONTRACT-CHANGES.md` §12
+    + `20/30` specs + amend AC 5 and §Notes to say the other paths are best-effort single-row
+    writes (raw `1062` → 500 on concurrent same-gap writes); or
+  - (c) hybrid — retry for the two new PATCH endpoints + explicit-position `create_item`;
+    amend contract wording only for the `sort_order`/`move-cards` `CASE` rewrites.
+  Record whichever is chosen in §Notes; keep `D3`, AC 5, `CONTRACT-CHANGES.md` and both spec
+  files identical in wording. Extend `sort_key_ordering.rs` (or `cards_move.rs`-style injector)
+  with a scoped-`1062`-on-first-attempt test per retried path, or with the documented
+  no-retry expectation for paths that stay un-retried.
+- F2b — (same family, cheaper) `create_column`'s move-key goes through `key_between` on the
+  append path but never runs `needs_rebalance`; harmless today (append-generated keys bloat
+  slowly), but inconsistent with the cards/items paths — make it uniform when touching
+  `columns/routes.rs` for F2, or note why not.
+
+- **F3 — (minor) Dead code: `count_columns_in_board`** (`columns/store.rs`) — introduced with
+  zero call sites (the routes clamp against `others.len()` directly). Delete it; audit for
+  other now-unreferenced helpers in the same pass (`fetch_last_card_sort_key_for_update` and
+  friends are used — only delete what is genuinely unused).
+
+- **F4 — (minor) Duplicate assertion in the `order_key.rs` unit test**
+  `rebalance_threshold_triggers_only_past_64` — the line
+  `assert!(!needs_rebalance(&"a".repeat(REBALANCE_THRESHOLD)));` is written twice; replace one
+  instance with the distinct `> REBALANCE_THRESHOLD` assertion it was presumably meant to be
+  (or delete the duplicate).
+
+- **F5 — (test hygiene) Scratch backfill databases leak on failure/panic.**
+  `sort_key_migration.rs` creates `kanpad_t010_backfill_<nanos>_<pid>` scratch DBs and
+  drops them only on the success path; leftovers were observed on the local MySQL container
+  (`kanpad_t010_backfill_*` — from earlier runs of this suite). Not CI-impacting (the CI
+  container is ephemeral) but it litters local dev databases. **Fix:** drop the scratch DB on
+  the failure path too (defer-style cleanup / best-effort guard around the whole body), and
+  keep the scratch-name scheme unchanged (it intentionally never collides).
+
+- **F6 — (scope hygiene, pre-merge) Unrelated files ride this task's diff.**
+  `AGENTS.md`, `.gitignore` (`.envrc`), `backend-rs/.env.example` (cargo section), and
+  `scripts/backend-dev-env.sh` are environment/cargo-bootstrap changes unrelated to T010's file
+  table. **Fix:** split them out of the T010 commit into a separate commit/chore; call them out
+  in the commit/PR description if they ride along. Two sub-notes for whoever keeps the script:
+  (i) it re-implements a generic `backend-rs/target` default that silently defeats the shared
+  target-dir convention required on this machine by `BACKEND-RS-ORCHESTRATION.md` (root disk
+  ~88% full; `CARGO_TARGET_DIR` must point at the shared cache) — leave it out of T010 and
+  reconcile the default separately; (ii) it is referenced from `AGENTS.md`'s new "Required
+  environment" bullet, so the split commit must carry both together.
+
+**Verification caveats from the reviewer (not defects, for honesty):**
+
+- `gen:api -- --check` ✅, `tsc --noEmit` ✅, `cargo sqlx prepare --check` ✅ (MySQL `kanpad`),
+  wire/`openapi.json`/`schema.d.ts` free of `sort_key` outside docs/comments,
+  `position` additive-only ✅, migration + unique indexes confirmed present in the local `kanpad`
+  DB ✅.
+- `sort_key` suites re-run by the reviewer on MySQL 8.4 (`sort_key` filter: **15/15 pass**,
+  incl. backfill-on-dirty-data and forced-bloat rebalance) — after creating the local
+  `kanpad_rs_test` scratch DB, which the tmpfs test container had dropped; an earlier
+  "0 passed / PoolTimedOut" failure was that missing database, not a code defect.
+- `cards_move` re-run by the reviewer on MySQL 8.4 — **5/5 pass** (fault injection 1213/1205/
+  scoped-1062/unrelated-1062 + the T24b fuzz). The full `cargo test` matrix, the other api
+  suites, and the MariaDB leg were **not** independently re-run; those remain the
+  implementer's self-reported result (§Implementation notes). The MariaDB CI leg has still
+  never executed on GitHub.
+
+### Review-fix pass (2026-11-15) — F1–F6 applied & verified
+
+All six findings from §Post-implementation review findings are applied. Decision recorded:
+**F2 = (a) — retry all five paths** (user decision, 2026-11-15). No wire change (D1
+untouched); `CONTRACT-CHANGES.md` §12, `30-db-schema.md`, D3, AC 5 and both spec files
+stay **unchanged** and now describe reality — the retry claim is true for every
+between-neighbours write path, not just the card paths.
+
+- **F1** — `common/rebalance.rs` split into public `phase_read` / `phase_park` /
+  `phase_assign`, composed by `rebalance_sort_keys`. Phase 1 parks **exactly the
+  phase-0 capture** (`id IN (…)`, chunked at 1000 via `QueryBuilder` + `push_bind`),
+  never the whole parent — a row committed by a concurrent transaction between
+  phase 0 and phase 1 keeps its base62 key. Regression test
+  `sort_key_ordering::rebalance_leaves_a_mid_rebalance_insert_untouched`: two
+  connections at `READ COMMITTED`; the concurrent insert goes through the
+  create-at-index path (`position: 0`, unlocked neighbour reads) — the append path's
+  `LIMIT 1 FOR UPDATE` would block behind phase 0's row locks. Asserts no committed
+  row remains at a `tmp-*` key, the concurrent insert's key is byte-identical, keys
+  unique per parent. Green on both legs.
+- **F2 (a)** — `rename_column_handler` (covers the `sort_order` two-phase CASE
+  rewrite), `move_cards`, `update_item` and `create_item` now wrap the whole tx in the
+  shared `MAX_ATTEMPTS` + `is_transient_lock_error` loop (READ COMMITTED set before
+  `begin()`, explicit rollback before retry, linear backoff, one `tracing::warn!` per
+  retry) — the `create_card` pattern. Doc comments updated to state the contract.
+  Five new one-shot scoped-`1062` injector tests in `sort_key_ordering.rs` (the shared
+  injector was generalised to `(table, timing)`; the explicit-position `create_item`
+  case needs a `BEFORE INSERT` trigger). The `sort_order` injector lands on the
+  phase-1 park UPDATE — it still proves the handler-level retry loop (200 + injector
+  consumed + `READ COMMITTED` probe + one persistence assertion each). **F2b** folded
+  in: `create_column` now runs `needs_rebalance` like the other append paths (it still
+  has no retry loop — the serialized `LIMIT 1 FOR UPDATE` append cannot 1062, and D3
+  keeps that contract).
+- **F3** — dead `count_columns_in_board` deleted; its orphaned
+  `.sqlx/query-*.json` removed with it; `prepare --check` clean afterwards.
+- **F4** — the duplicated `assert!(!needs_rebalance(&"a".repeat(REBALANCE_THRESHOLD)))`
+  replaced with the distinct `REBALANCE_THRESHOLD - 1` boundary case (the `+1` case was
+  already present above it).
+- **F5** — `sort_key_migration.rs`: the backfill body now runs as a `tokio::spawn`
+  task; the scratch database is dropped from the `JoinHandle` afterwards (a panicking
+  body resolves to `JoinError` instead of unwinding past the cleanup), and the body's
+  panic message is re-thrown verbatim. Observed zero `kanpad_t010_backfill_*` leftovers
+  on the MySQL server after repeated green runs.
+- **F6** — only `.gitignore` (`.envrc`) rides this diff as unrelated; split it at
+  commit time. `AGENTS.md` landed separately in `30b666ce` (LTS-floor line — T010-adjacent);
+  `backend-rs/.env.example` and `scripts/backend-dev-env.sh` are **not** in this diff —
+  the reviewer's sub-notes (i)/(ii) are moot here; reconcile the script's target-dir
+  default separately.
+
+**Verification (2026-11-15, this machine):**
+
+| Gate | MySQL 8.4.11 (:3337) | MariaDB 11.4.13 (:3338) |
+|---|---|---|
+| `cargo test --workspace --all-targets` | **lib 125 + api 153 pass, 0 fail** | **lib 125 + api 153 pass, 0 fail** |
+| `sort_key` filter (21 tests) | pass | pass |
+| `fmt` | 0 | 0 |
+| `clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic` | 0 | 0 (same tree; MySQL-leg form) |
+| `cargo sqlx prepare --check --workspace --all -- --locked --all-targets` (MySQL `kanpad`, T009) | 0 — `.sqlx/` unchanged except the F3 orphan removal | n/a (stays MySQL-only) |
+| `openapi.json` byte-fresh (`export-openapi`) + `openapi_snapshot` | pass (doc-comment summaries only) | pass |
+| `npm run gen:api -- --check` / `tsc --noEmit` | clean / clean (schema.d.ts regenerated, comments only) | — |
+| Frontend suite (`npm run test`) | 723/723, 77/77 files (one transient markdown-preview import flake under memory pressure, green on rerun — same as implementation pass) | — |
+
+Local-environment notes (honesty): the tmpfs MariaDB container was recreated empty; a
+throwaway `kanpad_rs_test` was created on both servers for the matrix (mirroring the
+reviewer's MySQL setup). The full-suite password-leak-sentinel tests
+(`migrate_cli` / `serve_boot`) require a NON-EMPTY root password — against an
+empty-password MariaDB they fail on `err.contains("")` trivially. The container's root
+password was set to `ci_root_pw` for the re-run (tmpfs-throwaway; socket root auth
+untouched). The MariaDB **CI** leg does not run those tests (only the migration/ordering
+suites + build gates), so CI is unaffected; CI has still never executed this leg from
+here. `git status` carries the fix plus `.gitignore` (F6 — split at commit time);
+nothing is committed or pushed — the working tree is the deliverable.

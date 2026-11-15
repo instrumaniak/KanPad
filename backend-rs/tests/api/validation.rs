@@ -787,6 +787,7 @@ async fn update_dtos_trim_and_required_rules() {
         &UpdateChecklistItemInput {
             text: Some(String::new()),
             is_completed: None,
+            position: None,
         },
         "text",
     );

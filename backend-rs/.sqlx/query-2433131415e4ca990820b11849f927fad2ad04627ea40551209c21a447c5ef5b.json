@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `cards` (`title`, `column_id`, `sort_key`, `description`, `due_date`) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "2433131415e4ca990820b11849f927fad2ad04627ea40551209c21a447c5ef5b"
+}

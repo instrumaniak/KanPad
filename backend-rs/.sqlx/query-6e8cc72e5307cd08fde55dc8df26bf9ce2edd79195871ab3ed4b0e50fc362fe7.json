@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, `position`, `created_at`, `updated_at` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+  "query": "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, `created_at`, `updated_at` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
   "describe": {
     "columns": [
       {
@@ -53,22 +53,6 @@
       },
       {
         "ordinal": 3,
-        "name": "position",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "collation": 63,
-          "max_size": 11
-        },
-        "origin": {
-          "Table": {
-            "table": "kanpad.columns",
-            "name": "position"
-          }
-        }
-      },
-      {
-        "ordinal": 4,
         "name": "created_at",
         "type_info": {
           "type": "Datetime",
@@ -84,7 +68,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "updated_at",
         "type_info": {
           "type": "Datetime",
@@ -108,9 +92,8 @@
       false,
       false,
       false,
-      false,
       false
     ]
   },
-  "hash": "da2a4d3ccae1dfeb3c0144be901e5f076961788f383fd1bb147b3b295b891274"
+  "hash": "6e8cc72e5307cd08fde55dc8df26bf9ce2edd79195871ab3ed4b0e50fc362fe7"
 }

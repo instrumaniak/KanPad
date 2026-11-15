@@ -13,12 +13,12 @@
 //! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 //!
 //! Covered (red first: columns routes do not exist yet):
-//! `GET /boards/:boardId/columns → 200 {data[]}` (unpaginated, `position ASC`,
+//! `GET /boards/:boardId/columns → 200 {data[]}` (unpaginated, sort-key order,
 //! embeds card summaries — never `description` TEXT — via
 //! `common::card_summary`); `POST {name?} → 201 {data} + Location`
-//! (`MAX(position)+1` via `FOR UPDATE`, absent name defaults to
+//! (serialized last-key `FOR UPDATE` append, absent name defaults to
 //! `New Column`); `PATCH {name} → 200`; `DELETE → 204` (cards cascade +
-//! set-based gap-close in tx, dense `0..N` on re-read); foreign board/column
+//! sibling `sort_key`s are never renumbered, dense `0..N` computed wire order); foreign board/column
 //! → `404` (never 403); every 4xx asserts problem+json + exact `type` URI;
 //! every mutation re-reads state via second GET or direct `SELECT`.
 
@@ -72,7 +72,7 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
     let foreign_board =
         create_board(app(), &intruder_jar, &serde_json::json!({"name": "Theirs"})).await;
 
-    // 2. Nested list → 200 {data[3]} `position ASC`, no cards yet, no
+    // 2. Nested list → 200 {data[3]} in sort-key order, no cards yet, no
     //    `message` key.
     let (status, _, bytes) = send(
         app(),
@@ -117,14 +117,15 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
         .collect();
 
     // 3. Seed cards/labels/checklists via SQL (card routes land in T24a) and
+    //    sort keys are dense a0.. per column (wire positions are computed).
     //    assert the nested card-summary embed: no `description` key,
     //    `has_description`, labels, and `checklist_progress` only when the
     //    card has checklists.
     sqlx::query(
-        "INSERT INTO `cards` (`title`, `column_id`, `position`, `description`) VALUES \
-         ('First card', ?, 0, 'First card body'), \
-         ('Second card', ?, 1, NULL), \
-         ('Padded card', ?, 0, '   ')",
+        "INSERT INTO `cards` (`title`, `column_id`, `sort_key`, `description`) VALUES \
+         ('First card', ?, 'a0', 'First card body'), \
+         ('Second card', ?, 'a1', NULL), \
+         ('Padded card', ?, 'a0', '   ')",
     )
     .bind(col_ids[0])
     .bind(col_ids[0])
@@ -162,8 +163,8 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
         .await
         .expect("checklist id");
     sqlx::query(
-        "INSERT INTO `checklist_items` (`text`, `is_completed`, `checklist_id`, `position`) VALUES \
-         ('Write test', 0, ?, 0), ('Pass test', 1, ?, 1)",
+        "INSERT INTO `checklist_items` (`text`, `is_completed`, `checklist_id`, `sort_key`) VALUES \
+         ('Write test', 0, ?, 'a0'), ('Pass test', 1, ?, 'a1')",
     )
     .bind(checklist)
     .bind(checklist)
@@ -188,7 +189,7 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
     assert_eq!(
         first_col_cards.len(),
         2,
-        "source order by position: {listed}"
+        "source order by sort_key: {listed}"
     );
     let first = &first_col_cards[0];
     assert_eq!(first["id"], first_card);
@@ -251,13 +252,17 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
         .to_str()
         .expect("Location is ASCII");
     assert_eq!(location, format!("/api/v1/columns/{new_id}"));
-    let stored: (String, i32) =
-        sqlx::query_as("SELECT `name`, `position` FROM `columns` WHERE `id` = ?")
+    let stored: (String, String) =
+        sqlx::query_as("SELECT `name`, `sort_key` FROM `columns` WHERE `id` = ?")
             .bind(new_id)
             .fetch_one(&pool)
             .await
             .expect("created column re-reads");
-    assert_eq!(stored, ("Backlog".to_string(), 3));
+    assert_eq!(stored.0, "Backlog");
+    assert!(
+        stored.1.as_str() > "a2",
+        "appended past the default keys: {stored:?}"
+    );
 
     // 5. Absent name defaults to `New Column` (MAX+1 continues).
     let (status, _, bytes) = send(
@@ -492,7 +497,7 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
 
     // 11. PATCH foreign/missing → 404 (never 403); garbage id → 400.
     let intruder_col: i64 = sqlx::query_scalar(
-        "SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ? ORDER BY c.`position` LIMIT 1",
+        "SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ? ORDER BY c.`sort_key` ASC LIMIT 1",
     )
     .bind(foreign_board)
     .fetch_one(&pool)
@@ -554,9 +559,16 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
     assert_eq!(status, StatusCode::CREATED, "alias create: {created}");
     assert_eq!(created["data"]["name"], "Alias Col");
 
-    // 13. DELETE the middle default column (position 1, holding no cards
-    //     after the SQL seeds went to 0/2) → 204 empty body; positions close
-    //     to dense 0..N on re-read; cards in a deleted column cascade.
+    // 13. DELETE the middle default column (sort-key order 1st, holding no
+    //     cards after the SQL seeds went to others) → 204 empty body;
+    //     sibling `sort_key`s are NOT renumbered (no gap to close).
+    let sibling_keys_before: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
+    )
+    .bind(board_id)
+    .fetch_all(&pool)
+    .await
+    .expect("sibling keys before delete");
     let doomed = col_ids[1];
     let (status, headers, bytes) = send(
         app(),
@@ -580,15 +592,19 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
         String::from_utf8_lossy(&bytes)
     );
     drop(headers);
-    let positions: Vec<i32> = sqlx::query_scalar(
-        "SELECT `position` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+    let sibling_keys_after: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(board_id)
     .fetch_all(&pool)
     .await
-    .expect("positions re-read");
-    let dense: Vec<i32> = (0..positions.len() as i32).collect();
-    assert_eq!(positions, dense, "gap closed, dense 0..N");
+    .expect("sibling keys after delete");
+    let mut expected_keys = sibling_keys_before.clone();
+    expected_keys.remove(1); // the deleted column held index 1 (sort-key order)
+    assert_eq!(
+        sibling_keys_after, expected_keys,
+        "siblings keep their keys on delete"
+    );
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -649,15 +665,18 @@ async fn columns_crud_gap_close_flow(pool: MySqlPool) {
             .await
             .expect("cascaded checklists re-read");
     assert_eq!(checklist_count, 0, "checklists cascade gone");
-    let positions: Vec<i32> = sqlx::query_scalar(
-        "SELECT `position` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+    let remaining_keys: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(board_id)
     .fetch_all(&pool)
     .await
-    .expect("positions re-read after cascade delete");
-    let dense: Vec<i32> = (0..positions.len() as i32).collect();
-    assert_eq!(positions, dense, "gap closed again");
+    .expect("sort keys after cascade delete");
+    assert_eq!(
+        remaining_keys.len(),
+        expected_keys.len() - 1,
+        "one more sibling gone"
+    );
 
     // 15. Deleting twice → 404; foreign/missing → 404 (never 403); garbage →
     //     400.

@@ -158,7 +158,7 @@ export interface paths {
         };
         /**
          * `GET /api/v1/boards/{boardId}/columns → 200 {data[]}` (nested unpaginated,
-         *     `position ASC`, embeds card summaries — never `description` TEXT).
+         *     sort-key order, embeds card summaries — never `description` TEXT).
          *     Foreign/missing board id → 404 (no oracle, never 403); garbage id → 400
          *     `invalid-path` via `ValidPath`.
          */
@@ -166,10 +166,12 @@ export interface paths {
         put?: never;
         /**
          * `POST /api/v1/boards/{boardId}/columns{name?} → 201 {data} + Location`.
-         *     The position is `MAX(position)+1` taken under `SELECT ... FOR UPDATE` in
-         *     the create tx; an absent name defaults to `New Column` (a present blank
-         *     still 400s via the DTO). Foreign/missing board id rolls back to 404 (no
-         *     oracle, never 403).
+         *     The sort key is `key_between(last_key, None)` from a serialized
+         *     `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` read in the create tx (the
+         *     serialized append contract — no `1062` retry needed; an over-64-char key
+         *     fires the same in-tx two-phase rebalance as the other append paths); an
+         *     absent name defaults to `New Column` (a present blank still 400s via the
+         *     DTO). Foreign/missing board id rolls back to 404 (no oracle, never 403).
          */
         post: operations["create_column"];
         delete?: never;
@@ -187,7 +189,7 @@ export interface paths {
         };
         /**
          * `GET /api/v1/boards/{id} → 200 {data:{…board,columns[]}}` (nested
-         *     unpaginated, `position ASC`, no cards). Foreign/missing id → 404 (no
+         *     unpaginated, sort-key order, no cards). Foreign/missing id → 404 (no
          *     oracle, never 403); garbage id → 400 `invalid-path` via `ValidPath`.
          */
         get: operations["get_board"];
@@ -228,11 +230,13 @@ export interface paths {
         put?: never;
         /**
          * `POST /api/v1/cards{title,column_id,position?,description?,due_date?} →
-         *     201 {data} + Location`. An explicit `position` clamps to `[0, max + 1]`
-         *     then opens a gap with a single range shift (never a verbatim duplicate
-         *     write); the default appends `MAX(position) + 1` taken under `SELECT ...
-         *     FOR UPDATE` in the create tx. A foreign/missing `column_id` rolls back to
-         *     404 (no oracle, never 403).
+         *     201 {data} + Location`. An explicit `position` clamps to `[0, N]` and gets
+         *     the between-neighbours sort key (never a verbatim write); the default
+         *     appends via a serialized `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` read
+         *     + `key_between`. A foreign/missing `column_id` rolls back to 404 (no
+         *     oracle, never 403). Duplicate-key races on the unique
+         *     `(column_id, sort_key)` index retry (`1213`/`1205`/scoped `1062`), like a
+         *     move.
          */
         post: operations["create_card"];
         delete?: never;
@@ -251,7 +255,7 @@ export interface paths {
         /**
          * `GET /api/v1/cards/{cardId}/checklists → 200 {data[]}` (small-N,
          *     unpaginated — added route per `21 §checklists`; `id ASC`, items embedded
-         *     `position ASC`). Foreign/missing card → 404 (no oracle, never 403).
+         *     sort-key order). Foreign/missing card → 404 (no oracle, never 403).
          */
         get: operations["list_checklists"];
         put?: never;
@@ -285,9 +289,9 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * `DELETE /api/v1/cards/{id} → 204` (hard delete, empty body). The position
-         *     gap closes with a set-based range `UPDATE` in the SAME tx. Foreign/missing
-         *     id → 404 (no oracle, never 403); garbage id → 400 `invalid-path`.
+         * `DELETE /api/v1/cards/{id} → 204` (hard delete, empty body). Sibling
+         *     `sort_key`s are untouched (no gap to close). Foreign/missing id → 404 (no
+         *     oracle, never 403); garbage id → 400 `invalid-path`.
          */
         delete: operations["delete_card"];
         options?: never;
@@ -296,15 +300,14 @@ export interface paths {
          * `PATCH /api/v1/cards/{id} → 200 {data:CardDetail}` (scalars +
          *     move/reorder, T24b): `title`/`description`/`due_date` patch as in T24a
          *     (explicit `null` clears; empty `{}` is a no-op 200), while `column_id`
-         *     and/or `position` trigger a set-based move in the SAME tx — same-column =
-         *     one range shift + point update, cross-column = close-gap + open-gap +
-         *     point update. Requested positions clamp ([0, N-1] same-column, [0, M]
-         *     cross-column, missing cross-column position appends `M = max+1`) and the
-         *     CLAMPED value is written. Columns lock ascending (`min` first) via
-         *     `SELECT … FOR UPDATE`; the moving spot re-reads under `FOR UPDATE` so a
-         *     same-card race restarts the tx instead of writing unlocked. A
-         *     foreign/missing `column_id` rolls back to 404 (no oracle, never 403).
-         *     The response re-reads the stored row (never echoes).
+         *     and/or `position` trigger a single-row sort-key move in the SAME tx —
+         *     same-column and cross-column are the same between-neighbours key write.
+         *     Requested positions clamp ([0, N-1] same-column, [0, M] cross-column,
+         *     missing cross-column position appends) and the CLAMPED index is written.
+         *     The moving row locks `FOR UPDATE`; a same-card race restarts the tx
+         *     instead of writing unlocked. A foreign/missing `column_id` rolls back to
+         *     404 (no oracle, never 403). The response re-reads the stored row (never
+         *     echoes).
          */
         patch: operations["update_card"];
         trace?: never;
@@ -378,9 +381,15 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * `PATCH /api/v1/checklist-items/{id}{text?,is_completed?} → 200 {data}`. An
-         *     empty `{}` body is a no-op 200. The response re-reads the stored row (never
-         *     echoes). Foreign/missing id → 404, never 403.
+         * `PATCH /api/v1/checklist-items/{id}{text?,is_completed?,position?} → 200
+         *     {data}`. An empty `{}` body is a no-op 200. `position` reorders the item
+         *     with a single between-neighbours sort-key write (clamped to `[0, N-1]`,
+         *     never 400). The response re-reads the stored row (never echoes).
+         *     Foreign/missing id → 404, never 403. The transaction runs under `READ
+         *     COMMITTED` and retries the whole PATCH (≤ `MAX_ATTEMPTS` attempts, linear
+         *     backoff) on a `1213`/`1205` or a `UQ_checklist_items_checklist_sort_key`-
+         *     scoped `1062` — two concurrent moves can pick the same between-neighbours
+         *     key (F2, 2026-11-15); unrelated unique violations never retry.
          */
         patch: operations["update_item"];
         trace?: never;
@@ -427,12 +436,19 @@ export interface paths {
         put?: never;
         /**
          * `POST /api/v1/checklists/{id}/items{text,position?} → 201 {data} +
-         *     Location`. An absent `position` appends at `MAX(position) + 1` taken under
-         *     `SELECT … FOR UPDATE` in the create tx; an explicit `position` writes
-         *     verbatim. A foreign/missing checklist id rolls back to 404 (no oracle,
-         *     never 403); garbage id → 400 `invalid-path` via `ValidPath`; blank/overlong
-         *     text or negative `position` → 400 `errors[]` via the DTO (floats never reach
-         *     garde — serde rejects them first as `invalid-json`).
+         *     Location`. An absent `position` appends via a serialized `ORDER BY
+         *     sort_key DESC LIMIT 1 FOR UPDATE` read + `key_between` in the create tx;
+         *     an explicit `position` clamps to `[0, N]` and takes the
+         *     between-neighbours sort key. A foreign/missing checklist id rolls back to
+         *     404 (no oracle, never 403); garbage id → 400 `invalid-path` via `ValidPath`;
+         *     blank/overlong text or negative `position` → 400 `errors[]` via the DTO
+         *     (floats never reach garde — serde rejects them first as `invalid-json`).
+         *     The transaction runs under `READ COMMITTED` and retries the whole create
+         *     (≤ `MAX_ATTEMPTS` attempts, linear backoff) on a `1213`/`1205` or a
+         *     `UQ_checklist_items_checklist_sort_key`-scoped `1062` — two concurrent
+         *     explicit-position inserts can pick the same between-neighbours key (F2,
+         *     2026-11-15); unrelated unique violations never retry. The serialized
+         *     append path cannot 1062, but shares the same loop.
          */
         post: operations["create_item"];
         delete?: never;
@@ -450,7 +466,7 @@ export interface paths {
         };
         /**
          * `GET /api/v1/columns/{colId}/cards?page&limit → 200 Page<CardSummary>`
-         *     (`position ASC`; never selects TEXT — no `description` key, only the
+         *     (sort-key order; never selects TEXT — no `description` key, only the
          *     `has_description` flag; `checklist_progress` only when the card owns
          *     checklists). Foreign/missing column → 404 (no oracle, never 403).
          */
@@ -475,20 +491,27 @@ export interface paths {
         post?: never;
         /**
          * `DELETE /api/v1/columns/{id} → 204` (hard delete, empty body). Cards
-         *     cascade via `ON DELETE CASCADE` FKs and the position gap closes with a
-         *     set-based range `UPDATE` in the SAME tx. Foreign/missing id → 404 (no
-         *     oracle, never 403); garbage id → 400 `invalid-path`.
+         *     cascade via `ON DELETE CASCADE` FKs; sibling `sort_key`s are untouched.
+         *     Foreign/missing id → 404 (no oracle, never 403); garbage id → 400
+         *     `invalid-path`.
          */
         delete: operations["delete_column"];
         options?: never;
         head?: never;
         /**
-         * `PATCH /api/v1/columns/{id}{name?,sort_order?} → 200 {data}` (present
-         *     names validate like create; present `sort_order` rewrites card positions
-         *     by `created_at` via one set-based `UPDATE ... CASE` in the same tx —
-         *     never N saves). The column is pre-read for ownership (foreign/missing id
-         *     → 404, never 403); absent keys are a no-op 200. The response re-reads the
-         *     stored row (never echoes).
+         * `PATCH /api/v1/columns/{id}{name?,sort_order?,position?} → 200 {data}`
+         *     (present names validate like create; present `sort_order` rewrites card
+         *     sort keys by `created_at` via a two-phase park-then-assign rewrite;
+         *     present `position` moves the column between siblings with ONE single-row
+         *     between-neighbours `sort_key` write, clamped to `[0, N-1]`, never 400).
+         *     The column is pre-read for ownership (foreign/missing id → 404, never
+         *     403); absent keys are a no-op 200. The response re-reads the stored row
+         *     (never echoes). The transaction runs under `READ COMMITTED` and retries
+         *     the whole PATCH (≤ [`MAX_ATTEMPTS`] attempts, linear backoff) when the
+         *     matcher sees `1213`/`1205` or a `UQ_*_sort_key`-scoped `1062` — the
+         *     `sort_order` CASE rewrite and the `position` between-neighbours write can
+         *     both collide with a concurrent transaction committing inside the gap
+         *     (F2, 2026-11-15); unrelated unique violations never retry.
          */
         patch: operations["rename_column_handler"];
         trace?: never;
@@ -505,12 +528,17 @@ export interface paths {
         /**
          * `POST /api/v1/columns/{id}/move-cards{target_column_id} → 200
          *     {data: {moved_count}}` (moves every card out of the source column,
-         *     appended at the target's `MAX(position)+1` in ONE tx; the source select
-         *     is `ORDER BY position ASC` so the target mirrors source order). Same-id
+         *     appended after the target's last `sort_key` in ONE tx; the source select
+         *     is `sort_key ASC, id ASC` so the target mirrors source order). Same-id
          *     and cross-board targets are state errors → 400 `errors[]`; an empty
          *     source is a success (`{moved_count: 0}`), never an error.
          *     Foreign/missing source or target id → 404 (no oracle, never 403);
-         *     garbage id → 400 `invalid-path`; bad body → 400 via `ValidJson`.
+         *     garbage id → 400 `invalid-path`; bad body → 400 via `ValidJson`. The
+         *     transaction runs under `READ COMMITTED` and retries the whole move (≤
+         *     `MAX_ATTEMPTS` attempts, linear backoff) on a `1213`/`1205` or a
+         *     `UQ_cards_column_sort_key`-scoped `1062` — the target-side `CASE` key
+         *     assignment can collide with a row committed past the locked last key
+         *     (F2, 2026-11-15); unrelated unique violations never retry.
          */
         post: operations["move_cards"];
         delete?: never;
@@ -827,7 +855,7 @@ export interface components {
         };
         /**
          * @description Wire board detail: the board plus its nested unpaginated `columns[]`
-         *     (`position ASC`). Carries no `description`/`content` keys (boards have
+         *     (sort-key order). Carries no `description`/`content` keys (boards have
          *     neither column); timestamps render as UTC ISO-8601 strings (same fixed
          *     shape as projects — `NaiveDateTime` has no utoipa `ToSchema` impl with
          *     the `chrono` feature off, so the store formats once here instead of
@@ -836,7 +864,7 @@ export interface components {
         BoardDetailResponse: {
             /** @description Background hex color. */
             background_color: string;
-            /** @description Nested columns, `position ASC` (no cards). */
+            /** @description Nested columns, sort-key order (no cards). */
             columns: components["schemas"]["ColumnSummary"][];
             /** @description `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC). */
             created_at: string;
@@ -900,7 +928,7 @@ export interface components {
          */
         CardDetailResponse: {
             checklist_progress?: components["schemas"]["ChecklistProgress"] | null;
-            /** @description Nested checklists (`id` order) with items (`position ASC`). */
+            /** @description Nested checklists (`id` order) with items (sort-key order). */
             checklists: components["schemas"]["ChecklistResponse"][];
             /** @description Owning column id. */
             column_id: components["schemas"]["ColumnId"];
@@ -1010,7 +1038,7 @@ export interface components {
             is_completed: boolean;
             /**
              * Format: int32
-             * @description Zero-based position.
+             * @description Zero-based position (computed).
              */
             position: number;
             /** @description Item text. */
@@ -1044,7 +1072,7 @@ export interface components {
              */
             total: number;
         };
-        /** @description One checklist on the wire, with items (`position ASC`). */
+        /** @description One checklist on the wire, with items (sort-key order). */
         ChecklistResponse: {
             /** @description Owning card id. */
             card_id: components["schemas"]["CardId"];
@@ -1052,7 +1080,7 @@ export interface components {
             created_at: string;
             /** @description `checklists.id` (`INT` ↔ `i32` newtype). */
             id: components["schemas"]["ChecklistId"];
-            /** @description Items, `position ASC`. */
+            /** @description Items, sort-key order. */
             items: components["schemas"]["ChecklistItemResponse"][];
             /** @description Checklist title. */
             title: string;
@@ -1077,17 +1105,17 @@ export interface components {
          *     paginating board columns would break board rendering).
          */
         ColumnListBody: {
-            /** @description Board columns, `position ASC`. */
+            /** @description Board columns, sort-key order. */
             data: components["schemas"]["ColumnResponse"][];
         };
         /**
-         * @description Wire column: scalars + nested card summaries (`position ASC`, never
+         * @description Wire column: scalars + nested card summaries (sort-key order, never
          *     `description` TEXT — see [`crate::common::card_summary`]).
          */
         ColumnResponse: {
             /** @description Owning board id. */
             board_id: components["schemas"]["BoardId"];
-            /** @description Nested card summaries (`position ASC`). */
+            /** @description Nested card summaries (sort-key order). */
             cards: components["schemas"]["CardSummary"][];
             /** @description `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC). */
             created_at: string;
@@ -1097,7 +1125,7 @@ export interface components {
             name: string;
             /**
              * Format: int32
-             * @description Zero-based position (`position ASC` order on the wire).
+             * @description Zero-based position (computed; sort-key order on the wire).
              */
             position: number;
             /** @description `updated_at`, same shape. */
@@ -1114,7 +1142,7 @@ export interface components {
             name: string;
             /**
              * Format: int32
-             * @description Zero-based position (`position ASC` order on the wire).
+             * @description Zero-based position (computed; sort-key order on the wire).
              */
             position: number;
         };
@@ -1143,7 +1171,7 @@ export interface components {
             due_date?: string | null;
             /**
              * Format: int32
-             * @description Explicit position (insert-with-open-gap; clamped in store, never 400).
+             * @description Explicit position (between-neighbours key; clamped in store, never 400).
              */
             position?: number | null;
             /** @description Card title: non-blank after trim, `<= 255` chars. */
@@ -1757,19 +1785,31 @@ export interface components {
         UpdateChecklistItemInput: {
             /** @description Completion flag (bool needs no rule). */
             is_completed?: boolean | null;
+            /**
+             * Format: int32
+             * @description Target position (clamped to `[0, N-1]` in the store, never 400);
+             *     reorder lands a single between-neighbours `sort_key` write.
+             */
+            position?: number | null;
             /** @description Item text: present means non-blank, `<= 255` chars. */
             text?: string | null;
         };
         /**
-         * @description `PATCH /api/v1/columns/{id}` body (T23a rename + T23b sort): either key
-         *     may appear (both are applied, rename first). Absent keys leave that
-         *     aspect untouched, so `{}` stays a no-op 200.
+         * @description `PATCH /api/v1/columns/{id}` body (T23a rename + T23b sort + T010 move):
+         *     any key may appear (both are applied, rename first, then move). Absent
+         *     keys leave that aspect untouched, so `{}` stays a no-op 200.
          */
         UpdateColumnInput: {
             /** @description Column name (`<= 255` chars); present means non-blank. */
             name?: string | null;
             /**
-             * @description Card sort direction (`asc` | `desc`); rewrites card positions by
+             * Format: int32
+             * @description Target position (clamped to `[0, N-1]` in the store, never 400);
+             *     reorder lands a single between-neighbours `sort_key` write.
+             */
+            position?: number | null;
+            /**
+             * @description Card sort direction (`asc` | `desc`); rewrites card sort keys by
              *     `created_at` via one set-based `UPDATE ... CASE`.
              */
             sort_order?: string | null;

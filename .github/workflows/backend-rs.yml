@@ -484,13 +484,16 @@ jobs:
           SQLX_OFFLINE=true cargo run --locked --offline -- export-openapi > /tmp/openapi.ci.json
           diff -u openapi.json /tmp/openapi.ci.json
 
-  # ---------------------------------------------------------------- backend-mariadb (T006 portability leg)
+  # ----------------------------------------------------- backend-mariadb (T006/T010 portability leg — MariaDB 11.4)
   backend-mariadb:
-    name: backend-mariadb (session-store + auth + sql_portability on MariaDB 10.6)
+    # T010: bumped 10.6 (EOL 2026-07-06) -> 11.4 LTS (the AGENTS.md floor) and
+    # EXTENDED to the migration/backfill + ordering suites — otherwise the
+    # full-matrix AC is unverifiable in CI.
+    name: backend-mariadb (migrations + ordering suites on MariaDB 11.4)
     runs-on: ubuntu-latest
     services:
       mariadb:
-        image: mariadb:10.6
+        image: mariadb:11.4
         env:
           MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
           MARIADB_DATABASE: kanpad
@@ -556,13 +559,13 @@ jobs:
       # SQLX_OFFLINE=false on its inner build (src/prepare.rs), so the
       # SQLX_OFFLINE=true convention is ignored — and `--check` then
       # byte-compares the regenerated .sqlx JSON against the committed cache,
-      # which is generated on MySQL 8.4. MariaDB 10.6 legitimately describes
+      # which is generated on MySQL 8.4. MariaDB 11.4 legitimately describes
       # the same SQL differently (nullable flags for CASE / COALESCE(MAX())
       # expressions; EXISTS() as INT vs LONGLONG), so that comparison can
       # NEVER pass here. The canonical cache gate stays in the `backend`
       # (MySQL) job.
       # What this step proves instead: every query! in the workspace prepares
-      # on MariaDB 10.6 and the code type-checks against MariaDB-derived row
+      # on MariaDB 11.4 and the code type-checks against MariaDB-derived row
       # types — no MySQL-only SQL, no server-dependent row types.
       - name: online check against MariaDB (every query prepares)
         working-directory: backend-rs
@@ -576,7 +579,7 @@ jobs:
           cargo clean -p backend-rs
           cargo check --locked --workspace --all-targets
 
-      - name: session-store (lib) + auth + sql_portability (api) suites
+      - name: session-store (lib) + migration/backfill + ordering suites (api)
         working-directory: backend-rs
         env:
           SQLX_OFFLINE: "true"
@@ -585,6 +588,15 @@ jobs:
           cargo test --locked --lib common::session_store
           cargo test --locked --test api sql_portability
           cargo test --locked --test api auth_session
+          cargo test --locked --test api sort_key_migration
+          cargo test --locked --test api sort_key_ordering
+          cargo test --locked --test api cards_move
+          cargo test --locked --test api cards_crud
+          cargo test --locked --test api columns_sort
+          cargo test --locked --test api columns_move_cards
+          cargo test --locked --test api columns_crud
+          cargo test --locked --test api checklist_items
+          cargo test --locked --test api e2e_columns_cards
 
   # ------------------------------------------------------------------ web
   # gen:api --check -> tsc -> vite build (dist feeds the docker image).

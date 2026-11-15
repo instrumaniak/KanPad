@@ -3,8 +3,11 @@
 pub mod card_summary;
 pub mod ids;
 pub mod label_seed;
+pub mod order_key;
 pub mod ownership;
 pub mod pagination;
+pub mod rebalance;
+pub mod retry;
 /// The session store, owned in-tree (`54` Part C §C4).
 pub mod session_store;
 pub mod time;

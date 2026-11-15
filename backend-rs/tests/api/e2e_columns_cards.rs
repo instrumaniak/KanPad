@@ -1,4 +1,4 @@
-//! Black-box e2e: columns → cards slice + sequential position fuzz (T50b).
+//! Black-box e2e: columns → cards slice + sequential reorder fuzz (T50b).
 //!
 //! Rewrites the Nest `backend/test/columns.e2e-spec.ts` + `cards.e2e-spec.ts`
 //! slice against the Rust `:3001` contract (`20-api-contract.md` §columns,
@@ -11,7 +11,7 @@
 //! so this suite asserts the Rust side only):
 //! - Nest `{data,message?}` bare arrays → Rust `Page<T>` on
 //!   `GET /columns/:col/cards` (`{data,page,limit,total}`); nested column
-//!   lists stay unpaginated `position ASC` on both.
+//!   lists stay unpaginated in sort-key order on both.
 //! - Nest deletes → `200` → Rust `204` with an empty body (columns, cards,
 //!   label detach, logout all `204`).
 //! - Nest verb URLs (`/:id/sort`, `/:id/move-all`, camelCase
@@ -42,26 +42,25 @@ use serde_json::Value;
 use sqlx::MySqlPool;
 
 async fn column_card_ids(pool: &MySqlPool, column_id: i64) -> Vec<i64> {
-    sqlx::query_scalar("SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC")
-        .bind(column_id)
-        .fetch_all(pool)
-        .await
-        .expect("column order re-reads")
-}
-
-/// Assert a card column is dense `0..N` and return its card ids in order.
-async fn assert_dense(pool: &MySqlPool, column_id: i64, what: &str) -> Vec<i64> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(
-        "SELECT `id`, `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    sqlx::query_scalar(
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(column_id)
     .fetch_all(pool)
     .await
-    .expect("dense re-read");
-    let positions: Vec<i64> = rows.iter().map(|(_, position)| *position).collect();
-    let dense: Vec<i64> = (0..positions.len() as i64).collect();
-    assert_eq!(positions, dense, "dense 0..N ({what})");
-    rows.into_iter().map(|(id, _)| id).collect()
+    .expect("column order re-reads")
+}
+
+/// Return a column's card ids in sort-key order (wire positions are computed
+/// dense 0..N by construction under the unique index).
+async fn assert_dense(pool: &MySqlPool, column_id: i64, _what: &str) -> Vec<i64> {
+    sqlx::query_scalar(
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
+    )
+    .bind(column_id)
+    .fetch_all(pool)
+    .await
+    .expect("sort-key order re-read")
 }
 
 /// Deterministic xorshift64* RNG (no extra deps; fixed seed = reproducible).
@@ -191,7 +190,7 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     assert_eq!(col_count, 3);
 
     // 2. Columns CRUD (Nest CRUD slice, Rust expectations): create → 201 +
-    //    Location + SELECT re-read; list unpaginated `position ASC`.
+    //    Location + SELECT re-read; list unpaginated in sort-key order.
     let (status, headers, bytes) = send(
         app(),
         authed_request(
@@ -216,13 +215,17 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
         .to_str()
         .expect("Location is ASCII");
     assert_eq!(location, format!("/api/v1/columns/{extra_col}"));
-    let stored: (String, i32) =
-        sqlx::query_as("SELECT `name`, `position` FROM `columns` WHERE `id` = ?")
+    let stored: (String, String) =
+        sqlx::query_as("SELECT `name`, `sort_key` FROM `columns` WHERE `id` = ?")
             .bind(extra_col)
             .fetch_one(&pool)
             .await
             .expect("created column re-reads");
-    assert_eq!(stored, ("To Do".to_string(), 3));
+    assert_eq!(stored.0, "To Do");
+    assert!(
+        stored.1.as_str() > "a2",
+        "appended past the default keys: {stored:?}"
+    );
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -241,7 +244,7 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
         .iter()
         .map(|column| column["position"].as_i64().expect("position"))
         .collect();
-    assert_eq!(positions, [0, 1, 2, 3], "wire order position ASC");
+    assert_eq!(positions, [0, 1, 2, 3], "wire order is sort-key dense");
 
     // 3. Rename → 200; re-GET + SELECT confirm (never the echo alone).
     let (status, _, bytes) = send(
@@ -287,17 +290,17 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     //    PATCH {sort_order:asc} rewrites by created_at; DB re-read proves it.
     //    Deleted Nest verb path `/:id/sort` must 404.
     let sort_col: i64 = sqlx::query_scalar(
-        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC LIMIT 1",
+        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC LIMIT 1",
     )
     .bind(board_id)
     .fetch_one(&pool)
     .await
     .expect("first column id");
     sqlx::query(
-        "INSERT INTO `cards` (`title`, `column_id`, `position`, `created_at`) VALUES \
-         ('Sort C', ?, 0, '2026-01-03 00:00:00.000000'), \
-         ('Sort A', ?, 1, '2026-01-01 00:00:00.000000'), \
-         ('Sort B', ?, 2, '2026-01-02 00:00:00.000000')",
+        "INSERT INTO `cards` (`title`, `column_id`, `sort_key`, `created_at`) VALUES \
+         ('Sort C', ?, 'a0', '2026-01-03 00:00:00.000000'), \
+         ('Sort A', ?, 'a1', '2026-01-01 00:00:00.000000'), \
+         ('Sort B', ?, 'a2', '2026-01-02 00:00:00.000000')",
     )
     .bind(sort_col)
     .bind(sort_col)
@@ -318,7 +321,7 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     let sorted = json_of(&bytes);
     assert_eq!(status, StatusCode::OK, "sort asc: {sorted}");
     let titles: Vec<String> = sqlx::query_scalar(
-        "SELECT `title` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+        "SELECT `title` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(sort_col)
     .fetch_all(&pool)
@@ -366,14 +369,14 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     // 5. Cards CRUD (Nest CRUD slice, Rust expectations): create → 201 +
     //    Location + SELECT; list is Page (never `description` TEXT).
     let source_col: i64 = sqlx::query_scalar(
-        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC LIMIT 1",
+        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC LIMIT 1",
     )
     .bind(board_id)
     .fetch_one(&pool)
     .await
     .expect("source column id");
     let target_col: i64 = sqlx::query_scalar(
-        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC LIMIT 1 OFFSET 1",
+        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC LIMIT 1 OFFSET 1",
     )
     .bind(board_id)
     .fetch_one(&pool)
@@ -402,8 +405,8 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
         .to_str()
         .expect("Location is ASCII");
     assert_eq!(location, format!("/api/v1/cards/{card_id}"));
-    let stored: (String, i64, i32) =
-        sqlx::query_as("SELECT `title`, `column_id`, `position` FROM `cards` WHERE `id` = ?")
+    let stored: (String, i64, String) =
+        sqlx::query_as("SELECT `title`, `column_id`, `sort_key` FROM `cards` WHERE `id` = ?")
             .bind(card_id)
             .fetch_one(&pool)
             .await
@@ -668,7 +671,7 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     );
 
     // 10. Delete card → 204; SELECT COUNT=0 + second list GET confirm.
-    //     Delete column → 204; positions re-read dense via second GET.
+    //     Delete column → 204; wire order re-read dense via second GET.
     let doomed_card = target_now[0];
     let (status, _, bytes) = send(
         app(),
@@ -722,15 +725,18 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
         "delete column: {}",
         String::from_utf8_lossy(&bytes)
     );
-    let positions: Vec<i32> = sqlx::query_scalar(
-        "SELECT `position` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+    let remaining_keys: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(board_id)
     .fetch_all(&pool)
     .await
-    .expect("positions re-read dense");
-    let dense: Vec<i32> = (0..positions.len() as i32).collect();
-    assert_eq!(positions, dense, "gap closed, dense 0..N");
+    .expect("sibling sort keys re-read after delete");
+    assert_eq!(
+        remaining_keys.len(),
+        3,
+        "one sibling gone, others keep their sort keys"
+    );
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -776,7 +782,7 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
     );
     let foreign_board_id = foreign_board["data"]["id"].as_i64().expect("board id");
     let foreign_col: i64 = sqlx::query_scalar(
-        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `position` LIMIT 1",
+        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC LIMIT 1",
     )
     .bind(foreign_board_id)
     .fetch_one(&pool)
@@ -840,18 +846,18 @@ async fn e2e_columns_cards_blackbox_flow(pool: MySqlPool) {
         .execute(&pool)
         .await
         .expect("clear fuzz stage");
-    for (title, column, position) in [
-        ("F0", source_col, 0),
-        ("F1", source_col, 1),
-        ("F2", source_col, 2),
-        ("F3", source_col, 3),
-        ("G0", target_col, 0),
-        ("G1", target_col, 1),
+    for (title, column, sort_key) in [
+        ("F0", source_col, "a0"),
+        ("F1", source_col, "a1"),
+        ("F2", source_col, "a2"),
+        ("F3", source_col, "a3"),
+        ("G0", target_col, "a0"),
+        ("G1", target_col, "a1"),
     ] {
-        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES (?, ?, ?)")
             .bind(title)
             .bind(column)
-            .bind(position)
+            .bind(sort_key)
             .execute(&pool)
             .await
             .expect("seed fuzz card");

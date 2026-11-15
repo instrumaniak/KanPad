@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE `columns` SET `sort_key` = ? WHERE `id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2be1dbd5538e9d4ed15302894326b09fdb3de9ecb21edb3fd1d37091ba8e3752"
+}

@@ -166,7 +166,7 @@ pub struct ColumnSummary {
     pub id: ColumnId,
     /// Column name.
     pub name: String,
-    /// Zero-based position (`position ASC` order on the wire).
+    /// Zero-based position (computed; sort-key order on the wire).
     pub position: i32,
 }
 
@@ -181,7 +181,7 @@ pub struct ProjectRef {
 }
 
 /// Wire board detail: the board plus its nested unpaginated `columns[]`
-/// (`position ASC`). Carries no `description`/`content` keys (boards have
+/// (sort-key order). Carries no `description`/`content` keys (boards have
 /// neither column); timestamps render as UTC ISO-8601 strings (same fixed
 /// shape as projects — `NaiveDateTime` has no utoipa `ToSchema` impl with
 /// the `chrono` feature off, so the store formats once here instead of
@@ -202,7 +202,7 @@ pub struct BoardDetailResponse {
     pub created_at: String,
     /// `updated_at`, same shape.
     pub updated_at: String,
-    /// Nested columns, `position ASC` (no cards).
+    /// Nested columns, sort-key order (no cards).
     pub columns: Vec<ColumnSummary>,
     /// Archive flag.
     pub is_archived: bool,

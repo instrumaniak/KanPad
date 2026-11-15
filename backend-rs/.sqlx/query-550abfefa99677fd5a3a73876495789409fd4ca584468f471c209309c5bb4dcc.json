@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at`, i.`updated_at` FROM `checklist_items` i JOIN `checklists` cl ON cl.`id` = i.`checklist_id` JOIN `cards` k ON k.`id` = cl.`card_id` JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE i.`id` = ? AND b.`user_id` = ?",
+  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`created_at`, i.`updated_at` FROM `checklist_items` i WHERE i.`checklist_id` IN (SELECT c.`id` FROM `checklists` c WHERE c.`card_id` = ?) ORDER BY i.`checklist_id` ASC, i.`sort_key` ASC, i.`id` ASC",
   "describe": {
     "columns": [
       {
@@ -69,22 +69,6 @@
       },
       {
         "ordinal": 4,
-        "name": "position",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "collation": 63,
-          "max_size": 11
-        },
-        "origin": {
-          "Table": {
-            "table": "kanpad.checklist_items",
-            "name": "position"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
         "name": "created_at",
         "type_info": {
           "type": "Datetime",
@@ -100,7 +84,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "updated_at",
         "type_info": {
           "type": "Datetime",
@@ -117,10 +101,9 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -129,5 +112,5 @@
       false
     ]
   },
-  "hash": "098942e5885d9b9782387814f814d7b37a96b471dcf0d79f18e8dd8f53efe42f"
+  "hash": "550abfefa99677fd5a3a73876495789409fd4ca584468f471c209309c5bb4dcc"
 }

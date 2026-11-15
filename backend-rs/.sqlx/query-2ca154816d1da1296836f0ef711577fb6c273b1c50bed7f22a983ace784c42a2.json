@@ -1,14 +1,14 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT i.`id`, i.`text`, i.`is_completed`, i.`checklist_id` AS \"checklist_id: i32\", i.`position`, i.`created_at`, i.`updated_at` FROM `checklist_items` i WHERE i.`checklist_id` IN (SELECT c.`id` FROM `checklists` c WHERE c.`card_id` = ?) ORDER BY i.`checklist_id` ASC, i.`position` ASC",
+  "query": "SELECT i.`id` AS \"id!\", i.`text` AS \"text!\", i.`is_completed` AS \"is_completed!\", i.`checklist_id` AS \"checklist_id!: i32\", (SELECT COUNT(*) FROM `checklist_items` p WHERE p.`checklist_id` = i.`checklist_id` AND p.`sort_key` < i.`sort_key`) AS \"position!: i64\", i.`created_at` AS \"created_at!\", i.`updated_at` AS \"updated_at!\" FROM `checklist_items` i JOIN `checklists` cl ON cl.`id` = i.`checklist_id` JOIN `cards` k ON k.`id` = cl.`card_id` JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE i.`id` = ? AND b.`user_id` = ?",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
+        "name": "id!",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL | PRIMARY_KEY | AUTO_INCREMENT",
+          "flags": "PRIMARY_KEY | AUTO_INCREMENT",
           "collation": 63,
           "max_size": 11
         },
@@ -21,10 +21,10 @@
       },
       {
         "ordinal": 1,
-        "name": "text",
+        "name": "text!",
         "type_info": {
           "type": "VarString",
-          "flags": "NOT_NULL | NO_DEFAULT_VALUE",
+          "flags": "NO_DEFAULT_VALUE",
           "collation": 224,
           "max_size": 1020
         },
@@ -37,10 +37,10 @@
       },
       {
         "ordinal": 2,
-        "name": "is_completed",
+        "name": "is_completed!",
         "type_info": {
           "type": "Tiny",
-          "flags": "NOT_NULL",
+          "flags": "",
           "collation": 63,
           "max_size": 1
         },
@@ -53,10 +53,10 @@
       },
       {
         "ordinal": 3,
-        "name": "checklist_id: i32",
+        "name": "checklist_id!: i32",
         "type_info": {
           "type": "Long",
-          "flags": "NOT_NULL | MULTIPLE_KEY | NO_DEFAULT_VALUE",
+          "flags": "MULTIPLE_KEY | NO_DEFAULT_VALUE",
           "collation": 63,
           "max_size": 11
         },
@@ -69,26 +69,21 @@
       },
       {
         "ordinal": 4,
-        "name": "position",
+        "name": "position!: i64",
         "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
+          "type": "LongLong",
+          "flags": "BINARY",
           "collation": 63,
-          "max_size": 11
+          "max_size": 21
         },
-        "origin": {
-          "Table": {
-            "table": "kanpad.checklist_items",
-            "name": "position"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 5,
-        "name": "created_at",
+        "name": "created_at!",
         "type_info": {
           "type": "Datetime",
-          "flags": "NOT_NULL | BINARY",
+          "flags": "BINARY",
           "collation": 63,
           "max_size": 26
         },
@@ -101,10 +96,10 @@
       },
       {
         "ordinal": 6,
-        "name": "updated_at",
+        "name": "updated_at!",
         "type_info": {
           "type": "Datetime",
-          "flags": "NOT_NULL | BINARY",
+          "flags": "BINARY",
           "collation": 63,
           "max_size": 26
         },
@@ -117,17 +112,17 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      false
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "c9a1c2802f31844f871ec66342d5564ae6db0c7508b650a2702b53da37bc591d"
+  "hash": "2ca154816d1da1296836f0ef711577fb6c273b1c50bed7f22a983ace784c42a2"
 }

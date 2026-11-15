@@ -29,13 +29,14 @@ use super::types::{
     BoardDetailResponse, BoardListResponse, ColumnSummary, ProjectRef, format_timestamp,
 };
 
-/// Default columns created with every board (`name`, `position` pairs —
-/// `To Do/In Progress/Done` 0/1/2, matching the Nest create flow).
-pub const DEFAULT_COLUMNS: [(&str, i32); 3] = [("To Do", 0), ("In Progress", 1), ("Done", 2)];
+/// Default columns created with every board (name pairs, matching the Nest
+/// create flow). Sort keys are generated at insert time (`keys_between(None,
+/// None, 3)` → `a0`, `a1`, `a2`).
+pub const DEFAULT_COLUMN_NAMES: [&str; 3] = ["To Do", "In Progress", "Done"];
 
 /// One board row plus its optional owning-project ref (assembled by
 /// [`fetch_board`]; columns ride separately via [`fetch_board_columns`] so
-/// both stay `position ASC`-ordered without a join fanout).
+/// both stay sort-key-ordered without a join fanout).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardRow {
     /// `boards.id`.
@@ -95,23 +96,30 @@ where
 }
 
 /// Insert the 3 default columns for a fresh board (single multi-row
-/// `INSERT` — static names only, the id rides `push_bind`-style `?`
-/// placeholders, never interpolated).
+/// `INSERT` — static names only, the sort keys and board id ride
+/// `push_bind`-style `?` placeholders, never interpolated).
 #[tracing::instrument(skip(ex))]
 pub async fn insert_default_columns<'e, E>(ex: E, board_id: i32) -> Result<(), AppError>
 where
     E: MySqlExecutor<'e>,
 {
-    sqlx::query!(
-        "INSERT INTO `columns` (`name`, `position`, `board_id`) \
-         VALUES ('To Do', 0, ?), ('In Progress', 1, ?), ('Done', 2, ?)",
-        board_id,
-        board_id,
-        board_id
-    )
-    .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
+    let keys = crate::common::order_key::keys_between(None, None, DEFAULT_COLUMN_NAMES.len())
+        .map_err(|_| AppError::Internal(Internal))?;
+    let mut builder: QueryBuilder<MySql> =
+        QueryBuilder::new("INSERT INTO `columns` (`name`, `sort_key`, `board_id`) VALUES ");
+    for (index, (name, sort_key)) in DEFAULT_COLUMN_NAMES.iter().zip(keys.iter()).enumerate() {
+        if index > 0 {
+            builder.push(", ");
+        }
+        builder.push("(");
+        builder.push_bind(*name);
+        builder.push(", ");
+        builder.push_bind(sort_key.as_str());
+        builder.push(", ");
+        builder.push_bind(board_id);
+        builder.push(")");
+    }
+    builder.build().execute(ex).await.map_err(AppError::Db)?;
     Ok(())
 }
 
@@ -160,8 +168,9 @@ where
     })
 }
 
-/// Fetch a board's columns, `position ASC` (nested unpaginated in the detail
+/// Fetch a board's columns, `sort_key ASC` (nested unpaginated in the detail
 /// body — no cards; the column-cards list is a separate T24a endpoint).
+/// Positions are the enumerate index.
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_board_columns<'e, E>(
     ex: E,
@@ -171,21 +180,22 @@ where
     E: MySqlExecutor<'e>,
 {
     let rows = sqlx::query!(
-        "SELECT `id`, `name`, `position` FROM `columns` \
-         WHERE `board_id` = ? ORDER BY `position` ASC",
+        "SELECT `id`, `name` FROM `columns` \
+         WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
         board_id
     )
     .fetch_all(ex)
     .await
     .map_err(AppError::Db)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| ColumnSummary {
+    let mut columns = Vec::with_capacity(rows.len());
+    for (index, row) in rows.into_iter().enumerate() {
+        columns.push(ColumnSummary {
             id: ColumnId::from(row.id),
             name: row.name,
-            position: row.position,
-        })
-        .collect())
+            position: i32::try_from(index).map_err(|_| AppError::Internal(Internal))?,
+        });
+    }
+    Ok(columns)
 }
 
 /// Render a [`BoardRow`] + its columns for the wire (single owner — see

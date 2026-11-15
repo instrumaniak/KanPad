@@ -2,7 +2,7 @@
 //!
 //! Single `#[sqlx::test]` setup on purpose (mirrors T23a): all scenarios run
 //! sequentially in one test with distinct emails. Cards are inserted via
-//! direct SQL with scrambled `created_at` vs `position` (card routes land in
+//! direct SQL with scrambled `created_at` vs `sort_key` (card routes land in
 //! T24a).
 //!
 //! NO session wipe here: the `sessions` store table lives in THIS test's own
@@ -10,7 +10,7 @@
 //! `AppState::with_pool`), so no other suite can reach it. Never issue a
 //! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 //!
-//! Covered (red first: `PATCH` ignores `sort_order`, positions unchanged):
+//! Covered (red first: `PATCH` ignores `sort_order`, keys unchanged):
 //! `PATCH {sort_order:asc|desc} → 200 {data}` (single set-based
 //! `UPDATE ... CASE` rewrite by `created_at`, verified by DB re-read +
 //! second GET); bad enum → `400 errors[]`; verb path `/:id/sort` → 404
@@ -24,12 +24,14 @@ use super::helpers::{
 use axum::http::StatusCode;
 use sqlx::MySqlPool;
 
-async fn titles_by_position(pool: &MySqlPool, column_id: i64) -> Vec<String> {
-    sqlx::query_scalar("SELECT `title` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC")
-        .bind(column_id)
-        .fetch_all(pool)
-        .await
-        .expect("titles re-read")
+async fn titles_by_sort_key(pool: &MySqlPool, column_id: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT `title` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
+    )
+    .bind(column_id)
+    .fetch_all(pool)
+    .await
+    .expect("titles re-read")
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -71,20 +73,20 @@ async fn columns_sort_rewrite_flow(pool: MySqlPool) {
         create_board(app(), &intruder_jar, &serde_json::json!({"name": "Theirs"})).await;
 
     let col_id: i64 = sqlx::query_scalar(
-        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC LIMIT 1",
+        "SELECT `id` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC LIMIT 1",
     )
     .bind(board_id)
     .fetch_one(&pool)
     .await
     .expect("first column id");
 
-    // 2. Seed three cards with `created_at` scrambled against `position`
-    //    (position order C,A,B vs created_at order A,B,C).
+    // 2. Seed three cards with `created_at` scrambled against `sort_key`
+    //    (sort-key order C,A,B vs created_at order A,B,C).
     sqlx::query(
-        "INSERT INTO `cards` (`title`, `column_id`, `position`, `created_at`) VALUES \
-         ('Card C', ?, 0, '2026-01-03 00:00:00.000000'), \
-         ('Card A', ?, 1, '2026-01-01 00:00:00.000000'), \
-         ('Card B', ?, 2, '2026-01-02 00:00:00.000000')",
+        "INSERT INTO `cards` (`title`, `column_id`, `sort_key`, `created_at`) VALUES \
+         ('Card C', ?, 'a0', '2026-01-03 00:00:00.000000'), \
+         ('Card A', ?, 'a1', '2026-01-01 00:00:00.000000'), \
+         ('Card B', ?, 'a2', '2026-01-02 00:00:00.000000')",
     )
     .bind(col_id)
     .bind(col_id)
@@ -93,13 +95,13 @@ async fn columns_sort_rewrite_flow(pool: MySqlPool) {
     .await
     .expect("seed cards");
     assert_eq!(
-        titles_by_position(&pool, col_id).await,
+        titles_by_sort_key(&pool, col_id).await,
         ["Card C", "Card A", "Card B"],
         "seed order is scrambled by design"
     );
 
     // 3. `asc` → 200 {data} (no `message` key); DB re-read proves the
-    //    rewrite, positions dense 0..N.
+    //    rewrite, keys reseeded evenly 0..N.
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -115,20 +117,20 @@ async fn columns_sort_rewrite_flow(pool: MySqlPool) {
     assert!(sorted.get("message").is_none(), "no message key: {sorted}");
     assert_eq!(sorted["data"]["id"], col_id);
     assert_eq!(
-        titles_by_position(&pool, col_id).await,
+        titles_by_sort_key(&pool, col_id).await,
         ["Card A", "Card B", "Card C"],
-        "asc rewrites positions by created_at"
+        "asc rewrites sort keys by created_at"
     );
-    let positions: Vec<i32> = sqlx::query_scalar(
-        "SELECT `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT `sort_key` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(col_id)
     .fetch_all(&pool)
     .await
-    .expect("positions re-read");
-    assert_eq!(positions, [0, 1, 2], "dense 0..N after asc");
+    .expect("sort keys re-read");
+    assert_eq!(keys, ["a0", "a1", "a2"], "keys reseeded evenly after asc");
 
-    // 4. Response cards ride `position ASC`; second GET confirms the wire
+    // 4. Response cards ride the sort-key order; second GET confirms the wire
     //    order matches the DB.
     let wire: Vec<String> = sorted["data"]["cards"]
         .as_array()
@@ -176,9 +178,9 @@ async fn columns_sort_rewrite_flow(pool: MySqlPool) {
     let sorted = json_of(&bytes);
     assert_eq!(status, StatusCode::OK, "sort desc: {sorted}");
     assert_eq!(
-        titles_by_position(&pool, col_id).await,
+        titles_by_sort_key(&pool, col_id).await,
         ["Card C", "Card B", "Card A"],
-        "desc rewrites positions by created_at"
+        "desc rewrites sort keys by created_at"
     );
 
     // 6. Idempotent: sorting `desc` again keeps the exact order.
@@ -195,7 +197,7 @@ async fn columns_sort_rewrite_flow(pool: MySqlPool) {
     let sorted = json_of(&bytes);
     assert_eq!(status, StatusCode::OK, "sort desc again: {sorted}");
     assert_eq!(
-        titles_by_position(&pool, col_id).await,
+        titles_by_sort_key(&pool, col_id).await,
         ["Card C", "Card B", "Card A"],
         "repeat sort is stable"
     );
@@ -270,7 +272,7 @@ async fn columns_sort_rewrite_flow(pool: MySqlPool) {
 
     // 9. Foreign/missing column → 404 (never 403); garbage id → 400.
     let intruder_col: i64 = sqlx::query_scalar(
-        "SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ? ORDER BY c.`position` LIMIT 1",
+        "SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ? ORDER BY c.`sort_key` ASC LIMIT 1",
     )
     .bind(foreign_board)
     .fetch_one(&pool)

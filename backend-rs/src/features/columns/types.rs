@@ -21,18 +21,22 @@ pub struct CreateColumnInput {
     pub name: Option<String>,
 }
 
-/// `PATCH /api/v1/columns/{id}` body (T23a rename + T23b sort): either key
-/// may appear (both are applied, rename first). Absent keys leave that
-/// aspect untouched, so `{}` stays a no-op 200.
+/// `PATCH /api/v1/columns/{id}` body (T23a rename + T23b sort + T010 move):
+/// any key may appear (both are applied, rename first, then move). Absent
+/// keys leave that aspect untouched, so `{}` stays a no-op 200.
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
 pub struct UpdateColumnInput {
     /// Column name (`<= 255` chars); present means non-blank.
     #[garde(length(max = 255), custom(validate_optional_not_blank))]
     pub name: Option<String>,
-    /// Card sort direction (`asc` | `desc`); rewrites card positions by
+    /// Card sort direction (`asc` | `desc`); rewrites card sort keys by
     /// `created_at` via one set-based `UPDATE ... CASE`.
     #[garde(custom(validate_optional_sort_order))]
     pub sort_order: Option<String>,
+    /// Target position (clamped to `[0, N-1]` in the store, never 400);
+    /// reorder lands a single between-neighbours `sort_key` write.
+    #[garde(skip)]
+    pub position: Option<i32>,
 }
 
 /// Optional variant of [`validate_sort_order`] for the PATCH body (`None`
@@ -85,7 +89,7 @@ pub struct MoveCardsBody {
 /// `dto.name || 'New Column'`).
 pub const DEFAULT_COLUMN_NAME: &str = "New Column";
 
-/// Wire column: scalars + nested card summaries (`position ASC`, never
+/// Wire column: scalars + nested card summaries (sort-key order, never
 /// `description` TEXT — see [`crate::common::card_summary`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ColumnResponse {
@@ -93,11 +97,11 @@ pub struct ColumnResponse {
     pub id: ColumnId,
     /// Column name.
     pub name: String,
-    /// Zero-based position (`position ASC` order on the wire).
+    /// Zero-based position (computed; sort-key order on the wire).
     pub position: i32,
     /// Owning board id.
     pub board_id: BoardId,
-    /// Nested card summaries (`position ASC`).
+    /// Nested card summaries (sort-key order).
     pub cards: Vec<CardSummary>,
     /// `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC).
     pub created_at: String,
@@ -117,7 +121,7 @@ pub struct ColumnBody {
 /// paginating board columns would break board rendering).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ColumnListBody {
-    /// Board columns, `position ASC`.
+    /// Board columns, sort-key order.
     pub data: Vec<ColumnResponse>,
 }
 

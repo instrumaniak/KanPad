@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT k.`column_id` AS \"column_id: i32\", k.`position` FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE k.`id` = ? AND b.`user_id` = ? FOR UPDATE",
+  "query": "SELECT k.`column_id` AS \"column_id: i32\", k.`sort_key` FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id` JOIN `boards` b ON b.`id` = c.`board_id` WHERE k.`id` = ? AND b.`user_id` = ? FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -21,17 +21,17 @@
       },
       {
         "ordinal": 1,
-        "name": "position",
+        "name": "sort_key",
         "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "collation": 63,
-          "max_size": 11
+          "type": "VarString",
+          "flags": "NOT_NULL | BINARY | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 1020
         },
         "origin": {
           "Table": {
             "table": "kanpad.cards",
-            "name": "position"
+            "name": "sort_key"
           }
         }
       }
@@ -44,5 +44,5 @@
       false
     ]
   },
-  "hash": "fecc7e0bebfe442debb3efaf3f51704b562b17516a1663e0b21daf704a64561a"
+  "hash": "1e481dbd0f8f72d47ef01396ca17162f7f7ed24a49bff520301bbc0c4bb765a4"
 }

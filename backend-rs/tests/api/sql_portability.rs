@@ -101,8 +101,8 @@ async fn multi_row_insert_parses(pool: MySqlPool) {
     .expect("board insert");
 
     sqlx::query(
-        "INSERT INTO `columns` (`name`, `board_id`, `position`) VALUES \
-         ('To Do', 9001, 0), ('In Progress', 9001, 1), ('Done', 9001, 2)",
+        "INSERT INTO `columns` (`name`, `board_id`, `sort_key`) VALUES \
+         ('To Do', 9001, 'a0'), ('In Progress', 9001, 'a1'), ('Done', 9001, 'a2')",
     )
     .execute(&pool)
     .await
@@ -135,13 +135,13 @@ async fn insert_ignore_parses(pool: MySqlPool) {
         .await
         .expect("board insert");
     sqlx::query(
-        "INSERT INTO `columns` (`id`, `name`, `board_id`, `position`) VALUES (9002, 'c', 9002, 0)",
+        "INSERT INTO `columns` (`id`, `name`, `board_id`, `sort_key`) VALUES (9002, 'c', 9002, 'a0')",
     )
     .execute(&pool)
     .await
     .expect("column insert");
     sqlx::query(
-        "INSERT INTO `cards` (`id`, `title`, `column_id`, `position`) VALUES (9002, 'card', 9002, 0)",
+        "INSERT INTO `cards` (`id`, `title`, `column_id`, `sort_key`) VALUES (9002, 'card', 9002, 'a0')",
     )
     .execute(&pool)
     .await

@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC FOR UPDATE",
+  "query": "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -27,5 +27,5 @@
       false
     ]
   },
-  "hash": "b4547272ab0023625803a0c4608d44ebbdd777743c28f1628382826b1a11dd69"
+  "hash": "f5d40faa49cc5e8c6381e04ef2e4e4418ad9ce92fac0a250cd84bc83a78c0f96"
 }

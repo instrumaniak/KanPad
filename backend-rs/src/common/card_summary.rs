@@ -93,8 +93,6 @@ pub struct SummaryRow {
     pub has_description: i64,
     /// `cards.column_id`.
     pub column_id: i32,
-    /// `cards.position`.
-    pub position: i32,
     /// `cards.due_date` (`None` = unset).
     pub due_date: Option<chrono::NaiveDateTime>,
     /// `cards.created_at`.
@@ -127,7 +125,9 @@ pub struct ProgressRow {
     pub completed: i64,
 }
 
-/// Board cards for the summary embed (`column_id, position ASC`), TEXT-free.
+/// Board cards for the summary embed (`column_id, sort_key ASC`), TEXT-free.
+/// Wire `position` is assigned per column in [`assemble_summaries`], in fetch
+/// (sort-key) order — never stored, never read.
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_board_cards<'e, E>(ex: E, board_id: i32) -> Result<Vec<SummaryRow>, AppError>
 where
@@ -136,11 +136,11 @@ where
     // `has_description!: i64` — the `!` pins NULLABILITY (a `: i64` override
     // alone does NOT: sqlx still wraps in `Option` whenever the server says
     // nullable). MySQL 8.4 reports this `CASE ... END` as NOT NULL, MariaDB
-    // 10.6 reports it nullable, so without the pin the macro yields `i64` on
+    // reports it nullable, so without the pin the macro yields `i64` on
     // one server and `Option<i64>` on the other. The pin makes the row type
     // server-independent; the expression is never NULL by construction.
     let card_rows = sqlx::query!(
-        "SELECT k.`id`, k.`title`, k.`column_id`, k.`position`, \
+        "SELECT k.`id`, k.`title`, k.`column_id`, \
           (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' \
             THEN 1 ELSE 0 END) AS \"has_description!: i64\", \
           k.`due_date` AS \"due_date: chrono::NaiveDateTime\", \
@@ -148,7 +148,7 @@ where
           k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" \
           FROM `cards` k \
           WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) \
-          ORDER BY k.`column_id` ASC, k.`position` ASC",
+          ORDER BY k.`column_id` ASC, k.`sort_key` ASC, k.`id` ASC",
         board_id
     )
     .fetch_all(ex)
@@ -161,7 +161,6 @@ where
             title: row.title,
             has_description: row.has_description,
             column_id: row.column_id,
-            position: row.position,
             due_date: row.due_date,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -238,7 +237,8 @@ where
 }
 
 /// Assemble summary rows + label links + progress rollups into per-column
-/// groups (each group keeps the `position ASC` fetch order). Pure: no SQL.
+/// groups (each group keeps the `sort_key` fetch order; the wire `position`
+/// is the per-column enumerate index). Pure: no SQL.
 pub fn assemble_summaries(
     rows: Vec<SummaryRow>,
     labels: Vec<CardLabelRow>,
@@ -278,7 +278,10 @@ pub fn assemble_summaries(
 
     let mut by_column: std::collections::HashMap<i32, Vec<CardSummary>> =
         std::collections::HashMap::new();
+    let mut next_position: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
     for row in rows {
+        let position = *next_position.entry(row.column_id).or_insert(0);
+        next_position.insert(row.column_id, position + 1);
         by_column
             .entry(row.column_id)
             .or_default()
@@ -287,7 +290,7 @@ pub fn assemble_summaries(
                 title: row.title,
                 has_description: row.has_description != 0,
                 column_id: ColumnId::from(row.column_id),
-                position: row.position,
+                position,
                 due_date: row.due_date.as_ref().map(format_timestamp),
                 created_at: format_timestamp(&row.created_at),
                 updated_at: format_timestamp(&row.updated_at),

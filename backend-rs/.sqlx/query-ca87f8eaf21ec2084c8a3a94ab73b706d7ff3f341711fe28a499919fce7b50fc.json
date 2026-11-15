@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT k.`id`, k.`title`, k.`column_id`, k.`position`, (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' THEN 1 ELSE 0 END) AS \"has_description!: i64\", k.`due_date` AS \"due_date: chrono::NaiveDateTime\", k.`created_at` AS \"created_at: chrono::NaiveDateTime\", k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `cards` k WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) ORDER BY k.`column_id` ASC, k.`position` ASC",
+  "query": "SELECT k.`id`, k.`title`, k.`column_id`, (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' THEN 1 ELSE 0 END) AS \"has_description!: i64\", k.`due_date` AS \"due_date: chrono::NaiveDateTime\", k.`created_at` AS \"created_at: chrono::NaiveDateTime\", k.`updated_at` AS \"updated_at: chrono::NaiveDateTime\" FROM `cards` k WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) ORDER BY k.`column_id` ASC, k.`sort_key` ASC, k.`id` ASC",
   "describe": {
     "columns": [
       {
@@ -53,22 +53,6 @@
       },
       {
         "ordinal": 3,
-        "name": "position",
-        "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL",
-          "collation": 63,
-          "max_size": 11
-        },
-        "origin": {
-          "Table": {
-            "table": "kanpad.cards",
-            "name": "position"
-          }
-        }
-      },
-      {
-        "ordinal": 4,
         "name": "has_description!: i64",
         "type_info": {
           "type": "LongLong",
@@ -79,7 +63,7 @@
         "origin": "Expression"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "due_date: chrono::NaiveDateTime",
         "type_info": {
           "type": "Datetime",
@@ -95,7 +79,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "created_at: chrono::NaiveDateTime",
         "type_info": {
           "type": "Datetime",
@@ -111,7 +95,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "updated_at: chrono::NaiveDateTime",
         "type_info": {
           "type": "Datetime",
@@ -135,11 +119,10 @@
       false,
       false,
       false,
-      false,
       true,
       false,
       false
     ]
   },
-  "hash": "0e15d092e4814c30d37bce5a5cb57043d54b3406a8b92250039201c32bc12f2d"
+  "hash": "ca87f8eaf21ec2084c8a3a94ab73b706d7ff3f341711fe28a499919fce7b50fc"
 }

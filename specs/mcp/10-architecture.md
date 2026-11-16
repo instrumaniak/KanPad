@@ -36,16 +36,14 @@ rmcp = { version = "3.9", default-features = false, features = [
 ] }
 ```
 
-**Why `default-features = false`.** rmcp's default feature set is
-`base64 + macros + server` — harmless. But `cargo deny` runs with
-`all-features = true` (`backend-rs/deny.toml`), and rmcp's optional
-`auth` feature pulls `oauth2` → `reqwest` → `rustls` → `ring`, whose **ISC**
-licence is **not** on this project's allow-list (the file's own header records
-that a BSD-3-Clause tree was rejected). We do not need OAuth — bearer API keys
-are the credential — so the feature set is pinned explicitly and
-`cargo deny check licenses` is re-run to confirm.
-
-**After adding the dependency, `deny.toml` MUST be re-derived from a fresh
+**Why `default-features = false`.** The rationale is minimal surface, not a
+licence conflict (amendment 2026-11-16: the earlier draft claimed `ring`'s ISC
+licence was absent from `deny.toml`'s allow-list — that is false; `ISC` is
+explicitly allowed there with the comment `ISC — ring ("Apache-2.0 AND ISC")`,
+and rmcp 3.9.0's `auth`-gated extras (`oauth2`, `reqwest`) would only enter the
+tree if that feature were enabled). We do not need OAuth — bearer API keys are
+the credential — so the feature set is pinned explicitly. **After adding the
+dependency, `deny.toml` MUST be re-derived from a fresh
 `cargo deny check` run** — the file's header says so in as many words:
 *"re-derive this file from a fresh run when the dependency set changes: a stale
 allow-list is a policy that lies."*
@@ -58,9 +56,13 @@ review bumps deliberately.
 **Rust version.** rmcp 3.x needs Rust ≥ 1.88; the project is on 1.99. No
 conflict.
 
-**Other crates needed:** none. `sha2` (already present) for the key HMAC,
-`subtle` **not** needed (equality on a unique-index lookup is not a timing
-comparison — see [`20-auth-and-keys.md`](20-auth-and-keys.md) §4).
+**Other crates needed:** `rand` (or `getrandom`) — **declared as a direct
+dependency**. (Amended 2026-11-16: the earlier draft claimed transitive reachability
+via rmcp/`uuid` makes `rand` importable — it does not; transitive reachability is not
+importability, and `use rand::…` without a direct dependency fails to compile.)
+`sha2` is already a direct dependency (used for the key HMAC, §4 of
+[`20-auth-and-keys.md`](20-auth-and-keys.md)); `subtle` is **not** needed (equality
+on a unique-index lookup is not a timing comparison).
 
 ## 3. Transport & mount point
 
@@ -188,11 +190,12 @@ in every task that touches the MCP module.
 2. **Every tool MUST resolve an `Actor` and pass it down.** The actor carries
    the user id; the store applies the ownership predicate. A tool that invents
    its own user id is a bug.
-3. **Every tool MUST go through `authz::require`** (Wave 2, `T029`) for the
+3. **Every tool MUST go through `authz::require`** (the Wave 2 kernel —
+   `specs/arch-hardening-specs/30-collaboration.md` §6, row B) for the
    resource it touches — read *and* write. MCP is not exempt from the kernel.
 4. **Every mutating tool MUST write an activity-log row** inside the same
-   transaction as the mutation (`T034`), tagged `via = 'mcp'` and carrying the
-   `api_key_id`.
+   transaction as the mutation (collab task row G — activity log), tagged
+   `via = 'mcp'` and carrying the `api_key_id`.
 5. **A tool MUST NOT perform outbound network I/O.** No `reqwest`, no DNS, no
    URL fetching. `link_artifact` stores a string.
 6. **A tool MUST NOT return unbounded data.** Every result is bounded and

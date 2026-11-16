@@ -34,7 +34,7 @@ Rules of engagement derived from this (apply to every future live check):
    window, typically 1h+). Do not retry while banned — retries extend the ban.
    Document the unblock in this file.
 5. **Prefer white-box code review + local compose** for all remaining phases
-   (02–10). Live verification is reserved for header/CORS/CSRF/cookie/TLS
+   (02–11). Live verification is reserved for header/CORS/CSRF/cookie/TLS
    spot-checks that cannot be reproduced locally.
 
 ---
@@ -151,9 +151,12 @@ echo | openssl s_client -connect <api-host>:443 -servername <api-host> 2>/dev/nu
 
 ### F-02 — Prod DB is MariaDB 11.4.x (runbook assumed 10.6.x) (Info)
 - **Evidence:** banner `MariaDB 11.4.x`.
-- **Impact:** portability test matrix targets MariaDB 10.6; prod runs 11.4.
+- **Impact:** portability test matrix targeted MariaDB 10.6; prod runs 11.4.
   SQL must be re-verified on 11.4 (likely fine, but confirm). Not a security
-  issue per se but affects audit confidence.
+  issue per se but affects audit confidence. *(Amended 2026-11-16: the
+  arch-hardening plan now names the CI matrix legs — MariaDB 11.4 — as the
+  supported engines, and 40-operations §6 owns either restoring a 10.6 leg if
+  prod really is 10.6, or recording the accepted delta.)*
 
 ### Positives verified live (do not re-test)
 - API security headers present on every response (incl. 401/403/404).
@@ -216,12 +219,20 @@ White-box review of `backend-rs/src/` and `frontend/src/` (no live traffic).
   CSRF/CORS/Compression (lib.rs), so CSRF 403 rejections fire before the
   task-local `REQUEST_CONTEXT` is scoped → `instance` = "unknown unknown#unknown"
   (live R-04). Fix: move `capture_request_context` to wrap CSRF/CORS.
-- **F-04 (Medium):** Mermaid `securityLevel` not explicitly set in
+- **F-04 (Low, downgraded 2026-11-16):** Mermaid `securityLevel` not explicitly set in
   `mermaid-diagram.tsx` (`mermaid.initialize({ startOnLoad, theme })`) — relies
-  on mermaid's default. Set explicitly to `'strict'` (or `'sandbox'`).
-- **F-05 (Low):** `markdown-renderer.tsx` calls `DOMPurify.sanitize(content)`
+  on mermaid's default. Installed mermaid is **12.3.0, whose default is `'strict'`**,
+  so no current exploit path; set explicitly to `'strict'` (or `'sandbox'`) anyway
+  (defense in depth — an unpinned default is not a control). Severity in the
+  register lowered accordingly.
+- **F-05 (Low, clarified 2026-11-16):** `markdown-renderer.tsx` calls `DOMPurify.sanitize(content)`
   on the markdown *source* (DOMPurify expects HTML → ineffective). Real
-  protection is `rehypeSanitize`. Remove the misleading call or document it.
+  protection is `rehypeSanitize`. Worse than cosmetic: DOMPurify strips anything
+  that looks like an HTML tag, so markdown prose such as `use <Foo> generics` or
+  `<placeholder>` is silently corrupted before the renderer sees it — a
+  data-fidelity bug, not just a misleading call. Remove the misleading call or
+  document it (and note the pipeline relies on `rehypeRaw → rehypeSanitize`
+  ordering — keep them in that order).
 - **F-06 (Info):** Card markdown preview allows the `input` element (checkbox)
   with type/checked/disabled — verify intended (checklist-in-markdown). Low.
 
@@ -238,7 +249,7 @@ likely already exploitable if misconfigured.
 | T-04 | `app-proxy.js` forwards original `Host` (else CSRF fallback broken) | read proxy config / test Origin+Host | Medium |
 | T-05 | `DB_PASSWORD` not default/weak; MySQL bound to localhost/socket | read prod `.env` + `ss -lntp` | High |
 | T-06 | `release/` + zips outside HTTP docroot; `.env` chmod 600 | filesystem check | High |
-| T-07 | Mermaid `securityLevel` strict/sandbox | grep frontend source | Medium |
+| T-07 | Mermaid `securityLevel` strict/sandbox | grep frontend source | Low |
 
 ## 4. Recon commands to re-run after hardening
 

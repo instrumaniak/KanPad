@@ -108,7 +108,11 @@ cannot be tracked, and is lost if the note is edited.
 
 **Recommendation: Option A.** The link is structured data that the UI can act
 on, and "which PR belongs to this card" is a question the board will want to
-answer.
+answer. The recommended design is now specified end-to-end (amendment
+2026-11-16, decision O-14): DDL in `30-tool-surface.md` §3.6 (`0006_card_links.sql`),
+`link_artifact`/`unlink_artifact` in the §3/§5 catalogue, the `links` array in
+`get_card_context`, and **`GET /api/v1/cards/{id}/links`** as the frontend
+read path (additive — T52 same-PR).
 
 ---
 
@@ -237,24 +241,65 @@ regardless.
 
 ## O-12 — Where do the new migrations land?
 
-`0003_api_keys.sql` and `0004_card_claims.sql` are proposed. The collaboration
-wave (`T028`) also wants a migration, and it has not been written yet.
+> **Amendment 2026-11-16 — current state of the tree:** `0001_baseline.sql`,
+> `0002_convert_to_utf8mb4.sql`, and **`0003_sort_key_fractional_ordering.sql`**
+> (T010) exist. `0003` is **taken**; the earlier draft's proposal to "claim
+> `0003` and `0004` for the MCP/authn tables" is void — reusing `0003` would
+> collide with its `_sqlx_migrations` checksum.
 
-**Recommendation:** claim `0003` and `0004` for the MCP/authn tables, and
-renumber the collaboration wave's migration to `0005`. The collaboration task
-files have not been authored, so the renumber is free **now** and expensive
-later.
+**Recommendation (amended):** claim **`0004_api_keys.sql`** and
+**`0005_card_claims.sql`** for the MCP/authn tables, and
+**`0006_card_links.sql`** for the artifacts table; the Wave 2 collaboration
+wave's migration then takes the next free slot (currently `0007`, or later if
+something else lands first). sqlx applies migrations in version order, so the
+split is functionally irrelevant — the numbering just has to stop colliding.
 
-**If the collaboration wave is executed first**, the MCP migrations become
-`0004`/`0005` instead. The order does not matter functionally — sqlx applies
-migrations in version order — but the numbering should be settled before the
-task files are written.
+**If the collaboration wave is executed first**, its migration takes `0004` and
+the MCP set shifts to `0005`/`0006`/`0007`. The order does not matter
+functionally — sqlx applies migrations in version order — but the numbers
+should be settled before task files are written, and the rule is: **never
+reuse or hand-edit an applied version; always take the next free number.**
 
 ---
+
+## O-13 — Can a bearer key mint keys? **Decided 2026-11-16 (spec review)**
+
+**The problem.** Under the bare method map (`POST → write`), any `write` key
+could call `POST /api/v1/api-keys` with `scopes: ["delete", "admin"]` and
+mint a strictly wider key — a one-call privilege escalation.
+
+**Decision: minting is cookie-session only.** The bearer middleware rejects
+`POST /api/v1/api-keys` with **401** before the handler runs, for every
+scope. Key minting is an interactive browser act (the UI page); it is not an
+agent act.
+
+**Alternatives rejected:** (a) cap minted scopes at the caller's own (weaker —
+a leaked `write` key still mints unlimited lifetime); (b) require `admin`
+scope for minting `delete`/`admin` keys (couples the user page to a Wave 2
+scope that gates nothing yet). `GET /api-keys` (list/read own) and `DELETE`
+(revoke own) remain bearer-reachable — they are the owner's recovery levers.
+
+Recorded in `20-auth-and-keys.md` §5/§6.1; verified by the SEC-028 audit
+(`specs/security/11-mcp-api-key-surface.md`).
+
+## O-14 — Where does the card-detail artifact chip read its data? **Decided 2026-11-16 (spec review)**
+
+**The problem.** The card list/detail shows a PR chip per artifact link
+(`50-frontend.md` §3), but no read path existed — the notes list does not
+carry links, and `get_card_context` is agent-facing, not frontend-facing.
+
+**Decision:** agents read links via the `links` array in `get_card_context`
+(bounded 20, §3.2 of `30-tool-surface.md`); the frontend reads them via a new
+additive REST route **`GET /api/v1/cards/{id}/links`** (newest first, T52
+same-PR process with `openapi.json` + `schema.d.ts` regenerated). No new tool,
+no wire-shape change to card responses.
 
 ## Decision log
 
 Record the outcome of each call here, with the rationale, once reviewed.
+Calls O-1 through O-12 remain **undecided** — they are the review agenda.
+O-13/O-14 were settled by the 2026-11-16 spec review and are recorded for the
+audit trail.
 
 | Call | Decision | Rationale | Date |
 |---|---|---|---|
@@ -270,3 +315,5 @@ Record the outcome of each call here, with the rationale, once reviewed.
 | O-10 | | | |
 | O-11 | | | |
 | O-12 | | | |
+| O-13 | **Decided:** minting (`POST /api/v1/api-keys`) is cookie-session only; bearer → 401 | One-call privilege escalation under the method map; cookie-only is the minimal invariant that closes it. See §O-13 above. | 2026-11-16 |
+| O-14 | **Decided:** `GET /api/v1/cards/{id}/links` (frontend) + `links` array in `get_card_context` (agents) | Additive wire change, no new tool, no reshaping of card responses; both consumers share the `card_links` table. | 2026-11-16 |

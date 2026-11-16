@@ -92,7 +92,7 @@ and "write the activity log" in the system.
 
 | Criterion | How the design achieves it | Residual risk |
 |---|---|---|
-| **Efficient** | Composite tools (`get_card_context`) collapse 5 REST round-trips into 1 MCP call; store functions run on one connection; result payloads are bounded and truncated | Composite queries must stay portable across MySQL 8.4 and MariaDB 10.6 — no `JSON_ARRAYAGG` reliance |
+| **Efficient** | Composite tools (`get_card_context`) collapse 5 REST round-trips into 1 MCP call; store functions run on one connection; result payloads are bounded and truncated | Composite queries must stay portable across MySQL 8.4 and MariaDB 11.4 (CI legs) — no `JSON_ARRAYAGG` reliance |
 | **Secure** | Server-side scope enforcement; per-key identity; revocation is a single indexed `UPDATE`; audit row per write; `read`-only keys physically cannot call write tools | Prompt injection via card content — see [`60-security.md`](60-security.md), the dominant risk |
 | **Reliable** | Stateless MCP (no session store, no affinity requirement); idempotent tool semantics where it matters; per-key rate limit; explicit `isError` results rather than transport failures | Agent-side retries can double-apply non-idempotent writes (`add_card_note`) — mitigated by `idempotentHint: false` + tool guidance |
 | **Fast** | In-process; one indexed `SELECT` for auth; no per-request user lookup (the key *is* the identity) | `last_used_at` write must be amortized, not per-request |
@@ -113,15 +113,19 @@ foundation.
 
 The MCP work is **Wave 3**, but it does **not** all land at once.
 
+> **Amendment 2026-11-16:** Wave 0/1 hardening and Wave 2 collaboration were
+> renumbered (implementation task IDs are assigned by taskpad at authoring time;
+> T028/T029/T030 already exist and the collab set starts at ≥ T031 — see
+> `specs/arch-hardening-specs/30-collaboration.md` §6 rows A–I). Wave 3a/3b labels
+> below are symbolic; `91-task-map.md` uses `3a-1…3b-7`.
+
 ```
-Wave 1  T011–T027   hardening, T010 fractional sort keys, T027 collaboration design
-        ─────────────────────────────────────────────────────────────────────
-Wave 2  T028–T036   workspaces + sharing + authz kernel + activity log + admin
-        ─────────────────────────────────────────────────────────────────────
-Wave 3a  A1–A3     api_keys + bearer auth + key management UI     ← can land
-        ─────────────────────────────────────────────────────────────────────              BEFORE Wave 2
-Wave 3b  C1–C4     rmcp server + tool surface + card-notes UI     ← needs Wave 2's
-                                                                   authz kernel
+Wave 0/1  T001–T026   hardening (reliability floor, perf @100+), T010 fractional sort keys
+Wave 2    T027 ─► impl tasks   workspaces + sharing + authz kernel + activity log + admin
+Wave 3a   3a-1..3a-3  api_keys + bearer auth + key management UI     ← can land
+         ───────────────────────────────────────────────────────────   BEFORE Wave 2
+Wave 3b   3b-1..3b-7  rmcp server + tool surface + card-notes UI     ← needs Wave 2's
+                                                        authz kernel (collab row B)
 ```
 
 **Wave 3a is deliberately early.** Authentication and authorization are two
@@ -138,7 +142,8 @@ So the key infrastructure ships early and gets *better* when the collaboration
 wave lands, instead of being invalidated by it.
 
 Wave 3b waits for Wave 2 on purpose: the MCP tools must call `authz::require`,
-and that kernel does not exist until T029. Landing MCP first would mean writing
+and that kernel does not exist until the collaboration wave's authz task
+(`specs/arch-hardening-specs/30-collaboration.md` §6, row B) lands. Landing MCP first would mean writing
 a second, temporary authorization path — precisely the failure mode this design
 exists to avoid.
 
@@ -153,6 +158,12 @@ four that change the shape of the implementation:
 | **O-2** — scope granularity: method-mapped, or per-resource? | Method-mapped (`read`/`write`/`delete`/`admin`) | Per-resource needs a per-route scope declaration layer |
 | **O-3** — claim semantics: lease table, or advisory labels? | Lease table (`card_claims`) | Advisory labels cannot prevent two agents working the same card |
 | **O-4** — artifact links: structured `card_links`, or URLs inside notes? | Structured `card_links` | A structured table enables PR chips in the UI |
+
+> **Post-review amendments (2026-11-16):** two *more* calls were settled by
+> the review and are recorded in `90-open-calls.md`: **O-13** — bearer keys
+> cannot mint keys (minting is cookie-session only); **O-14** — artifact chip
+> read path (`GET /cards/{id}/links` for the UI + `links` in
+> `get_card_context` for agents).
 
 ## 8. Document conventions
 

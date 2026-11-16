@@ -53,11 +53,15 @@ frontend host config (LiteSpeed/Apache).
 - No auth tokens in localStorage. ✓
 
 ## 2.5 Code review findings (white-box)
-- **F-04 (Medium):** Mermaid `securityLevel` not explicitly set in
-  `mermaid-diagram.tsx` — relies on mermaid default. Set to `'strict'`.
-- **F-05 (Low):** `markdown-renderer.tsx` calls `DOMPurify.sanitize(content)` on
-  the markdown source (ineffective; DOMPurify expects HTML). Real protection is
-  `rehypeSanitize`. Remove the misleading call.
+- **F-04 (Low, downgraded 2026-11-16):** Mermaid `securityLevel` not explicitly set in
+  `mermaid-diagram.tsx` — relies on mermaid's default (installed mermaid is
+  12.3.0; its default is `'strict'`, so no current exploit path — set it
+  explicitly to `'strict'` anyway).
+- **F-05 (Low, clarified 2026-11-16):** `markdown-renderer.tsx` calls `DOMPurify.sanitize(content)` on
+  the markdown source (ineffective; DOMPurify expects HTML) — and it also
+  corrupts prose that looks like HTML tags (`use <Foo>`, `<placeholder>`).
+  Remove the call (real protection is `rehypeRaw → rehypeSanitize`, and the
+  plugin order matters — keep raw before sanitize).
 - **F-06 (Info):** Card markdown preview (`markdown-preview.tsx`) allows the
   `input` element with type/checked/disabled — verify intended (checklist-in-md).
 - Positives: no `dangerouslySetInnerHTML`, no `eval`, no open redirect; card

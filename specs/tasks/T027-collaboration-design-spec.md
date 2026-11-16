@@ -1,15 +1,16 @@
-# T027: Collaboration design spec (review gate for T028+)
+# T027: Collaboration design spec (review gate for the impl tasks)
 
 > **STATUS: pending.** Wave 2 (design only — **no implementation in this task**).
-> Closes the *design* half of **S1**; implementation tasks T028+ are authored here
-> after review.
+> Closes the *design* half of **S1**; implementation tasks are authored here after
+> review. Their IDs are assigned by `taskpad new` at authoring time — T028/T029/T030
+> already exist (storybook, SQL observability, Sentry/OTel); do not pre-reserve numbers.
 
 ## Goal
 
 Finalize `specs/arch-hardening-specs/30-collaboration.md` (the draft landed with this
 plan) into an implementation-ready design by **resolving its open calls with the user**
-and then **author the T028+ task files** (taskpad) so collaboration work can be
-delegated session-by-session.
+and then **author the implementation task files** (taskpad) so collaboration work can
+be delegated session-by-session.
 
 This is the architecture gate for the product's core shift: single-user →
 organization-wide cross-functional collaboration (100+ users, D-2).
@@ -30,7 +31,7 @@ Yes — S1 is the strategic finding; every collaboration task descends from this
 
 - `specs/arch-hardening-specs/30-collaboration.md` — **the artifact this task
   finalizes** (domain model §1, authz kernel §2, migration §3, concurrency §4,
-  admin/activity §5, provisional task table §6, open calls §7).
+  admin/activity §5, task decomposition table §6, open calls §7).
 - `specs/arch-hardening-specs/00-overview.md` — finding S1; D-1…D-6; global DoD;
   out-of-scope list (realtime deferred).
 - `specs/planning-artifacts/architecture.md` (original FR43–49 admin requirements,
@@ -38,14 +39,14 @@ Yes — S1 is the strategic finding; every collaboration task descends from this
   `backend-rs/migrations/0001_baseline.sql` (current ownership model),
   `backend-rs/src/common/ids.rs` (Role enum — platform admin today),
   `specs/api-rewrite-rs-specs/30-db-schema.md` + `20-api-contract.md` (amendment
-  targets for T028+), `backend-rs/tests/README.md`, `AGENTS.md`.
+  targets for the implementation tasks), `backend-rs/tests/README.md`, `AGENTS.md`.
 
 ## Files to Create/Modify
 
 | File | Change |
 |---|---|
 | `specs/arch-hardening-specs/30-collaboration.md` | Resolve open calls O-1…O-6 (record decisions + rationale); refine §6 task table into final IDs/ACs; amend with review outcomes |
-| `specs/tasks/T028-*.md` … `T036-*.md` | **NEW** (via `taskpad new`) — one file per §6 row, full house template, cross-user negative tests as standing AC |
+| `specs/tasks/T0xx-*.md` … | **NEW** (via `taskpad new`) — one file per §6 row (A–I), full house template, cross-user negative tests as standing AC. IDs come from taskpad (next free ≥ T031); do not hand-pick numbers |
 | `specs/tasks/status.yaml` | Updated by `taskpad new` (depends edges per §6) |
 | `specs/arch-hardening-specs/00-overview.md` | Annotate S1 design-half closed; wave-2 table pointer |
 | `docs/lessons/rust-backend.md` | Dated, tagged lesson (design-gate pattern) |
@@ -64,9 +65,9 @@ task authoring only), migrations.
    consistency with current handlers; list-filter SQL (indexed membership joins — no
    Rust post-filtering); personal-workspace backfill determinism; 409 conflict wire
    shape (T52 impact); activity-log synchronous-write cost inside txs. Adjust the file.
-4. **Author T028–T036** via `taskpad new` per §6 (each with Goal/Depends/Spec
-   References/Files/TDD steps/Constraints/AC citing S1 + cross-user negative tests),
-   wire depends edges (T028→T029→{T030,T032}→… per §6).
+4. **Author the implementation tasks** via `taskpad new` per §6 rows A–I (each with
+   Goal/Depends/Spec References/Files/TDD steps/Constraints/AC citing S1 + cross-user
+   negative tests), wire depends edges (A → B → {C → {D, F, G → H}, E → I} per §6).
 5. **Amendment map:** each task lists which `api-rewrite-rs-specs` files it will amend
    (T52 same-PR discipline) so contract work is pre-planned, not bolted on.
 6. Update `00-overview.md` wave table; lesson.
@@ -89,7 +90,8 @@ task authoring only), migrations.
       left unresolved or silently defaulted).
 - [ ] Design review outcomes incorporated (404/403, list-filter indexing, backfill,
       409 shape, activity-log cost — each explicitly addressed).
-- [ ] T028–T036 authored via `taskpad new` with depends edges; each cites S1, carries
+- [ ] Implementation tasks authored via `taskpad new` with depends edges per §6
+      (A → B → {C → {D, F, G → H}, E → I}); each cites S1, carries
       cross-user negative tests as standing AC, and names its T52 amendment targets.
 - [ ] `00-overview.md` annotated (S1 design-half closed); `taskpad status` shows the
       wave-2 graph; lesson appended.

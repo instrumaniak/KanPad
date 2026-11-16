@@ -20,7 +20,7 @@ lockfile, `.github/workflows/backend-rs.yml`, Dockerfile, `deny.toml`.
 - SBOM generation for release artifacts (cargo-sbom or syft).
 
 ### 1.2 Frontend (npm)
-- `npm audit` (frontend) + `npm audit` (legacy backend).
+- `npm audit` (frontend). The Nest `backend/` was deleted (4051be68) — no audit needed there.
 - Triage high/critical.
 - Verify lockfile committed and CI uses `npm ci`.
 - Check for typosquatting / suspicious packages (mermaid, react-markdown,

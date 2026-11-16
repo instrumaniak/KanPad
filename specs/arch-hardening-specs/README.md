@@ -4,7 +4,9 @@
 > organization for **cross-functional collaboration at 100+ users**, with **low
 > infrastructure & maintenance cost** (zero new infra services: no Redis/k8s/queue;
 > reuse MySQL). Companion to (not a replacement for) `specs/api-rewrite-rs-specs/`
-> (backend rewrite) and `specs/security/` (security review) — findings from those are
+> (backend rewrite), `specs/security/` (security review) and `specs/mcp/`
+> (Wave 3 agent surface — rides this plan's Wave 2 authz kernel and the
+> `activity_log` attribution columns pinned here) — findings from those are
 > cited, not repeated.
 
 ## Reading order for a fresh agent
@@ -17,7 +19,8 @@
    rendering, pagination, search, metrics, capacity methodology.
 4. `30-collaboration.md` — Wave 2 **design only** (S1): workspace/ACL domain model,
    authorization kernel, migration strategy, optimistic concurrency, admin + activity
-   log. Implementation tasks (T028+) are written after this design is reviewed.
+   log. Implementation tasks are authored by T027 after design review; IDs are
+   assigned by taskpad at authoring time (T028/T029/T030 already exist).
 5. `40-operations.md` — dual-path deployment (Docker appliance + cPanel runbook),
    backup/restore procedure + drill template, monitoring, secrets.
 
@@ -33,7 +36,7 @@ table in `00-overview.md` is informational; run `taskpad status` / `taskpad next
 |------|-------|
 | 0 — reliability floor | T011 backups · T012 compose repair · T013 cache hygiene · T014 401/retry · T015 error states · T016 bundle · T017 Playwright · T018 secrets/deps · T019 docs sync |
 | 1 — perf @100+ users | T010* sort keys → T020 retry helper · T021 render perf · T022 pagination · T023 FTS (conditional) · T024 metrics · T025 monitoring · T026 capacity |
-| 2 — collaboration | T027 design spec → T028+ implementation (written after review) |
+| 2 — collaboration | T027 design spec → implementation tasks authored at review |
 
 \* gates T020 (locked decision D-5).
 
@@ -58,4 +61,5 @@ table in `00-overview.md` is informational; run `taskpad status` / `taskpad next
   `taskpad new` (`.taskpad` → `task-dir: specs/tasks`).
 - Spec files are design/reference only — they never carry task status.
 - If a spec file and the tree ever disagree, fix the disagreement and record it as an
-  amendment in `00-overview.md` (same rule as `api-rewrite-rs-specs/00-overview.md`).
+  amendment in `00-overview.md` (the **Amendment log** section there; same rule as
+  `api-rewrite-rs-specs/00-overview.md`).

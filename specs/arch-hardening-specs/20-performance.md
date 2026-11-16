@@ -7,13 +7,16 @@
 
 **Current state:** source is correctly lazy — 9 `React.lazy` routes (`App.tsx:11-37`),
 lazy mermaid (`mermaid-diagram.tsx:9-11`), lazy markdown renderers. But the **production
-build defeats it**: `dist/` has 5 JS files, the entry chunk contains one dynamic import
-(mermaid only), and `dist/index.html:24` `modulepreload`s the **3.1 MB mermaid chunk**
-(~815 KB gzip) which the entry **statically imports** → ~1.29 MB gzip initial JS on every
-cold load including `/login`. Suspected cause: the rolldown `codeSplitting.groups` in
+build defeats it**: `dist/` has 5 JS files, the entry chunk contains exactly one dynamic
+import (mermaid), and `dist/index.html` `modulepreload`s the
+**mermaid chunk (measured 2026-11-13: 4.9 MB raw / ~1.36 MB gzip)** alongside
+rolldown-runtime (1.1 KB), vendor-react (~138 KB gzip), vendor (~278 KB gzip) and the
+entry (~68 KB gzip) → **≈1.85 MB gzip modulepreloaded on a cold `/login` load**. Suspected
+cause: the rolldown `codeSplitting.groups` in
 `vite.config.ts:32-60` — the catch-all `app` group (`minSize: 100000`, priority 1)
 merges entry-containing modules and keeps `entryFileNames`, collapsing route chunks;
-the mermaid group (priority 30) gets statically linked from the merged entry.
+the mermaid group (priority 30) gets statically linked from the merged entry. (Numbers
+re-measured 2026-11-16; the original "3.1 MB / ~1.29 MB" figures predated the T010 rebuild.)
 
 **Target design:**
 1. **Diagnose first (spike step):** `npx vite build --debug` / rolldown chunk report
@@ -45,23 +48,36 @@ over a lean React app.
 **Test plan:** red-proof both directions (see above) + budget gate red-proof (temporarily
 import mermaid eagerly → CI fails); `vite build` output pasted in evidence; visual smoke.
 
-## Transaction retry helper (R4) → T020 — **gated by T010 (D-5)**
+## Transaction retry helper (R4) → T020 — T010 gate **satisfied** (T010 done; D-5)
 
-**Current state:** `cards/routes.rs::move_card` alone has the hardened path:
-`MOVE_MAX_ATTEMPTS = 5`, `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` before `BEGIN`,
-stable lock order (min column first), same-card race → `Restart`, explicit rollback,
-`is_transient_lock_error` (1213|1205) → linear backoff `10ms × attempt`. Everything else
-that shifts positions or takes `FOR UPDATE` is single-shot and falls into the generic-500
-arm (`error.rs:389`): `create_card`, `delete_card`, `update_card`, bulk `move_cards`
-(`columns/routes.rs:269-301` — highest lock count), boards/columns/notes/checklists
-transactions (~18 sites).
+> Amendment 2026-11-16 (pass 2): the current-state list is rewritten — the
+> pass-1 amendment had verified only the card paths. As of today the retry
+> envelope covers **six** write sites, including `move_cards`; the helper
+> extraction below is still un-started. This section is the post-T010 target,
+> not a description of untried current code.
+
+**Current state:** the hardened path (`SET TRANSACTION ISOLATION LEVEL READ
+COMMITTED` + stable lock order + `is_transient_lock_error` (1213|1205|scoped
+1062) + linear backoff) now exists inline in **six** sites post-T010:
+`create_card` and `update_card`'s move worker (`cards/routes.rs:112,325`),
+checklist-item create/update (`checklists/routes.rs:260,359`), column update
+(`columns/routes.rs:192`), and bulk `move_cards` (`columns/routes.rs:348`).
+`move_card` remains the reference implementation. Sites that are still
+single-shot and fall into the generic-500 arm (`error.rs`): `delete_card`,
+`delete_checklist`/`delete_item`, `create_column`/`delete_column`,
+notes/boards/labels/tags transactions, `common/rebalance.rs` (position
+rewrites), and anything else the `FOR UPDATE` re-enumeration finds (32
+`FOR UPDATE` sites across 7 files — audit, don't assume). Exhausted 500s at
+these single-shot sites remain client-visible.
 
 **Post-T010 scope note (D-5):** T010 replaces integer positions with fractional
 `sort_key`s — single-row writes, no gap open/close, no whole-column locks — and extends
 the matcher to `1213 | 1205 | 1062`. T020 therefore runs **after** T010 and:
-- extracts T010's inline retry into a shared kernel helper,
-- applies it to whatever single-shot transactions remain post-T010 (create/delete/move
-  conditional updates, `1062` unique-key races on `(parent, sort_key)`, bulk moves),
+- extracts the inline retry into a shared kernel helper,
+- applies it to whatever single-shot transactions remain post-T010, as found
+  by a fresh `FOR UPDATE` enumeration (create/delete/move conditional updates,
+  `1062` unique-key races on `(parent, sort_key)`, notes/boards/labels/tags,
+  `common/rebalance.rs`) — **not** `move_cards`, which already has it,
 - does **not** re-add gap-lock logic T010 deleted.
 
 **Target design:**
@@ -72,9 +88,11 @@ the matcher to `1213 | 1205 | 1062`. T020 therefore runs **after** T010 and:
   (keep the move_card semantics; make it an option so non-positioning txs can skip it).
 - A matching arm in `error.rs` so an *exhausted* retry returns **503 + Retry-After**
   (busy) rather than generic 500 — client-visible honesty.
-- Apply to: `create_card`, `delete_card`, `update_card`, `move_cards` (bulk), and audit
-  the remaining `tx.begin()` sites for lock-taking reads (`FOR UPDATE`) — each either
-  gets the helper or gets a comment why it doesn't (single-row, no race).
+- Apply to: `delete_card` and the remaining single-shot sites found by the
+  fresh `FOR UPDATE` enumeration (checklist delete sites, `create_column`/
+  `delete_column`, notes/boards/labels/tags, `common/rebalance.rs`) — each
+  either gets the helper or gets a comment why it doesn't (single-row, no
+  race). Do not re-touch the six sites that already retry.
 
 **Edge cases:** retries must not wrap non-idempotent *effects outside the tx* (all
 effects are in-tx here — assert by review); same-card race must keep the `Restart`
@@ -145,13 +163,15 @@ that **no component uses** (board loads all via columns embed).
   strict-no-clamp convention) — cheap guard against deep-offset scans. Keyset cursors
   are the *correct* fix but a contract change (new `cursor` param, `Link`-style
   envelope) — **defer** unless T026 measurements show offset pain; record as open call.
-- **Board cards:** switch the board view's card source to the existing paginated cards
-  API with **infinite scroll** (`useInfiniteQuery`) per column *or* a board-level
-  card query — decide at implementation: per-column infinite queries match the UI
-  (each column scrolls), but the columns embed currently powers counts + list view.
-  Minimal-risk path: keep columns embed for structure/counts, lazily hydrate each
-  column's cards via paginated fetch past the first N (e.g. first 50 embedded, "load
-  more" / intersection-observer below).
+- **Board cards** *(decision pinned 2026-11-16, was an open call)*: switch the board
+  view's card source to the existing paginated cards API with **per-column infinite
+  scroll** (`useInfiniteQuery` per column, keyed e.g. `['column-cards', columnId]`) past
+  the first **N=50** cards, which stay embedded in the columns response. Per-column,
+  not board-level, because: (a) the UI scrolls per column; (b) per-column cache keys
+  keep writes/invalidation local to the column involved in a drag; (c) a board-level
+  query re-pages every column on any drag and complicates optimistic rollback. The
+  columns embed keeps powering structure/counts until counts come from the server
+  (T021 §4 / below). Optimistic drag source must be loaded (first page) — see edge cases.
 - **Lists (boards/archived/notes/projects):** add load-more / page controls using the
   existing `Page<T>` envelope (`total` is already returned).
 - **Counts:** `BoardView` double-flatMap counts must come from server totals once cards
@@ -178,8 +198,9 @@ table/index scan + row filter. No `FULLTEXT` anywhere.
 adding `FULLTEXT INDEX` on `notes.title` (+ `content`? — open call: content search is a
 product decision) and `projects.name`; query switches to `MATCH … AGAINST (? IN BOOLEAN
 MODE)` with the same escaping/threshold semantics; keep `LIKE` as fallback when the
-term has no FTS-usable tokens (short/stopword-only). MySQL 8.4 **and** MariaDB 10.6 both
-support InnoDB FULLTEXT — verify flags in the migration on both (CI matrix covers it).
+term has no FTS-usable tokens (short/stopword-only). MySQL 8.4 **and** MariaDB 11.4 both
+support InnoDB FULLTEXT (10.6 also does; the migration must be verified on the CI legs —
+and on 10.6 as well if T011 confirms prod is 10.6, see `40-operations.md` §6).
 
 **Edge cases:** min word length (`innodb_ft_min_token_size` default 3 — we can't tune
 server config portably → document); boolean-mode operators in user input (`+ - * ( )`
@@ -226,7 +247,8 @@ shutdown aborts the task (no leaked task warnings in test output).
 ## Capacity smoke + headroom (S3, P7 interplay) → T026
 
 **Current state:** no capacity model anywhere; pool=10, 30 s global timeout, 120/min/IP
-throttle — ~10 concurrent slow queries starve the pool (11th waits 5 s → 503).
+throttle — ~10 concurrent slow queries starve the pool (an 11th waits on pool checkout up
+to the 30 s timeout → 503).
 
 **Target design:** a reproducible load profile doc + run:
 - Tool: **k6** (single binary, script committed as `scripts/load/board-smoke.js`) or

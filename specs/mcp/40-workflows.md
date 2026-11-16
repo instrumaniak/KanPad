@@ -66,14 +66,16 @@ This is the single most important simplification in the design:
   key's scopes.
 - The audit trail says "user 7, via MCP, key #3" — which is exactly the truth.
 
-**The consequence for the collaboration wave.** When `T028`–`T031` let a user
-be a member of another user's board, the agent of that user automatically
+**The consequence for the collaboration wave.** When the collab wave's
+membership tasks land (`specs/arch-hardening-specs/30-collaboration.md` §6),
+the agent of that user automatically
 reaches that board. No per-board key, no sharing dance, no separate
 grant table. **A key is a credential for a person, not a robot.**
 
 ## 3. Claims and leases
 
-A new table — `0004_card_claims.sql`:
+A new table — `0005_card_claims.sql` *(amendment 2026-11-16: was
+`0004_card_claims.sql` — `0004` is now `api_keys`; `0003` is T010's)*:
 
 ```sql
 CREATE TABLE `card_claims` (
@@ -114,35 +116,44 @@ holder. This is the exclusivity guarantee.
 The claim MUST be race-free: two agents claiming the same card concurrently
 must not both succeed.
 
-**Approach:** a single `INSERT … SELECT` guarded by the primary key, inside a
-transaction, with the "is it already claimed and live?" check performed in the
-same statement rather than as a separate read:
+**Approach (default, amended 2026-11-16): a short `SELECT … FOR UPDATE`
+transaction** — lock the card row, check for a live foreign claim, then upsert.
 
 ```sql
-INSERT INTO `card_claims` (card_id, actor_user_id, actor_key_id, expires_at)
-SELECT ?, ?, ?, NOW(6) + INTERVAL ? MINUTE
- WHERE NOT EXISTS (
-       SELECT 1 FROM `card_claims`
-        WHERE card_id = ? AND expires_at > NOW(6) AND actor_user_id <> ? )
-ON DUPLICATE KEY UPDATE
-   actor_user_id = VALUES(actor_user_id),
-   actor_key_id  = VALUES(actor_key_id),
-   claimed_at    = NOW(6),
-   expires_at    = VALUES(expires_at),
-   note          = VALUES(note);
+-- inside one transaction
+SELECT id FROM `cards` WHERE id = ? FOR UPDATE;        -- stable single-row lock
+SELECT actor_user_id, expires_at FROM `card_claims` WHERE card_id = ?;
 ```
 
-The `ON DUPLICATE KEY UPDATE` makes re-claim by the same actor an update, and
-the `NOT EXISTS` guard means a live foreign claim blocks the insert. Rows
-affected = 0 → the card is claimed by someone else → 409.
+Decision table inside the transaction:
 
-**This is a candidate, not gospel.** The implementing task MUST verify the
-behaviour under real concurrency on **both** MySQL 8.4 and MariaDB 10.6 — the
-`ON DUPLICATE KEY UPDATE` + `NOT EXISTS` combination is exactly the kind of
-statement where the two engines differ (MariaDB's `VALUES()` deprecation, gap
-and next-key locks under `REPEATABLE READ`). If it proves fragile, the
-fallback is `SELECT … FOR UPDATE` on the card row followed by an upsert, which
-is slower but obviously correct.
+| Stored claim | Result |
+|---|---|
+| none | INSERT the caller's claim (`expires_at = NOW(6) + ttl`) |
+| held by **same actor** | UPDATE `expires_at` (+ `actor_key_id`, `note`, `claimed_at = NOW(6)`) — re-claim |
+| held by **another actor, `expires_at > NOW(6)`** | **409** — do not write |
+| held by **another actor, expired** | overwrite (expired claim is taken over) |
+
+Why the flip from `INSERT … SELECT … WHERE NOT EXISTS … ON DUPLICATE KEY
+UPDATE` (the previous candidate): the candidate's `ON DUPLICATE KEY UPDATE`
+clause referenced `note = VALUES(note)` while `note` was absent from the
+INSERT column list — so the note was silently dropped on first claim and
+`VALUES(note)` resolved to the column default on re-claim; it also relies on
+the deprecated `VALUES()` function (deprecated on MySQL 8.4 and MariaDB
+11.4). `FOR UPDATE` on the card row is one indexed row lock, obviously
+correct on both engines, and the contention target (one card row) is exactly
+where an agent already serializes its work. Still verify under real
+concurrency on **both** MySQL 8.4 and MariaDB 11.4 (CI matrix legs).
+
+Notes on the row lock: the card row is locked only for the claim statement
+(single-digit milliseconds), not for the agent's work; it does not block the
+human editing the card beyond that instant, and it composes with T010's
+`READ COMMITTED` scoping.
+
+(Previous candidate retained for the record: `INSERT INTO card_claims
+(card_id, actor_user_id, actor_key_id, expires_at) SELECT ?, ?, ?,
+NOW(6) + INTERVAL ? MINUTE WHERE NOT EXISTS (…) ON DUPLICATE KEY UPDATE …` —
+rejected 2026-11-16, see above.)
 
 ### Expiry and the sweeper
 
@@ -160,7 +171,7 @@ Two users' agents on the same board, with the claims table in place:
 | Agent A claims card 42 | Agent B's `claim_card(42)` → **409**, body says "claimed by user 5 until 14:32". B moves on. |
 | Agent A's process dies | The claim expires. B can claim it after `expires_at`. |
 | Agent A's heartbeat continues | The lease slides forward. B keeps getting 409. |
-| A human edits card 42 while A works | T033's optimistic concurrency gives A a **409** on write. A re-reads and re-applies. The agent MUST treat a 409 on `update_card` as "re-read, then retry", never as a fatal error. |
+| A human edits card 42 while A works | the collab wave's optimistic-concurrency task (`30-collaboration.md` §6, row F) gives A a **409** on write. A re-reads and re-applies. The agent MUST treat a 409 on `update_card` as "re-read, then retry", never as a fatal error. |
 | Agent A writes a note while a human is typing | Notes are append-only; no conflict. |
 
 **The 409-on-write contract is important for agents.** An agent that treats a

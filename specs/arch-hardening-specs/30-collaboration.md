@@ -1,8 +1,9 @@
 # 30-collaboration — Wave 2 design (S1): workspaces, sharing, authorization
 
-> **Design-only.** Implementation tasks (T028+) are written after this design is
-> reviewed and approved (T027). The system today is architecturally single-user
-> (`user_id` ownership on every table; no team/share/member/permission concept; admin =
+> **Design-only.** Implementation tasks (IDs assigned by taskpad at authoring time —
+> T028/T029/T030 already exist: storybook, SQL observability, Sentry/OTel) are written
+> after this design is reviewed and approved (T027). The system today is architecturally
+> single-user (`user_id` ownership on every table; no team/share/member/permission concept; admin =
 > one CLI-minted superadmin, no admin panel, no activity log; last-write-wins). This
 > file is the target model so implementation can be delegated task-by-task without
 > re-litigating decisions. Constitution: `00-overview.md`.
@@ -101,14 +102,19 @@ Forward-only sqlx migrations, backup-gated (T011 makes the backup mechanical):
 3. **Enforce (M3+tasks):** route-by-route: lists gain membership JOINs; detail/mutations
    call `authz::require`. Dual-read not strictly needed if enforce lands per-route with
    tests — **default: per-route enforcement with cross-user tests, single release
-   behind `REGISTRATION`-style config flag? No flag — per-route, each task ships its own
-   tests** (simpler; rollback = restore backup per cutover doctrine).
+   per route, no config flag** (simpler; no flag drift). Rollback = redeploy of the
+   previous release — the authz change is behavioural, not data;
+   backup-restore stays the last-resort rollback per cutover doctrine, not the
+   routine one.
 4. **Contract:** nothing to drop initially (creator stays as data). `user_id` columns
    keep meaning "created_by" (rename is cosmetic — **open call O-2**: rename to
    `created_by` in a later cleanup migration vs keep; default = keep, document).
 
-Every migration: MySQL 8.4 + MariaDB 10.6 green, checksum-safe (never hand-edit
+Every migration: MySQL 8.4 + MariaDB 11.4 green (CI matrix legs), checksum-safe
+(never hand-edit
 `_sqlx_migrations`), `sqlx prepare` regen, T52 contract pass if wire shapes change.
+If the T011 drill confirms prod is MariaDB 10.6, the collaboration set also gets a
+10.6 verification leg or a written acceptance of the delta (see `40-operations.md` §6).
 
 ## 4. Concurrency (off last-write-wins)
 
@@ -128,13 +134,26 @@ Every migration: MySQL 8.4 + MariaDB 10.6 green, checksum-safe (never hand-edit
 ## 5. Admin panel + activity log (FR43–49)
 
 - **Activity log:** append-only `activity_log` table (`id, workspace_id NULL,
-  actor_user_id, action VARCHAR, subject_type, subject_id, metadata JSON/BLOAT-free
-  TEXT, created_at`, indexes on `(workspace_id, created_at)`, `(subject_type,
-  subject_id)`). Written **inside the same transaction** as the mutation for the
-  high-value actions (create/update/delete/move on boards/columns/cards/notes,
+  actor_user_id, actor_key_id INT NULL, via ENUM('browser','mcp','cli') NOT NULL DEFAULT 'browser',
+  action VARCHAR, subject_type, subject_id, metadata JSON NULL,
+  created_at`, indexes on `(workspace_id, created_at)`, `(subject_type,
+  subject_id)`, FK `actor_key_id` → `api_keys` `ON DELETE SET NULL`). The
+  `actor_key_id`/`via` pair is the Wave 3 attribution contract —
+  `specs/mcp/60-security.md` §4 and `specs/mcp/91-task-map.md` §4 require it;
+  without them an agent's write is attributed to the human and row G cannot
+  satisfy the MCP audit trail. `metadata` is **native JSON, never TEXT** (amendment 2026-11-16,
+  was the deferred "JSON/BLOAT-free TEXT" phrasing): MySQL 8.4 and MariaDB 11.4
+  both store JSON as a `LONGTEXT` alias with an RFC-7159 validity check, so
+  malformed payloads reject loudly instead of persisting garbage; on-disk bloat is
+  a non-issue at this scale (activity rows are small, no retention auto-purge for
+  audit durability). Written **inside the same transaction** as the mutation for
+  the high-value actions (create/update/delete/move on boards/columns/cards/notes,
   member changes, auth events). No background jobs (S4) — synchronous insert.
   Retention: no auto-purge initially (org audit needs durability); document a manual
-  purge runbook.
+  purge runbook. *(Amendment 2026-11-16, pass 2: `actor_key_id` + `via` added to
+  the table so Wave 3's MCP surface is attributable from day one; the MCP folder
+  previously recorded this as a row-G task-file note only — it belongs in the
+  design so the migration that creates the table carries them.)*
 - **Admin API + UI:** `GET /api/v1/admin/users` (paged), `PATCH …/:id` (block/unblock,
   role), `GET /api/v1/admin/activity` (filters), registration toggle (exists in config —
   expose an endpoint if not present). Platform-admin guard = existing `Role::Admin`
@@ -142,23 +161,27 @@ Every migration: MySQL 8.4 + MariaDB 10.6 green, checksum-safe (never hand-edit
 - **Frontend:** `features/admin/` per the original architecture.md structure (admin
   layout, user list, actions, activity log) — route-guarded by role.
 
-## 6. Task decomposition (T028+ — to be written after T027 review)
+## 6. Task decomposition (to be authored after T027 review)
 
-Expected task shape (each = one agent session, TDD, cross-user negative tests):
+Expected task shape (each = one agent session, TDD, cross-user negative tests).
+**Amendment 2026-11-16:** rows are labeled A–I — taskpad assigns real IDs at
+authoring time (T028/T029/T030 already exist; expect the collab set to start at
+T031 or later). The relative order and the dependency edges are normative, not
+the labels.
 
-| Task | Content | Depends |
-|------|---------|---------|
-| T028 | M1+M2 migrations (tables, backfill, personal workspaces) + schema spec amendments (`30-db-schema.md`) | T027 |
-| T029 | `authz` kernel + extractors + list-filter helpers + unit tests | T028 |
-| T030 | Enforce on boards + columns + cards routes/lists (JOIN filters, cross-user tests) | T029 |
-| T031 | Enforce on projects + notes + tags/checklists/labels | T030 |
-| T032 | Membership management API (`POST/DELETE/GET /workspaces/:id/members`, board/project share endpoints) + invite-less direct-add UX | T029 |
-| T033 | Optimistic concurrency (version columns, 409 flow, frontend conflict UX) | T030 |
-| T034 | Activity log (table, synchronous writes, read API, admin UI panel) | T030 |
-| T035 | Admin panel (user management, registration toggle endpoint, role guards) + frontend | T034 |
-| T036 | Frontend sharing UX (member picker, share dialogs, workspace switcher?) + cache-key scoping | T032 |
+| # | Content | Depends on |
+|---|---------|-----------|
+| A | M1+M2 migrations (tables, backfill, personal workspaces) + schema spec amendments (`30-db-schema.md`) | T027 |
+| B | `authz` kernel + extractors + list-filter helpers + unit tests | A |
+| C | Enforce on boards + columns + cards routes/lists (JOIN filters, cross-user tests) | B |
+| D | Enforce on projects + notes + tags/checklists/labels | C |
+| E | Membership management API (`POST/DELETE/GET /workspaces/:id/members`, board/project share endpoints) + invite-less direct-add UX | B |
+| F | Optimistic concurrency (version columns, 409 flow, frontend conflict UX) | C |
+| G | Activity log (table, synchronous writes, read API, admin UI panel) — the table carries `actor_key_id` + `via` per §5 (Wave 3 attribution); must say so in the task ACs | C |
+| H | Admin panel (user management, registration toggle endpoint, role guards) + frontend | G |
+| I | Frontend sharing UX (member picker, share dialogs, workspace switcher?) + cache-key scoping | E |
 
-(Numbering provisional — actual IDs assigned when written; they continue from T027.)
+Sequencing: A → B → {C → {D, F, G → H}, E → I}.
 
 ## 7. Open calls (decide at T027 review)
 

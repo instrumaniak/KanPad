@@ -38,9 +38,9 @@ proxy, and it does not re-implement board logic.
 ```
 specs/planning-artifacts/          product requirements
 specs/api-rewrite-rs-specs/        the Rust backend contract (20-api-contract, 30-db-schema)
-specs/arch-hardening-specs/        Wave 0/1 hardening + Wave 2 collaboration design (T027 → T028–T036)
+specs/arch-hardening-specs/        Wave 0/1 hardening + Wave 2 collaboration design (T027 → impl tasks; IDs by taskpad, ≥ T031)
 specs/mcp/                         ← THIS FOLDER — Wave 3: the agent surface
-specs/tasks/                       taskpad task files (T001–T027 exist; T028+ not yet authored)
+specs/tasks/                       taskpad task files (T001–T030 exist; next free ≥ T031)
 ```
 
 The MCP work is **Wave 3** and it is layered on top of Wave 2
@@ -53,9 +53,34 @@ never see more than the human who owns the key.
 - **TDD, coverage checked.** Every task that lands here follows `AGENTS.md`.
 - **DB persistence assertions.** Every mutating tool gets a second read that
   proves the row actually changed — not just the API response.
-- **MySQL 8.4 *and* MariaDB 10.6.** Every migration and every query in this
+- **MySQL 8.4 *and* MariaDB 11.4** (the CI matrix legs — `.github/workflows/backend-rs.yml`).
+  Prod flavor (10.6 vs 11.4) is unverified; the T011 restore drill records
+  `SELECT VERSION()` and `specs/arch-hardening-specs/40-operations.md` §6 owns the
+  correction. Every migration and every query in this
   folder must be green on both engines (`specs/tasks/T006-…`).
-- **Forward-only migrations.** New tables are new migration files. `0001` and
-  `0002` are never edited; `_sqlx_migrations` is never hand-edited.
+
+- **Amendments** (2026-11-16, post-review, passes 1 + 2): migration numbering re-based after
+  `0003_sort_key_fractional_ordering.sql` (T010) landed — this folder's migrations
+  are now `0004_api_keys` / `0005_card_claims` / `0006_card_links` (see `90-open-calls.md`
+  O-12); task IDs are no longer pre-reserved — the collab wave takes the next free
+  taskpad range (≥ T031) and the MCP tasks are labeled symbolically (`3a-1…3b-7`)
+  until authored (see `91-task-map.md`). Pass 2 (spec review 2026-11-16):
+  **key minting is cookie-session only** (O-13 — a bearer key cannot `POST
+  /api/v1/api-keys`; closes a one-call scope-escalation); **`link_artifact` is
+  now fully specified** (DDL `30-tool-surface.md` §3.6, `links` array in
+  `get_card_context`, read path `GET /cards/{id}/links` — O-14);
+  `get_card_context` is the normative payload (`_trust` fences, `repo`,
+  `links`); claim atomicity defaults to `SELECT … FOR UPDATE` (the
+  `INSERT … SELECT` candidate dropped `note`); `rand`/`getrandom` must be a
+  **direct** dependency; the collab `activity_log` now carries
+  `actor_key_id`/`via` (see `specs/arch-hardening-specs/30-collaboration.md`
+  §5); Wave 3 migrations are gated on T011; MCP/API-key audit coverage
+  added to the security folder (phase 11, SEC-028).
+- **Contract discipline.** The MCP surface itself is not REST, but two things this
+  folder does produce REST contract changes: the `/api/v1/api-keys` family and
+  `GET /notes?card_id=`. Both MUST go through the T52 same-PR process (spec +
+  utoipa + `openapi.json` + `schema.d.ts` together), and the frontend regenerates
+  via `npm run gen:api`.
+- **Forward-only migrations.** New tables are new migration files. `0001`–`0003` are never edited; `_sqlx_migrations` is never hand-edited.
 - **One authorization implementation.** The MCP surface calls the same kernel
   as the REST surface. See [`10-architecture.md`](10-architecture.md) §6.

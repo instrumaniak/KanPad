@@ -11,16 +11,19 @@ kp_live_<43-char base64url(32 random bytes)>
   `kp_test_` in a future sandbox environment.
 - 43 base64url characters = 256 bits of entropy from a CSPRNG.
 
-**Generation:** 32 bytes from `rand::rngs::OsRng` (the `rand` crate arrives
-transitively via rmcp; if it is not a direct dependency, `getrandom` is
-already reachable through `uuid`). Base64url-encoded **without padding**.
+**Generation:** 32 bytes from `rand::rngs::OsRng`. Base64url-encoded
+**without padding**. (Amended 2026-11-16: `rand` — or `getrandom` — is declared
+as a **direct** dependency of `backend-rs`; transitive reachability via rmcp or
+`uuid` does not make a crate importable.)
 
 **The plaintext is shown exactly once**, at creation, and is never stored.
 
 ## 2. Schema
 
-New migration — `0003_api_keys.sql` (forward-only; `0001`/`0002` are never
-edited; `_sqlx_migrations` is never hand-edited).
+New migration — `0004_api_keys.sql` (forward-only — `0003_sort_key_fractional_ordering.sql`
+is T010's; `0001`–`0003` are never edited; `_sqlx_migrations` is never hand-edited).
+*(Amendment 2026-11-16: was `0003_api_keys.sql` — the number collided with the
+existing T010 migration.)*
 
 ```sql
 CREATE TABLE `api_keys` (
@@ -85,8 +88,8 @@ pub struct Actor {
 The scope check can only ever **remove** access. It never grants anything the
 user could not already do.
 
-**Consequence for the collaboration wave.** When `T028`–`T031` give users
-workspace memberships, the **same key automatically inherits them** — the
+**Consequence for the collaboration wave.** When the collab wave's membership
+tasks land (`specs/arch-hardening-specs/30-collaboration.md` §6), the **same key automatically inherits them** — the
 middleware resolves `key → user_id` and the Wave 2 kernel resolves
 `user → memberships`. No re-issuance, no migration, no change to the
 middleware. The scope set only ever narrows.
@@ -135,7 +138,7 @@ byte-by-byte against a stored value — which it never is. `subtle` is therefore
 | `read` | `GET` / `HEAD` on the key owner's accessible resources | Default for every new key |
 | `write` | `POST` / `PATCH` / `PUT` — create/update/move cards, add notes, tick checklist items, attach labels, claim/release | The agent's working scope |
 | `delete` | `DELETE` — cards, boards, columns, notes, labels, tags, projects | **Separate on purpose.** `DELETE /projects/{id}` cascades to boards → columns → cards. An agent that can update cards must not be able to wipe a project. |
-| `admin` | Platform-admin routes (Wave 2, `T035`) | Nothing to gate today; reserved so the vocabulary does not have to change later |
+| `admin` | Platform-admin routes (Wave 2, collab task row H — admin panel) | Nothing to gate today; reserved so the vocabulary does not have to change later |
 
 **Scope → operation mapping (REST).** The mapping is by HTTP method, with
 explicit exceptions:
@@ -146,15 +149,28 @@ explicit exceptions:
 | `POST`, `PATCH`, `PUT` | `write` |
 | `DELETE` | `delete` |
 | `/admin/*` (future) | `admin` |
+| `POST /api/v1/api-keys` | **cookie session only — bearer keys get 401** |
 | `/auth/me` | `read` |
 | `/auth/login`, `/auth/register`, `/auth/logout` | **bearer forbidden → 401** |
 
-**The `/auth/*` exclusion is load-bearing.** `POST /auth/logout` calls
-`session.flush()`, which **destroys the session row**. A bearer-authenticated
-request reaching it would flush a *browser* session. A key MUST NOT be able to
-mint a session, create an account, or destroy one. The middleware rejects
-bearer tokens on `/auth/login`, `/auth/register` and `/auth/logout` before the
-handler runs.
+**The two exclusions are load-bearing.** (Amended 2026-11-16, decision log
+O-13.) `POST /auth/logout` calls `session.flush()`, which **destroys the
+session row** — a bearer-authenticated request reaching it would flush a
+*browser* session; a key must never mint a session, create an account, or
+destroy one. The middleware rejects bearer tokens on `/auth/login`,
+`/auth/register` and `/auth/logout` **before the handler runs**. And **a
+bearer key MUST NOT mint a key**: under the bare method map every key would
+be able to `POST /api/v1/api-keys` with `scopes: ["delete", "admin"]` and
+widen itself beyond its own grant — a one-call privilege escalation. Minting
+is therefore restricted to the **browser cookie session** (the interactive
+path the UI uses); the bearer middleware rejects `POST /api/v1/api-keys`
+before the handler runs, for every scope. The key-management surface stays
+exactly what it is in §6.1: a frontend feature, not an agent feature.
+
+Alternatives considered and rejected (see `90-open-calls.md` O-13): capping
+minted scopes at the caller's own scopes (weaker invariant — a leaked
+`write` key still mints extra lifetime), or requiring `admin` for minting
+(couples the user-facing page to a Wave 2 scope that gates nothing yet).
 
 **Scope → operation mapping (MCP).** The MCP surface derives the requirement
 from the **tool's own MCP annotations**, not from the HTTP method:
@@ -166,22 +182,35 @@ from the **tool's own MCP annotations**, not from the HTTP method:
 | otherwise | `write` |
 
 A tool therefore declares its own privilege level once, and both the MCP
-dispatcher and the UI agree about it.
+dispatcher and the UI agree about it. **The one key-minting route is
+cookie-only (above), so no bearer scope — not even `admin` — can create a
+key.** Revocation (`DELETE /api/v1/api-keys/{id}`, `delete` scope, own keys
+only) is the only key-lifecycle action a bearer token may perform.
 
 ## 6. Issuance
 
 ### 6.1 REST (used by the frontend)
 
-| Route | Method | Notes |
-|---|---|---|
-| `/api/v1/api-keys` | `GET` | The caller's own keys. **Never** another user's. Never returns a secret. |
-| `/api/v1/api-keys` | `POST` | Body: `{ name, scopes[], expires_in_days? }`. Returns `201` with the **plaintext token once** + `Location`. |
-| `/api/v1/api-keys/{id}` | `DELETE` | Soft revoke (`revoked_at = NOW()`). `204`. |
-| `/api/v1/api-keys/{id}` | `GET` | Metadata only (prefix, scopes, timestamps). Optional — the list may be enough. |
+Minting (`POST`) is **cookie-session only**; the read/revoke routes are
+cookie **or** the indicated bearer scope. (Amended 2026-11-16, decision log
+O-13 — see §5.)
+
+| Route | Method | Auth | Notes |
+|---|---|---|---|
+| `/api/v1/api-keys` | `GET` | cookie **or** bearer (`read`) | The caller's own keys. **Never** another user's. Never returns a secret. |
+| `/api/v1/api-keys` | `POST` | **cookie only** | Body: `{ name, scopes[], expires_in_days? }`. Returns `201` with the **plaintext token once** + `Location`. |
+| `/api/v1/api-keys/{id}` | `DELETE` | cookie **or** bearer (`delete`) | Soft revoke (`revoked_at = NOW()`). `204`. Own keys only. |
+| `/api/v1/api-keys/{id}` | `GET` | cookie **or** bearer (`read`) | Metadata only (prefix, scopes, timestamps). Optional — the list may be enough. |
+
+**Input validation on `POST`** (amended 2026-11-16): every `scopes[]` entry is
+validated against the fixed set `read|write|delete|admin` — an unknown scope
+string → **400** (`invalid-scope` problem detail), never silently stored.
+`expires_in_days` is capped at **365** (omit → never expires); `0`, negative,
+non-integer, or > 365 → **400**. `name` is trimmed, 1–100 chars.
 
 The `POST` response is the **only** time the secret exists outside the user's
-browser. It MUST NOT be logged, MUST NOT be cached, and MUST NOT appear in the
-activity log.
+browser. It MUST NOT be logged, MUST NOT be cached (the route emits
+`Cache-Control: no-store`), and MUST NOT appear in the activity log.
 
 ### 6.2 CLI (mirrors the existing `create-admin`, T12)
 
@@ -265,8 +294,12 @@ that bucket, so an agent burst would starve the human's own browser.
 The MCP limiter keys on the **API key**:
 
 ```
-bucket key = "key:" + HMAC-SHA-256(API_KEY_SECRET, token)[..16]
+bucket key = "mcp-bucket:" + HMAC-SHA-256(API_KEY_SECRET, token)[..16]
 ```
+
+(Amended 2026-11-16: the bucket derivation is **domain-separated** from the
+stored token hash by the `mcp-bucket:` info prefix — same secret, different
+message — so a bucket id and a `token_hash` cannot be cross-referenced.)
 
 Deriving the bucket from a keyed hash of the *presented* token means:
 

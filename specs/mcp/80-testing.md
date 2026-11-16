@@ -14,7 +14,7 @@ From `backend-rs/tests/README.md` and the root `AGENTS.md`:
   blanket-`DELETE` the `sessions` table.
 - **Never hand-edit `_sqlx_migrations`.**
 - **A test that binds a port binds an ephemeral one** via `wire::bind_blackbox()`.
-- **MySQL 8.4 *and* MariaDB 10.6** for every migration and every query.
+- **MySQL 8.4 *and* MariaDB 11.4** for every migration and every query (CI matrix legs).
 - **Every data-modifying endpoint test proves the database changed**, not just
   that the response looked right — one extra assertion via a different API call
   or a direct DB query.
@@ -54,7 +54,8 @@ HTTP (headers, `Accept` negotiation, the JSON-RPC framing, the SSE fallback).
 | Valid key on `/auth/login` | 401 |
 | Valid key on `/auth/register` | 401 |
 | Valid key on `/auth/logout` | 401 |
-| **A browser cookie session on `/mcp`** | 401 — MCP has no cookie path |
+| Valid key on `POST /api/v1/api-keys` | **401** — minting is cookie-only (O-13) |
+| A browser cookie session on `/mcp` | 401 — MCP has no cookie path |
 
 ### 3.2 Scope enforcement
 
@@ -124,8 +125,15 @@ response:
 | `update_card` | `GET /api/v1/cards/{id}` shows the new title |
 | `move_card` | `GET /api/v1/columns/{col}/cards` shows the card in the target column at the right position, and the other cards' positions are gap-free |
 | `add_card_note` | `GET /api/v1/notes?card_id=N` returns it |
+| `create_checklist` | `GET /api/v1/cards/{id}` (the card bundle) shows the new checklist with its empty item list |
+| `add_checklist_item` | `GET /api/v1/checklists/{id}` shows the item |
 | `set_checklist_item` | `GET /api/v1/checklists/{id}` shows `is_completed = true` |
 | `set_card_labels` | `GET /api/v1/cards/{id}` shows exactly the requested labels |
+| `create_label` | `GET /api/v1/labels` shows the label; a repeat call returns the existing label (idempotent) |
+| `link_artifact` | `GET /api/v1/cards/{id}/links` shows the link; the `card_links` row exists with the right `kind` |
+| `unlink_artifact` | `GET /api/v1/cards/{id}/links` no longer shows it; the row is gone |
+| `release_card` | the `card_claims` row for the caller's card is gone |
+| `heartbeat_claim` | `expires_at` is strictly greater than before the call |
 | `claim_card` | the `card_claims` row exists with the right `expires_at` |
 | `delete_card` | `GET /api/v1/cards/{id}` → 404, **and** the `card_claims` row is gone (cascade) |
 | `create_api_key` (REST) | `GET /api/v1/api-keys` lists it — and the plaintext is **not** in the list response |
@@ -188,7 +196,8 @@ New gates, in the spirit of the existing ones:
 | **OpenAPI snapshot** | `tests/api/openapi_snapshot.rs` — the committed `backend-rs/openapi.json` must equal `export-openapi`. `/mcp` is **not** in it. |
 | **Generated types** | `npm run gen:api --check` — `frontend/src/lib/api/schema.d.ts` matches the spec. |
 | **Licences** | `cargo deny check` — re-derived after adding `rmcp`. |
-| **Migrations** | Both engines apply `0003_api_keys.sql` and `0004_card_claims.sql`; checksums match a fresh run. |
+| **Migrations** | Both engines apply `0004_api_keys.sql`, `0005_card_claims.sql` and `0006_card_links.sql`; checksums match a fresh run. *(`0003` is T010's — amended 2026-11-16.)* |
+| **Mint gate** | `POST /api/v1/api-keys` with any `kp_live_` token → 401 (decision O-13). Enforced by the §3.1 matrix; listed here because it is the anti-escalation invariant. |
 
 ## 6. What is deliberately not tested
 

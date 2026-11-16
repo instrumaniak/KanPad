@@ -44,12 +44,6 @@ tasks:
     depends: ~
     phase: 0
     critical: false
-  T011:
-    name: Automated DB backups + restore drill
-    status: pending
-    depends: ~
-    phase: 0
-    critical: true
   T012:
     name: Repair compose.yaml + frontend Dockerfile
     status: pending

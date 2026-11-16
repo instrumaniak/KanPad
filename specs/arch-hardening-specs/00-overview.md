@@ -30,8 +30,8 @@ mentions (`32`), in-app notification inbox (`33`) (spec only).
 invalidation), email/SMTP notification delivery (in-app only — `33`), horizontal
 scale-out implementation (readiness only — sessions are already in MySQL so the app is
 replica-ready; realtime fanout is in-process, single-replica — S2), collaboration
-**implementation** (implementation tasks are authored by T027 after the design review —
-IDs assigned by taskpad, not pre-reserved), Redis/queue/k8s adoption.
+**implementation** (tasks pre-authored as T031–T042 at user request 2026-11-16; the
+T027 review still gates implementation — see amendment log), Redis/queue/k8s adoption.
 
 ## Locked decisions (confirmed with user, 2026-11-11)
 
@@ -107,12 +107,12 @@ in the tree vs verified absent — no speculation.
 
 | ID | Sev | Finding | Evidence | Closed by |
 |----|-----|---------|----------|-----------|
-| S1 | **HIGH** (strategic) | No collaboration model — single-user ownership on every table; no workspace/team/membership/sharing/permission concept; admin = single CLI-minted superadmin, no admin panel, no activity log; last-write-wins concurrency | grep `team\|share\|member\|permission` in `backend-rs/src` → nothing; README feature list unchecked | T027 (design — now `30` + `31`/`32`/`33`); implementation tasks authored at review rows A–L (IDs via taskpad — T028/T029/T030 already exist, see `30-collaboration.md` §6) |
+| S1 | **HIGH** (strategic) | No collaboration model — single-user ownership on every table; no workspace/team/membership/sharing/permission concept; admin = single CLI-minted superadmin, no admin panel, no activity log; last-write-wins concurrency | grep `team\|share\|member\|permission` in `backend-rs/src` → nothing; README feature list unchecked | T027 (design review); implementation tasks authored 2026-11-16 at user request — **T031–T042** (rows A–L; T028/T029/T030 remain the storybook/SQL-observability/Sentry tasks), see `30-collaboration.md` §6 and the amendment log |
 | S2 | MEDIUM | Rate limiting is per-process in-memory (documented single-replica assumption) — horizontal scale-out multiplies every limit by N; sessions already in MySQL so the app is replica-ready, only the governor is not | `backend-rs/src/lib.rs:356-358` (own comment), no redis dep in `Cargo.toml` | deferred (readiness note in `20-performance.md`) |
 | S3 | MEDIUM | Single-box, single-process with no documented capacity model — no user-count/concurrency assumptions anywhere in specs; pool=10, 120 req/min/IP defaults untested against real org load | `backend-rs/.env.example`, spec greps | T026 |
 | S4 | LOW | No queue/worker infra beyond the 60 s session sweeper (fine today; blocks async features like export/email later); nested children (board columns) unpaginated by contract | grep `tokio::spawn` → 2 hits in `main.rs`; `backend-rs/src/common/pagination.rs:4` | out of scope (noted for collaboration follow-ups) |
-| S5 | **HIGH** (strategic) | No comments/mentions — **verified missing**: zero tables, endpoints or components; PRD lists them as "Vision (future)" but Wave 2 requires cross-functional discussion on the work | grep `comment\|mention\|notification` in `backend-rs/src`, `frontend/src` → 0 (2026-11-16 re-check) | T027; implementation tasks rows K/L (`32`/`33`) authored at review |
-| S6 | HIGH | No realtime invalidation — collaborator edits are invisible to other sessions until `staleTime` (5 min) or manual refresh; no `EventSource`/WebSocket anywhere; board multi-user editing is not viable without it (D-7) | grep `EventSource\|text/event-stream\|new WebSocket` in `frontend/src` → 0; no SSE route in `backend-rs/src` | T027; rows J/L (`31`) authored at review |
+| S5 | **HIGH** (strategic) | No comments/mentions — **verified missing**: zero tables, endpoints or components; PRD lists them as "Vision (future)" but Wave 2 requires cross-functional discussion on the work | grep `comment\|mention\|notification` in `backend-rs/src`, `frontend/src` → 0 (2026-11-16 re-check) | T027 (review); implementation rows K/L (`32`/`33`) landed as **T041/T042** (2026-11-16, ahead of the review at user request) |
+| S6 | HIGH | No realtime invalidation — collaborator edits are invisible to other sessions until `staleTime` (5 min) or manual refresh; no `EventSource`/WebSocket anywhere; board multi-user editing is not viable without it (D-7) | grep `EventSource\|text/event-stream\|new WebSocket` in `frontend/src` → 0; no SSE route in `backend-rs/src` | T027 (review); rows J/L (`31`) landed as **T040/T042** (2026-11-16, ahead of the review at user request) |
 
 ### Cost / maintenance
 
@@ -142,7 +142,7 @@ in the tree vs verified absent — no speculation.
 |------|-------|-------|-------|
 | 0 | 0 | T011–T019 | Reliability floor (R1–R3, R5–R7, P1–P2, C1–C3) |
 | 1 | 1 | T010*, T020–T026 | Performance & resilience at 100+ users (R4, P3–P7, S3) |
-| 2 | 2 | T027 (+ rows A–L authored at review) | Collaboration design: workspaces/authz (`30`), SSE realtime (`31`), comments & mentions (`32`), in-app notifications (`33`) (S1, S5, S6) |
+| 2 | 2 | T027 (review gate) + T031–T042 (rows A–L, authored 2026-11-16 ahead of the review at user request) | Collaboration design: workspaces/authz (`30`), SSE realtime (`31`), comments & mentions (`32`), in-app notifications (`33`) (S1, S5, S6) |
 
 \* T010 was a pre-existing pending task gating T020 (D-5); **T010 is done** — T020's gate is satisfied.
 
@@ -156,6 +156,25 @@ Dated amendments to this constitution (per README rule: spec/tree disagreements 
 fixed in place and recorded here). Design details in `10`/`20`/`30`/`31`/`32`/`33`/`40` carry their
 own amendment notes in-line where relevant.
 
+- **2026-11-16 — Wave-2 implementation tasks authored ahead of the review
+  (user decision):** the rows A–L implementation task files now exist and are wired
+  in `status.yaml` with the normative `30-collaboration.md` §6 dependency edges:
+  T031 (A, M1/M2 migrations + personal-workspace backfill, ← T027) · T032 (B, authz
+  kernel) · T033 (C, boards/columns/cards enforcement) · T034 (D, projects/notes/
+  tags/checklists/labels) · T035 (E, membership management API) · T036 (F, optimistic
+  concurrency 409) · T037 (G, activity log + read APIs) · T038 (H, admin panel) ·
+  T039 (I, frontend sharing UX) · T040 (J, SSE transport + presence) · T041 (K,
+  comments + mentions + notifications backend) · T042 (L, frontend). The T027 review
+  still gates implementation — **O-7…O-21 are recorded defaults, not ratified
+  decisions**; any override must be applied to T031–T042 (and their ACs) before the
+  affected task starts. T027's own review scope (walking O-7…O-21, §6 refinement)
+  is unchanged; its task-authoring step is now partially pre-done (files exist,
+  IDs assigned). Speculative ID reservation remains rejected. Companion syncs:
+  `30-collaboration.md` §6 preamble now names T031–T042 in place (header amended
+  with an in-line note); `specs/README.md` + `specs/mcp/*` floors updated
+  (next free ≥ T043); S1/S5/S6 "Closed by" cells and the wave table name T031–T042;
+  out-of-scope line records the pre-authoring; stale `D-1…D-6` references →
+  `D-1…D-7`.
 - **2026-11-16 — Wave-2 scope promotion (pass 3, D-7; no other decisions changed):**
   1. **D-7 added** — realtime is SSE + React Query cache invalidation (server→client;
      metadata-only frames; `activity_log.id` resume cursor; automatic polling fallback),
@@ -210,8 +229,8 @@ own amendment notes in-line where relevant.
      11th concurrent slow query waits on pool checkout up to the 30 s timeout, then 503.
   4. Wave-2 collaboration implementation task IDs are **not pre-reserved** — T028/T029/T030
      already exist (storybook, SQL observability, Sentry/OTel). `30-collaboration.md` §6
-     (now rows A–I, IDs by taskpad at authoring; expected start ≥ T031) and T027's task
-     file were updated to match.
+     (now rows A–L, IDs by taskpad at authoring; collab set landed as T031–T042 on
+     2026-11-16, see amendment log) and T027's task file were updated to match.
   5. In-line amendments recorded in the design files: **R2** (`10-…`) — `queryClient.clear()`
      semantics verified against installed `@tanstack/query-core` 5.107.1 (late query
      responses cannot repopulate; `MutationCache.clear()` does NOT cancel in-flight

@@ -115,9 +115,10 @@ The MCP work is **Wave 3**, but it does **not** all land at once.
 
 > **Amendment 2026-11-16:** Wave 0/1 hardening and Wave 2 collaboration were
 > renumbered (implementation task IDs are assigned by taskpad at authoring time;
-> T028/T029/T030 already exist and the collab set starts at ≥ T031 — see
+> T028/T029/T030 already exist and the collab set landed as T031–T042 on
+> 2026-11-16 ahead of the T027 review — see
 > `specs/arch-hardening-specs/30-collaboration.md` §6 rows A–L). Wave 3a/3b labels
-> below are symbolic; `91-task-map.md` uses `3a-1…3b-7`.
+> below are symbolic; `91-task-map.md` uses `3a-1…3b-7` (next free taskpad slot ≥ T043).
 
 ```
 Wave 0/1  T001–T026   hardening (reliability floor, perf @100+), T010 fractional sort keys

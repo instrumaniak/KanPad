@@ -1,9 +1,10 @@
 # T027: Collaboration design spec (review gate for the impl tasks)
 
 > **STATUS: pending.** Wave 2 (design only — **no implementation in this task**).
-> Closes the *design* half of **S1**; implementation tasks are authored here after
-> review. Their IDs are assigned by `taskpad new` at authoring time — T028/T029/T030
-> already exist (storybook, SQL observability, Sentry/OTel); do not pre-reserve numbers.
+> Closes the *design* half of **S1**; the implementation task files exist
+> (T031–T042, authored 2026-11-16 ahead of this review at user request) and
+> their IDs came from `taskpad new` — T028/T029/T030 already exist
+> (storybook, SQL observability, Sentry/OTel); do not renumber them.
 
 ## Goal
 
@@ -40,7 +41,7 @@ Yes — S1 is the strategic finding; every collaboration task descends from this
   transactions/activity coupling (§6), open calls (§11).
 - `specs/arch-hardening-specs/33-notifications.md` — inbox design (D-7): fanout rules
   (§2), watch model (§3), API (§4), purge/retention (§1, §7), open calls (§11).
-- `specs/arch-hardening-specs/00-overview.md` — finding S1; D-1…D-6; global DoD;
+- `specs/arch-hardening-specs/00-overview.md` — finding S1; D-1…D-7; global DoD;
   D-7 decision + amendment log (SSE/comment/notification scope promotion).
 - `specs/planning-artifacts/architecture.md` (original FR43–49 admin requirements,
   entity sketches), `specs/planning-artifacts/prd.md:256` (user collaboration),
@@ -54,7 +55,7 @@ Yes — S1 is the strategic finding; every collaboration task descends from this
 | File | Change |
 |---|---|
 | `specs/arch-hardening-specs/30-collaboration.md` | Ratify the O-1…O-6 resolutions already recorded in §7 (user sign-off 2026-11-16; walk each: confirm or override); review O-7…O-21 defaults; refine §6 task table (rows A–L, J–L added by D-7) into final IDs/ACs; amend with review outcomes |
-| `specs/tasks/T0xx-*.md` … | **NEW** (via `taskpad new`) — one file per §6 row (A–L), full house template, cross-user negative tests as standing AC. IDs come from taskpad (next free ≥ T031); do not hand-pick numbers |
+| `specs/tasks/T031-collab-*.md` … `specs/tasks/T042-collab-*.md` | **LANDED 2026-11-16** (ahead of this review, at user request) — one file per §6 row (A–L), full house template, cross-user negative tests as standing ACs. If the review overrides any O-7…O-21, amend these files **before** implementation; do not create new files |
 | `specs/tasks/status.yaml` | Updated by `taskpad new` (depends edges per §6) |
 | `specs/arch-hardening-specs/00-overview.md` | Annotate S1 design-half closed; wave-2 table pointer |
 | `docs/lessons/rust-backend.md` | Dated, tagged lesson (design-gate pattern) |
@@ -75,9 +76,12 @@ task authoring only), migrations.
    consistency with current handlers; list-filter SQL (indexed membership joins — no
    Rust post-filtering); personal-workspace backfill determinism; 409 conflict wire
    shape (T52 impact); activity-log synchronous-write cost inside txs. Adjust the file.
-4. **Author the implementation tasks** via `taskpad new` per §6 rows A–L (each with
-   Goal/Depends/Spec References/Files/TDD steps/Constraints/AC citing S1 + cross-user
-   negative tests), wire depends edges (A → B → {C → {D, F, G → H}, E → I} per §6).
+4. **Apply the review outcomes to the pre-authored implementation tasks**
+   (T031–T042 exist — created 2026-11-16 ahead of this review): amend their
+   Goal/Constraints/ACs to the ratified O-7…O-21 decisions; do not create new
+   files or renumber. Wire verification: `taskpad status` / `taskpad deps` must
+   show the §6 edges A → B → {C → {D, F, G → H}, E → I}, J after {B, G}, K after
+   {B, C, D, J}, L after {E, I, J, K}.
 5. **Amendment map:** each task lists which `api-rewrite-rs-specs` files it will amend
    (T52 same-PR discipline) so contract work is pre-planned, not bolted on.
 6. Update `00-overview.md` wave table; lesson.
@@ -102,14 +106,24 @@ task authoring only), migrations.
       silently adopted).
 - [ ] Design review outcomes incorporated (404/403, list-filter indexing, backfill,
       409 shape, activity-log cost — each explicitly addressed).
-- [ ] Implementation tasks authored via `taskpad new` with depends edges per §6
-      (A → B → {C → {D, F, G → H}, E → I}); each cites S1, carries
+- [ ] Pre-authored implementation tasks T031–T042 amended to the ratified
+      decisions; `taskpad status` shows the §6 wave-2 graph; each cites S1, carries
       cross-user negative tests as standing AC, and names its T52 amendment targets.
 - [ ] `00-overview.md` annotated (S1 design-half closed); `taskpad status` shows the
       wave-2 graph; lesson appended.
 
 ## Notes
 
+- **2026-11-16 (early authoring, user request):** the rows A–L implementation
+  task files were created via `taskpad new` before this review — **T031 (A) →
+  T042 (L)** — with the §6 dependency edges wired in `status.yaml`. The files are
+  full house-template specs citing S1/S5/S6 and the O-7…O-21 defaults. The review
+  scope of this task is unchanged: re-verify S1, ratify O-1…O-6 (done) and decide
+  O-7…O-21; any override must be applied to T031–T042 (Goal/Constraints/ACs)
+  before the affected task is started — implementation of T031 etc. remains behind
+  this gate. Step 4 ("author the implementation tasks") is now pre-done; this
+  task delivers the ratified design + the amendment of T031–T042 to match the
+  ratified calls.
 - **2026-11-16 amendment:** Wave-2 design scope was promoted by user decision
   (realtime via SSE; comments/mentions; in-app notifications). This task's review set
   now includes resolving O-1…O-6 (done and recorded in `30-collaboration.md` §7 —

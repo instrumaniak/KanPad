@@ -38,9 +38,9 @@ proxy, and it does not re-implement board logic.
 ```
 specs/planning-artifacts/          product requirements
 specs/api-rewrite-rs-specs/        the Rust backend contract (20-api-contract, 30-db-schema)
-specs/arch-hardening-specs/        Wave 0/1 hardening + Wave 2 collaboration design (T027 → impl tasks; IDs by taskpad, ≥ T031)
+specs/arch-hardening-specs/        Wave 0/1 hardening + Wave 2 collaboration design (T027 review gate; collab implementation landed as T031–T042 — next free ≥ T043)
 specs/mcp/                         ← THIS FOLDER — Wave 3: the agent surface
-specs/tasks/                       taskpad task files (T001–T030 exist; next free ≥ T031)
+specs/tasks/                       taskpad task files (T001–T042 exist; next free ≥ T043)
 ```
 
 The MCP work is **Wave 3** and it is layered on top of Wave 2
@@ -62,8 +62,9 @@ never see more than the human who owns the key.
 - **Amendments** (2026-11-16, post-review, passes 1 + 2): migration numbering re-based after
   `0003_sort_key_fractional_ordering.sql` (T010) landed — this folder's migrations
   are now `0004_api_keys` / `0005_card_claims` / `0006_card_links` (see `90-open-calls.md`
-  O-12); task IDs are no longer pre-reserved — the collab wave takes the next free
-  taskpad range (≥ T031) and the MCP tasks are labeled symbolically (`3a-1…3b-7`)
+  O-12); task IDs are no longer pre-reserved — the collab wave's taskpad range
+  landed 2026-11-16 ahead of its review as **T031–T042** (next free ≥ T043) and
+  the MCP tasks are labeled symbolically (`3a-1…3b-7`)
   until authored (see `91-task-map.md`). Pass 2 (spec review 2026-11-16):
   **key minting is cookie-session only** (O-13 — a bearer key cannot `POST
   /api/v1/api-keys`; closes a one-call scope-escalation); **`link_artifact` is

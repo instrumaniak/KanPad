@@ -11,7 +11,7 @@
 
 ## Reading order for a fresh agent
 
-1. `00-overview.md` — constitution: scope, locked decisions (D-1…D-6), the **findings
+1. `00-overview.md` — constitution: scope, locked decisions (D-1…D-7), the **findings
    register** (R/P/S/C IDs with evidence), global DoD, wave overview.
 2. `10-reliability.md` — Wave 0 design (findings R1–R8): current state → target design
    → edge cases → test plan per fix.
@@ -20,8 +20,9 @@
 4. `30-collaboration.md` — Wave 2 **design only** (S1): workspace/ACL domain model,
    authorization kernel, migration strategy, optimistic concurrency, admin + activity
    log (hardened: `request_id`, `ip_hash`, `changes`, DB-level append-only). Implementation
-   tasks are authored by T027 after design review; IDs are
-   assigned by taskpad at authoring time (T028/T029/T030 already exist).
+   tasks are T031–T042 (rows A–L); IDs were assigned by taskpad at authoring time
+   (2026-11-16, ahead of the review at user request — the T027 review still gates
+   implementation; O-7…O-21 overrides flow back into T031–T042 before work starts).
 5. `31-realtime-sse.md` — realtime invalidation design (D-7): SSE endpoint, in-process
    broadcast, membership-gated fanout + revocation, `Last-Event-ID` resync via
    `activity_log.id`, heartbeat, presence (ephemeral heartbeat/TTL), fallback ladder,
@@ -37,7 +38,7 @@
 
 ## Task list (source of truth = taskpad)
 
-**`specs/tasks/` + `specs/tasks/status.yaml`** — tasks **T011–T027** for this plan
+**`specs/tasks/` + `specs/tasks/status.yaml`** — tasks **T011–T042** for this plan
 (T010 is a pre-existing task that gates T020). This directory deliberately has **no
 `50-tasks.md`**: one task list only, so nothing can drift (repo lesson P2). The wave
 table in `00-overview.md` is informational; run `taskpad status` / `taskpad next` /
@@ -47,7 +48,7 @@ table in `00-overview.md` is informational; run `taskpad status` / `taskpad next
 |------|-------|
 | 0 — reliability floor | T011 backups · T012 compose repair · T013 cache hygiene · T014 401/retry · T015 error states · T016 bundle · T017 Playwright · T018 secrets/deps · T019 docs sync |
 | 1 — perf @100+ users | T010* sort keys → T020 retry helper · T021 render perf · T022 pagination · T023 FTS (conditional) · T024 metrics · T025 monitoring · T026 capacity |
-| 2 — collaboration | T027 design spec → implementation tasks (rows A–L) authored at review |
+| 2 — collaboration | T027 design review → T031–T042 (rows A–L, authored 2026-11-16 ahead of the review at user request; edges wired in `status.yaml`) |
 
 \* gates T020 (locked decision D-5).
 

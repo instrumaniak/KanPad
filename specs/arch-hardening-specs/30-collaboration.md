@@ -1,8 +1,11 @@
 # 30-collaboration — Wave 2 design (S1): workspaces, sharing, authorization
 
-> **Design-only.** Implementation tasks (IDs assigned by taskpad at authoring time —
-> T028/T029/T030 already exist: storybook, SQL observability, Sentry/OTel) are written
-> after this design is reviewed and approved (T027). The system today is architecturally
+> **Design-only.** Implementation tasks are **T031–T042** (rows A–L, authored
+> 2026-11-16 ahead of the review at user request — IDs assigned by taskpad at
+> authoring time; T028/T029/T030 already exist: storybook, SQL observability,
+> Sentry/OTel). They are **not started**; the design review (T027) still gates
+> implementation and any O-7…O-21 override applies back to T031–T042 before work
+> begins. The system today is architecturally
 > single-user (`user_id` ownership on every table; no team/share/member/permission concept; admin =
 > one CLI-minted superadmin, no admin panel, no activity log; last-write-wins). This
 > file is the target model so implementation can be delegated task-by-task without
@@ -214,14 +217,17 @@ If the T011 drill confirms prod is MariaDB 10.6, the collaboration set also gets
   activity panel renders the "recent activity" feed next to the board view; both consume
   the same read APIs (no duplicate data paths).
 
-## 6. Task decomposition (to be authored after T027 review)
+## 6. Task decomposition (T031–T042, authored 2026-11-16)
 
 Expected task shape (each = one agent session, TDD, cross-user negative tests).
-**Amendment 2026-11-16:** rows are labeled A–L — taskpad assigns real IDs at
-authoring time (T028/T029/T030 already exist; expect the collab set to start at
-T031 or later). The relative order and the dependency edges are normative, not
-the labels. Rows J–L are new (D-7): realtime invalidation, comments/mentions/notifications,
-and their UI.
+**Amendment 2026-11-16 (early authoring):** rows are labeled A–L and have landed as
+**T031 (A) … T042 (L)**, wired in `status.yaml` with the normative dependency edges
+below (T028/T029/T030 already exist: storybook, SQL observability, Sentry/OTel).
+The collab set normally would have started at T031 — and did. The relative order and
+the dependency edges are normative, not the labels. Rows J–L are new (D-7): realtime
+invalidation, comments/mentions/notifications, and their UI. Note: T041/T042 may
+overstep the one-session bound and are allowed to land as two sequential PRs under
+one task (recorded in the task files).
 
 | # | Content | Depends on |
 |---|---------|-----------|

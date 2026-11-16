@@ -11,10 +11,14 @@
 > reviewed and the ID space is settled. **Amendment 2026-11-16:** the collab
 > wave is rows A–L in `specs/arch-hardening-specs/30-collaboration.md` §6 (rows J–L added by
 > D-7, 2026-11-16) and
-> starts at the next free taskpad slot (currently ≥ T031 — T028/T029/T030
-> already exist: storybook, SQL observability, Sentry/OTel). The MCP track
+> starts at the next free taskpad slot. **Amendment 2026-11-16:** the collab
+> wave is rows A–L in `specs/arch-hardening-specs/30-collaboration.md` §6 (rows J–L added by
+> D-7, 2026-11-16) and
+> landed 2026-11-16 ahead of the T027 review as **T031–T042** (T028/T029/T030
+> already exist: storybook, SQL observability, Sentry/OTel) — next free slot ≥ T043.
+> The MCP track
 > remains numbered symbolically so it cannot collide with whatever IDs the
-> collab set consumes. **Task IDs do not determine execution order** —
+> collab set consumed. **Task IDs do not determine execution order** —
 > `status.yaml` orders by `depends` edges.
 
 ---

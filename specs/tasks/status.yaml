@@ -5,12 +5,6 @@ tasks:
     depends: ~
     phase: 0
     critical: false
-  T004:
-    name: fix e2e issues & others
-    status: pending
-    depends: ~
-    phase: 0
-    critical: false
   T005:
     name: "BE-RS: DB connectivity & error logging"
     status: done

@@ -4,7 +4,7 @@
 > (backend-rs, frontend, infra/CI) for **scalability, reliability, performance, at low
 > infrastructure & maintenance cost**. This file is the constitution: scope, locked
 > decisions, the findings register (the evidence base every task cites), and the global
-> definition of done. Design details live in `10`/`20`/`30`/`40`.
+> definition of done. Design details live in `10`/`20`/`30`/`31`/`32`/`33`/`40`.
 
 ## Why
 
@@ -23,13 +23,15 @@ broker; reuse MySQL, which already holds sessions).
 e2e, secrets, docs), performance & resilience at 100+ users (transaction retries, board
 rendering, pagination, search, metrics, capacity), dual-path operations (Docker appliance
 + existing cPanel runbook), monitoring (hosted uptime + logs), and the collaboration
-**design** (spec only).
+**design** — workspaces/authz (`30`), SSE realtime invalidation (`31`), comments &
+mentions (`32`), in-app notification inbox (`33`) (spec only).
 
-**Out of scope (explicitly):** real-time/WebSocket (deferred — polling with existing
-invalidation is adequate; revisit SSE only if collaboration feels laggy), horizontal
+**Out of scope (explicitly):** WebSockets/CRDT editing (D-7 chose SSE + cache
+invalidation), email/SMTP notification delivery (in-app only — `33`), horizontal
 scale-out implementation (readiness only — sessions are already in MySQL so the app is
-replica-ready), collaboration **implementation** (implementation tasks are authored by T027
-after the design review — IDs assigned by taskpad, not pre-reserved), Redis/queue/k8s adoption.
+replica-ready; realtime fanout is in-process, single-replica — S2), collaboration
+**implementation** (implementation tasks are authored by T027 after the design review —
+IDs assigned by taskpad, not pre-reserved), Redis/queue/k8s adoption.
 
 ## Locked decisions (confirmed with user, 2026-11-11)
 
@@ -41,6 +43,7 @@ after the design review — IDs assigned by taskpad, not pre-reserved), Redis/qu
 | D-4 | **Monitoring: hosted uptime check on `/ready` + JSON log retention** — no self-hosted Prometheus/Grafana for now. |
 | D-5 | **T010 (fractional sort keys) lands before T020 (tx-retry helper)** — T010 rewrites the cards/columns write paths first and already extends the retry matcher to `1062`; T020 then extracts the helper and applies it to the remaining single-shot transactions. |
 | D-6 | Spec directory name: `specs/arch-hardening-specs/`. Task granularity: one task = one agent session (≤ ~8 steps, ≤ ~10 source files). |
+| D-7 | **Realtime is SSE + React Query cache invalidation, in Wave 2** (user decision 2026-11-16, supersedes the D-2 "realtime deferred" clause). Server→client only; events are metadata-only; `activity_log.id` is the resume cursor; browser falls back to polling automatically. Designed in `31-realtime-sse.md`. Comments + @mentions + in-app notifications are designed in `32`/`33` (user decision same date; they were PRD "Vision" items promoted to Wave 2 scope). Email stays out. |
 
 ## Global definition of done (applies to EVERY task)
 
@@ -104,10 +107,12 @@ in the tree vs verified absent — no speculation.
 
 | ID | Sev | Finding | Evidence | Closed by |
 |----|-----|---------|----------|-----------|
-| S1 | **HIGH** (strategic) | No collaboration model — single-user ownership on every table; no workspace/team/membership/sharing/permission concept; admin = single CLI-minted superadmin, no admin panel, no activity log; last-write-wins concurrency | grep `team\|share\|member\|permission` in `backend-rs/src` → nothing; README feature list unchecked | T027 (design); implementation tasks authored after review (IDs assigned by taskpad — T028/T029/T030 already exist, see `30-collaboration.md` §6) |
+| S1 | **HIGH** (strategic) | No collaboration model — single-user ownership on every table; no workspace/team/membership/sharing/permission concept; admin = single CLI-minted superadmin, no admin panel, no activity log; last-write-wins concurrency | grep `team\|share\|member\|permission` in `backend-rs/src` → nothing; README feature list unchecked | T027 (design — now `30` + `31`/`32`/`33`); implementation tasks authored at review rows A–L (IDs via taskpad — T028/T029/T030 already exist, see `30-collaboration.md` §6) |
 | S2 | MEDIUM | Rate limiting is per-process in-memory (documented single-replica assumption) — horizontal scale-out multiplies every limit by N; sessions already in MySQL so the app is replica-ready, only the governor is not | `backend-rs/src/lib.rs:356-358` (own comment), no redis dep in `Cargo.toml` | deferred (readiness note in `20-performance.md`) |
 | S3 | MEDIUM | Single-box, single-process with no documented capacity model — no user-count/concurrency assumptions anywhere in specs; pool=10, 120 req/min/IP defaults untested against real org load | `backend-rs/.env.example`, spec greps | T026 |
 | S4 | LOW | No queue/worker infra beyond the 60 s session sweeper (fine today; blocks async features like export/email later); nested children (board columns) unpaginated by contract | grep `tokio::spawn` → 2 hits in `main.rs`; `backend-rs/src/common/pagination.rs:4` | out of scope (noted for collaboration follow-ups) |
+| S5 | **HIGH** (strategic) | No comments/mentions — **verified missing**: zero tables, endpoints or components; PRD lists them as "Vision (future)" but Wave 2 requires cross-functional discussion on the work | grep `comment\|mention\|notification` in `backend-rs/src`, `frontend/src` → 0 (2026-11-16 re-check) | T027; implementation tasks rows K/L (`32`/`33`) authored at review |
+| S6 | HIGH | No realtime invalidation — collaborator edits are invisible to other sessions until `staleTime` (5 min) or manual refresh; no `EventSource`/WebSocket anywhere; board multi-user editing is not viable without it (D-7) | grep `EventSource\|text/event-stream\|new WebSocket` in `frontend/src` → 0; no SSE route in `backend-rs/src` | T027; rows J/L (`31`) authored at review |
 
 ### Cost / maintenance
 
@@ -137,7 +142,7 @@ in the tree vs verified absent — no speculation.
 |------|-------|-------|-------|
 | 0 | 0 | T011–T019 | Reliability floor (R1–R3, R5–R7, P1–P2, C1–C3) |
 | 1 | 1 | T010*, T020–T026 | Performance & resilience at 100+ users (R4, P3–P7, S3) |
-| 2 | 2 | T027 (+ implementation tasks authored after review) | Collaboration design (S1) |
+| 2 | 2 | T027 (+ rows A–L authored at review) | Collaboration design: workspaces/authz (`30`), SSE realtime (`31`), comments & mentions (`32`), in-app notifications (`33`) (S1, S5, S6) |
 
 \* T010 was a pre-existing pending task gating T020 (D-5); **T010 is done** — T020's gate is satisfied.
 
@@ -148,9 +153,34 @@ cards/columns write paths **T010→T020**.
 ## Amendment log
 
 Dated amendments to this constitution (per README rule: spec/tree disagreements are
-fixed in place and recorded here). Design details in `10`/`20`/`30`/`40` carry their
+fixed in place and recorded here). Design details in `10`/`20`/`30`/`31`/`32`/`33`/`40` carry their
 own amendment notes in-line where relevant.
 
+- **2026-11-16 — Wave-2 scope promotion (pass 3, D-7; no other decisions changed):**
+  1. **D-7 added** — realtime is SSE + React Query cache invalidation (server→client;
+     metadata-only frames; `activity_log.id` resume cursor; automatic polling fallback),
+     replacing the D-2 "realtime deferred" clause **for scope purposes only** — D-2's text
+     stands as historical record. Design: `31-realtime-sse.md` (new). Out-of-scope line
+     updated in kind (WebSockets stay out).
+  2. **Comments + @mentions + in-app notification inbox promoted to Wave 2 design scope**
+     (user decision 2026-11-16; they were PRD "Vision" items). New findings **S5**
+     (comments/mentions verified MISSING) and **S6** (no realtime invalidation). New files
+     `32-comments-mentions.md` and `33-notifications.md`. Email/SMTP delivery stays out.
+  3. `30-collaboration.md` hardened: `activity_log` gains `request_id`, `ip_hash` (SHA-256,
+     salted), and `changes` (scalar before→after; field names only for free-text) per audit-log
+     practice; DB-level append-only via `BEFORE UPDATE/DELETE … SIGNAL SQLSTATE '45000'`
+     trigger + `SELECT, INSERT`-only app role; board/workspace scoped read APIs added;
+     `activity_log.id` is the SSE resume cursor; task rows extended **A→L** (J = SSE transport +
+     presence, K = comments/mentions/notifications backend, L = frontend); open calls split into
+     resolved (O-1..O-6, user sign-off 2026-11-16) and sibling-owned (O-7..O-21, defaults recorded).
+  4. `31`/`32`/`33` carry their own in-file amendment notes; `T027` constraint line amended to
+     match D-7 (it previously said "realtime stays out of scope").
+  5. **MCP/Wave 3 unaffected by the SSE promotion:** the `/mcp` tool surface still has no
+     server-push channel; `mcp/*` "realtime deferred" statements remain accurate (SSE here is
+     browser-facing invalidation only). MCP's `actor_key_id`/`via` requirement stays binding on
+     row G; Wave 2 comments write those same attribution columns in `notifications` too (`33` §8).
+  6. Notifications and presence rows are **not** audit events and never enter `activity_log`;
+     notification fanout and comment writes share the mutation transaction (`32` §6, `33` §2).
 - **2026-11-16 — spec-review amendments, pass 2 (no scope/decision change):**
   1. **R4 re-derived against the tree** (the pass-1 amendment had re-verified
      only card create/move): the retry envelope now covers six write sites,

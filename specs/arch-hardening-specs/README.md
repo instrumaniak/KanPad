@@ -19,9 +19,20 @@
    rendering, pagination, search, metrics, capacity methodology.
 4. `30-collaboration.md` — Wave 2 **design only** (S1): workspace/ACL domain model,
    authorization kernel, migration strategy, optimistic concurrency, admin + activity
-   log. Implementation tasks are authored by T027 after design review; IDs are
+   log (hardened: `request_id`, `ip_hash`, `changes`, DB-level append-only). Implementation
+   tasks are authored by T027 after design review; IDs are
    assigned by taskpad at authoring time (T028/T029/T030 already exist).
-5. `40-operations.md` — dual-path deployment (Docker appliance + cPanel runbook),
+5. `31-realtime-sse.md` — realtime invalidation design (D-7): SSE endpoint, in-process
+   broadcast, membership-gated fanout + revocation, `Last-Event-ID` resync via
+   `activity_log.id`, heartbeat, presence (ephemeral heartbeat/TTL), fallback ladder,
+   proxy/LiteSpeed requirements; `useWorkspaceEvents` client hook.
+6. `32-comments-mentions.md` — comments on cards and notes: schema, one-level replies,
+   soft-delete, `@[user:id]` tokens with write-time access validation, mention rate
+   limits, `client_token` idempotency, markdown-subset rendering/sanitization.
+7. `33-notifications.md` — in-app inbox: `notifications` table, watch/auto-subscribe
+   model, mention/comment fanout in the mutation transaction, unread-count + All/Mentions
+   panel, 90-day lazy purge of read rows, SSE badge wiring.
+8. `40-operations.md` — dual-path deployment (Docker appliance + cPanel runbook),
    backup/restore procedure + drill template, monitoring, secrets.
 
 ## Task list (source of truth = taskpad)
@@ -36,7 +47,7 @@ table in `00-overview.md` is informational; run `taskpad status` / `taskpad next
 |------|-------|
 | 0 — reliability floor | T011 backups · T012 compose repair · T013 cache hygiene · T014 401/retry · T015 error states · T016 bundle · T017 Playwright · T018 secrets/deps · T019 docs sync |
 | 1 — perf @100+ users | T010* sort keys → T020 retry helper · T021 render perf · T022 pagination · T023 FTS (conditional) · T024 metrics · T025 monitoring · T026 capacity |
-| 2 — collaboration | T027 design spec → implementation tasks authored at review |
+| 2 — collaboration | T027 design spec → implementation tasks (rows A–L) authored at review |
 
 \* gates T020 (locked decision D-5).
 

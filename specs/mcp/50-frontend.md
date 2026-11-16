@@ -207,6 +207,7 @@ a prompt injection, `bash` still asks and `git push` still asks.
   for agent clients. A browser-based MCP client would need `AUTHORIZATION`
   added to the CORS `allow_headers` — a later, separate change.
 - **No live agent status polling.** The claim chip is fetched with the card.
-  A websocket/SSE presence channel is out of scope (the collaboration spec
-  already defers realtime).
+  A websocket/SSE presence channel is out of scope for the agent surface (the
+  collaboration spec promotes SSE for browser invalidation only — D-7, 2026-11-16;
+  nothing agent-facing rides it).
 - **No key rotation UI beyond create+revoke.** Rotation is create-then-revoke.

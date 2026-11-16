@@ -9,7 +9,8 @@
 > The labels below are **symbolic** — `3a-1…3b-7` are not task IDs. Task IDs
 > are assigned by `taskpad new` at authoring time, after these specs are
 > reviewed and the ID space is settled. **Amendment 2026-11-16:** the collab
-> wave is rows A–I in `specs/arch-hardening-specs/30-collaboration.md` §6 and
+> wave is rows A–L in `specs/arch-hardening-specs/30-collaboration.md` §6 (rows J–L added by
+> D-7, 2026-11-16) and
 > starts at the next free taskpad slot (currently ≥ T031 — T028/T029/T030
 > already exist: storybook, SQL observability, Sentry/OTel). The MCP track
 > remains numbered symbolically so it cannot collide with whatever IDs the
@@ -21,7 +22,7 @@
 ## 1. The two waves, and why they are split
 
 ```
-Wave 2    T027 ─▶ impl tasks (collab A–I)   collaboration wave (design approved → authoring)
+Wave 2    T027 ─▶ impl tasks (collab A–L)   collaboration wave (design approved → authoring)
                  │        │
                  │        └──▶ row G (activity log)
                  │
@@ -276,7 +277,7 @@ multi-user story has no audit trail. **This is the one cross-wave dependency
 the MCP track imposes on the collaboration wave**, and it is recorded in
 `specs/arch-hardening-specs/30-collaboration.md` §5/§6 (row G) as well as here.
 *(Amendment 2026-11-16: was "T034" / "T028–T034"; the Wave 2 rows are
-symbolic A–I until taskpad assigns IDs at authoring.)*
+symbolic A–L until taskpad assigns IDs at authoring — J/K/L added by D-7.)*
 
 ## 5. Workload
 
@@ -307,7 +308,10 @@ carry claim state, and that path is hot.
   CORS `allow_headers` and a re-audit of T7 in `60-security.md`.
 - **OAuth / OIDC for MCP** — a workspace-identity feature, belonging with
   Wave 2.
-- **SSE / WebSocket push** — deferred by the collaboration spec.
+- **SSE / WebSocket push to agents** — not in this wave. Browser-facing SSE cache
+  invalidation exists for collaboration (D-7, `31-realtime-sse.md`); it carries no
+  agent-facing tool or subscription surface, and the MCP request/response contract is
+  unchanged.
 - **Full-text search over cards** — depends on `T023`.
 - **Per-resource scopes** — see **O-2**.
 - **The agent merging its own PR** — a human merges.

@@ -158,4 +158,4 @@ npm run dev:frontend # should start Vite
 
 ## Notes
 
-(filled in during/after implementation)
+- This task is removed from status.yaml as it is no longer relevant. the nestjs backend is removed and is replaced with a new rust backend.

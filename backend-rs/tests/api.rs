@@ -67,6 +67,10 @@ mod projects;
 mod proxy_headers;
 #[path = "api/serve_boot.rs"]
 mod serve_boot;
+#[path = "api/sort_key_migration.rs"]
+mod sort_key_migration;
+#[path = "api/sort_key_ordering.rs"]
+mod sort_key_ordering;
 #[path = "api/sql_portability.rs"]
 mod sql_portability;
 #[path = "api/tags.rs"]

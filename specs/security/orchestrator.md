@@ -1,11 +1,12 @@
 # Security Audit — Orchestrator / Progress Tracker
 
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-16 (snapshot; repo state is git, task state is taskpad — this file is not auto-synced)
 **Mode:** local-first (no live scanning — provider blocks IPs)
 **Owner:** project owner (solo)
 
 ## Current status
-- Audit plan complete: specs/security/00..10 + quick-wins + findings-register.
+- Audit plan complete: specs/security/00..11 + quick-wins + findings-register.
+  (11 = MCP/API-key surface phase, added 2026-11-16 post-review.)
 - Live recon complete (passive + light active): headers, CORS, CSRF, TLS, port
   scan, gitleaks, ffuf. Provider blocked our IP after bursts -> no more live
   scanning. Remaining work is white-box + local compose (compose.yaml).
@@ -19,6 +20,7 @@
 - [x] 00-overview.md - scope, methodology, severity, tooling
 - [x] 01-reconnaissance-findings.md (+ tool results + code review S2.6)
 - [x] 02..10 plan files
+- [x] 11-mcp-api-key-surface.md - Wave 3 credential surface audit plan (SEC-028), added 2026-11-16
 - [x] quick-wins.md (QW-0..QW-15)
 - [x] findings-register.md (R/T/F rows)
 - [x] Live recon (headers, CORS, CSRF, TLS, ports, gitleaks, ffuf)
@@ -28,21 +30,23 @@
 - None (awaiting Build mode to start fixes)
 
 ## Next steps (ordered)
-1. Verify MySQL closed: `nmap -Pn -p 3306 <host>` (single command, no burst).
+1. Verify MySQL closed: `nmap -Pn -p 3306 <host>` (single command, no burst). *(Outstanding — F-01 stays `Mitigated (verify closed)` until this lands; it gates the audit-complete criterion.)*
 2. Quick wins: QW-1 (SESSION_SECRET), QW-13/F-03 (CSRF instance), QW-14/F-04
    (mermaid securityLevel), QW-15/F-05 (DOMPurify cleanup).
 3. Phase 03 - BOLA/IDOR matrix (local compose, two test accounts).
 4. Phase 04 - input validation fuzz + rendering (local).
 5. Phase 02 - auth/sessions (timing, fixation) (local).
-6. Phase 08 - cargo audit / npm audit triage (local).
+6. Phase 08 - cargo audit / npm audit triage (local) — SEC-018.
 7. Phase 09 - logging/IR runbook + backup drill (local).
 8. Phase 10 - remediation verification + regression tests in CI.
+9. Phase 11 - MCP/API-key surface audit (SEC-028) — run alongside Wave 3a
+   implementation (specs/mcp/), not after it.
 
 ## Open findings summary
-- Critical: F-01 (mitigated, verify)
+- Critical: F-01 (mitigated, verify closed — outstanding; see note)
 - High: R-01, T-01, T-02, T-03, T-05, T-06 (server-verify)
-- Medium: R-02, T-04, T-07, F-03, F-04
-- Low/Info: F-02, R-03, R-07, F-05, F-06, R-04, R-05, R-06, R-08, R-09
+- Medium: R-02, T-04, F-03, F-07
+- Low/Info: F-02, R-03, R-07, T-07, F-04, F-05, F-06, R-04, R-05, R-06, R-08, R-09
 
 ## Environment notes
 - Live host blocks IPs after rapid requests -> no automated scanning against live.
@@ -53,7 +57,7 @@
 - Disk ~2.1 GB free on /.
 
 ## Files
-- Plan: specs/security/00..10, quick-wins, findings-register, orchestrator (this).
+- Plan: specs/security/00..11, quick-wins, findings-register, orchestrator (this).
 - Tasks: `specs/tasks/SEC-*.md` are forward-references only — stubs do not
   exist yet; create them when starting implementation. Shared tasks cover
   multiple findings (see findings-register.md): SEC-007 covers T-07 + F-04..F-06,
@@ -62,6 +66,9 @@
 
 ## Resume instructions
 1. Read this file + findings-register.md.
-2. Check `git status` (specs/security/ untracked).
-3. Pick the next unchecked item.
+2. `specs/security/` is committed (verify with `git log -- specs/security/`).
+3. Pick the next unchecked item; create `SEC-*` task files via taskpad when
+   starting implementation (they do not exist yet).
 4. Switch to Build mode before modifying files.
+5. Remember the local-stack caveat: compose.yaml is broken until
+   `T012` lands — run the services separately in the meantime.

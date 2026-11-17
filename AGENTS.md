@@ -49,7 +49,7 @@ Keep the summary line strictly between **20 and 50 characters** with no ending p
 
 - For ALL data modification endpoints, tests MUST verify actual database state, not just API response.
 - For every PATCH/POST/DELETE test, add ONE additional assertion that verifies persistence via a different API call or DB query.
-- The backend must work on both MySQL & MariaDB
+- The backend must work on both MySQL (8.4 LTS) & MariaDB (11.4 LTS)
 
 ## Frontend API Layer Conventions
 

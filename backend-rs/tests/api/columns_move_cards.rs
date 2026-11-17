@@ -13,7 +13,7 @@
 //!
 //! Covered (red first: the route does not exist yet):
 //! `POST /columns/:id/move-cards{target_column_id} → 200 {data:{moved_count}}`
-//! (append at `MAX+1` in tx, source `ORDER BY position ASC` so the target
+//! (appended after the target's last `sort_key` in tx, source `ORDER BY sort_key ASC` so the target
 //! mirrors source order); same-id → `400`; cross-board (same user) → `400`;
 //! foreign/missing source/target → `404` (never 403); empty source →
 //! `200 {moved_count:0}` (NOT an error); garbage id → `400 invalid-path`;
@@ -83,12 +83,12 @@ async fn columns_move_cards_flow(pool: MySqlPool) {
     assert_eq!(cols_a.len(), 3, "board A starts with 3 columns");
     let (source_id, target_id) = (cols_a[0], cols_a[1]);
 
-    // 2. Seed cards via SQL: 3 in source (positions 0..2), 1 in target.
+    // 2. Seed cards via SQL: 3 in source (a0..a2), 1 in target.
     sqlx::query(
-        "INSERT INTO `cards` (`title`, `column_id`, `position`, `description`) VALUES \
-         ('Alpha', ?, 0, 'alpha body'), \
-         ('Beta', ?, 1, NULL), \
-         ('Gamma', ?, 2, 'gamma body')",
+        "INSERT INTO `cards` (`title`, `column_id`, `sort_key`, `description`) VALUES \
+         ('Alpha', ?, 'a0', 'alpha body'), \
+         ('Beta', ?, 'a1', NULL), \
+         ('Gamma', ?, 'a2', 'gamma body')",
     )
     .bind(source_id)
     .bind(source_id)
@@ -96,11 +96,13 @@ async fn columns_move_cards_flow(pool: MySqlPool) {
     .execute(&pool)
     .await
     .expect("seed source cards");
-    sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES ('Existing', ?, 0)")
-        .bind(target_id)
-        .execute(&pool)
-        .await
-        .expect("seed target card");
+    sqlx::query(
+        "INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES ('Existing', ?, 'a0')",
+    )
+    .bind(target_id)
+    .execute(&pool)
+    .await
+    .expect("seed target card");
 
     // 3. Success → 200 {data:{moved_count:3}}, no `message` key.
     let (status, _, bytes) = send(
@@ -121,7 +123,7 @@ async fn columns_move_cards_flow(pool: MySqlPool) {
     assert_eq!(moved["data"]["moved_count"], 3, "moved count: {moved}");
 
     // 4. DB re-read BOTH columns: source drained, target mirrors source
-    //    order appended at MAX+1 (existing card keeps position 0).
+    //    order appended after the target's existing key (the existing card keeps its key).
     let source_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM `cards` WHERE `column_id` = ?")
             .bind(source_id)
@@ -129,23 +131,29 @@ async fn columns_move_cards_flow(pool: MySqlPool) {
             .await
             .expect("source re-read");
     assert_eq!(source_count, 0, "source drained");
-    let target_rows: Vec<(String, i32)> = sqlx::query_as(
-        "SELECT `title`, `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+    // The target mirrors source order appended after the existing card's key.
+    let target_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT `title`, `sort_key` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(target_id)
     .fetch_all(&pool)
     .await
     .expect("target re-read");
     assert_eq!(
-        target_rows,
-        [
-            ("Existing".to_string(), 0),
-            ("Alpha".to_string(), 1),
-            ("Beta".to_string(), 2),
-            ("Gamma".to_string(), 3),
-        ],
-        "target mirrors source order at MAX+1"
+        target_rows
+            .iter()
+            .map(|(title, _)| title.as_str())
+            .collect::<Vec<_>>(),
+        ["Existing", "Alpha", "Beta", "Gamma"],
+        "target mirrors source order appended after the existing card"
     );
+    let existing_key = target_rows[0].1.clone();
+    for (_, key) in target_rows.iter().skip(1) {
+        assert!(
+            key.as_str() > existing_key.as_str(),
+            "appended after the existing card's key"
+        );
+    }
 
     // 5. Second GET confirms the nested embed matches the DB state.
     let (status, _, bytes) = send(
@@ -398,7 +406,7 @@ async fn columns_move_cards_flow(pool: MySqlPool) {
 
     // 13. Deprecated `/api/*` alias serves the same handler: seed one card
     //     into the empty column, move it via the alias, re-read the DB.
-    sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES ('Alias', ?, 0)")
+    sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES ('Alias', ?, 'a0')")
         .bind(empty_id)
         .execute(&pool)
         .await
@@ -418,12 +426,16 @@ async fn columns_move_cards_flow(pool: MySqlPool) {
     let moved = json_of(&bytes);
     assert_eq!(status, StatusCode::OK, "alias move: {moved}");
     assert_eq!(moved["data"]["moved_count"], 1, "alias moved: {moved}");
-    let alias_pos: i32 =
-        sqlx::query_scalar("SELECT `position` FROM `cards` WHERE `title` = 'Alias'")
+    let alias_key: String =
+        sqlx::query_scalar("SELECT `sort_key` FROM `cards` WHERE `title` = 'Alias'")
             .fetch_one(&pool)
             .await
             .expect("alias card re-read");
-    assert_eq!(alias_pos, 4, "alias card appended at MAX+1");
+    // The target held Existing a0, Alpha a1, Beta a2, Gamma a3 at this point.
+    assert!(
+        alias_key.as_str() > "a3",
+        "alias card appended past the existing keys"
+    );
 
     // NO TEARDOWN WIPE/DROP (see module docs): the shared store must survive
     // until every suite in this process is done.

@@ -1,8 +1,10 @@
 //! checklists DTOs: In = `Deserialize + garde::Validate + ToSchema`, Out = `Serialize + ToSchema`.
 //!
-//! Item `position` is int-validated `>= 0`: negatives 400 (current Nest
+//! Item create `position` is int-validated `>= 0`: negatives 400 (current Nest
 //! `CreateChecklistItemDto.position` is bare `@IsNumber()`, accepting
 //! negatives/floats); floats never reach garde — serde rejects them first.
+//! The item PATCH `position` is deliberately NOT range-validated: it clamps
+//! into `[0, N-1]` in the store (card-move convention, never 400).
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -48,6 +50,10 @@ pub struct UpdateChecklistItemInput {
     /// Completion flag (bool needs no rule).
     #[garde(skip)]
     pub is_completed: Option<bool>,
+    /// Target position (clamped to `[0, N-1]` in the store, never 400);
+    /// reorder lands a single between-neighbours `sort_key` write.
+    #[garde(skip)]
+    pub position: Option<i32>,
 }
 
 /// One checklist item on the wire (T26a nests; T26b owns the item routes).
@@ -61,7 +67,7 @@ pub struct ChecklistItemResponse {
     pub is_completed: bool,
     /// Owning checklist id.
     pub checklist_id: ChecklistId,
-    /// Zero-based position.
+    /// Zero-based position (computed).
     pub position: i32,
     /// `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC).
     pub created_at: String,
@@ -69,7 +75,7 @@ pub struct ChecklistItemResponse {
     pub updated_at: String,
 }
 
-/// One checklist on the wire, with items (`position ASC`).
+/// One checklist on the wire, with items (sort-key order).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ChecklistResponse {
     /// `checklists.id` (`INT` ↔ `i32` newtype).
@@ -82,7 +88,7 @@ pub struct ChecklistResponse {
     pub created_at: String,
     /// `updated_at`, same shape.
     pub updated_at: String,
-    /// Items, `position ASC`.
+    /// Items, sort-key order.
     pub items: Vec<ChecklistItemResponse>,
 }
 

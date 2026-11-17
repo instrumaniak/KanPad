@@ -350,7 +350,7 @@ async fn projects_crud_full_flow(pool: MySqlPool) {
             .fetch_one(&pool)
             .await
             .expect("Alpha board re-reads");
-    sqlx::query("INSERT INTO `columns` (`name`, `position`, `board_id`) VALUES ('Col', 0, ?)")
+    sqlx::query("INSERT INTO `columns` (`name`, `sort_key`, `board_id`) VALUES ('Col', 'a0', ?)")
         .bind(alpha_board_id)
         .execute(&pool)
         .await
@@ -361,7 +361,7 @@ async fn projects_crud_full_flow(pool: MySqlPool) {
             .fetch_one(&pool)
             .await
             .expect("column re-reads");
-    sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES ('Card', ?, 0)")
+    sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES ('Card', ?, 'a0')")
         .bind(alpha_column_id)
         .execute(&pool)
         .await

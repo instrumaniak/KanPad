@@ -20,9 +20,14 @@ transitions, IR runbook.
   must not include secrets.
 
 ### 1.2 Audit trail
-- Currently no activity feed (out of scope per spec). Minimum: log auth events
+- Currently no activity feed in the product (pre-Wave-2, the collab spec's
+  append-only `activity_log` does not exist yet). Minimum here: log auth events
   (login success/fail with IP + user id, register, logout, password change,
   admin actions) as structured events.
+- **Do not build a duplicate.** The Wave 2 activity-log task (collab row G,
+  `specs/arch-hardening-specs/30-collaboration.md` §5) is the product audit
+  trail and will subsume much of this; SEC-021 must cross-link to it, not
+  re-implement a second audit table.
 - Retention: define (e.g. 90 days) and storage.
 
 ### 1.3 Alerting
@@ -39,6 +44,11 @@ transitions, IR runbook.
 
 ### 1.5 Backups
 - Automated DB backups; encrypted at rest; tested restore (quarterly).
+  **Ownership (amended 2026-11-16):** the backup/restore procedure, drill
+  template and drill record live in `docs/operations-backup.md` (single owner,
+  per `specs/arch-hardening-specs/10-reliability.md` §R1) and `T011` owns the
+  implementation — this section is the security acceptance check, not a second
+  procedure.
 - Backup must not contain plaintext secrets in `.env` (separate).
 
 ## 2. Live findings so far

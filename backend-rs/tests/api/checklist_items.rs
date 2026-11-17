@@ -12,11 +12,11 @@
 //! blanket `DELETE`/`UPDATE`/`DROP` against it: scope by `WHERE id = ?`.
 //!
 //! Covered (red first: item routes do not exist yet):
-//! `POST {text,position?} → 201 {data} + Location` (`MAX+1` default);
+//! `POST {text,position?} → 201 {data} + Location` (last-key `FOR UPDATE` append by default);
 //! `PATCH {text?,is_completed?} → 200` (partial persists on re-read);
 //! `DELETE → 204` (empty body); deep ownership
 //! (`item → checklist → card → column → board.user` — foreign item/checklist →
-//! `404`, never 403); negative/float `position` → `400 errors[]`; every 4xx
+//! `404`, never 403); negative/float `position` → `400 errors[]`; out-of-range clamps; every 4xx
 //! asserts problem+json + exact `type` URI; every mutation re-reads state via
 //! second GET or direct `SELECT`.
 
@@ -251,7 +251,9 @@ async fn checklist_items_crud_flow(pool: MySqlPool) {
     assert_eq!(embedded[0]["id"], item_id);
     assert_eq!(embedded[0]["text"], "Buy milk");
 
-    // 3. Second create defaults to MAX+1; explicit position writes verbatim.
+    // 3. Second create defaults to append; an explicit out-of-range position
+    //    CLAMPS to `[0, N]` (contiguous computed indexes — never a verbatim,
+    //    possibly-duplicate write).
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -265,7 +267,7 @@ async fn checklist_items_crud_flow(pool: MySqlPool) {
     let second = json_of(&bytes);
     assert_eq!(status, StatusCode::CREATED, "second item: {second}");
     let second_id = second["data"]["id"].as_i64().expect("second id");
-    assert_eq!(second["data"]["position"], 1, "default is MAX+1: {second}");
+    assert_eq!(second["data"]["position"], 1, "default is append: {second}");
     let (status, _, bytes) = send(
         app(),
         authed_request(
@@ -281,14 +283,32 @@ async fn checklist_items_crud_flow(pool: MySqlPool) {
     let pinned = json_of(&bytes);
     assert_eq!(status, StatusCode::CREATED, "explicit position: {pinned}");
     let pinned_id = pinned["data"]["id"].as_i64().expect("pinned id");
-    assert_eq!(pinned["data"]["position"], 5);
-    let stored_pos: i32 =
-        sqlx::query_scalar("SELECT `position` FROM `checklist_items` WHERE `id` = ?")
-            .bind(pinned_id)
-            .fetch_one(&pool)
-            .await
-            .expect("explicit position re-reads");
-    assert_eq!(stored_pos, 5);
+    assert_eq!(
+        pinned["data"]["position"], 2,
+        "an out-of-range position clamps to the end of 2 items: {pinned}"
+    );
+    // The embedded list re-reads contiguous computed positions, sorted.
+    let (_status, _, bytes) = send(
+        app(),
+        authed_request(
+            "GET",
+            &format!("/api/v1/checklists/{checklist_id}"),
+            Some(&owner_jar),
+            None,
+        ),
+    )
+    .await;
+    let detail = json_of(&bytes);
+    let items = detail["data"]["items"].as_array().expect("items[]");
+    let positions: Vec<i64> = items
+        .iter()
+        .map(|item| item["position"].as_i64().expect("position"))
+        .collect();
+    assert_eq!(
+        positions,
+        vec![0, 1, 2],
+        "embedded positions contiguous: {detail}"
+    );
     // Cleanup: the pinned row is not part of later counts.
     sqlx::query("DELETE FROM `checklist_items` WHERE `id` = ?")
         .bind(pinned_id)

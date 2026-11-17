@@ -32,8 +32,12 @@ same shape:
 - **Style:** white-box primary + local black-box. The hosting provider blocks IPs
   after rapid requests, so **no automated scanning against the live host** is
   permitted. All active testing (throttle floods, SQLi probes, brute force,
-  ZAP/nikto/ffuf/sqlmap) runs against a **local `compose.yaml` stack**. Live
-  checks are limited to a handful of single, spaced-out manual `curl` requests
+  ZAP/nikto/ffuf/sqlmap) runs against a **local `compose.yaml` stack** — **but the
+  compose stack is currently broken** (arch-hardening R3/T012: `nest` service →
+  deleted `backend/`, missing `frontend/Dockerfile`). Until T012 lands, run the
+  layers separately (`backend-rs` + `npm run dev` / `vite preview`) or treat this
+  plan as gated on T012.
+  Live checks are limited to a handful of single, spaced-out manual `curl` requests
   for header/cookie/CORS verification (already completed — see 01). White-box
   code review of `backend-rs/` and `frontend/` is the primary method for the
   remaining phases.
@@ -98,7 +102,8 @@ binary ↔ metrics listener (separate port, opt-in).
 ## 6. Deliverables
 
 1. `specs/security/01-reconnaissance-findings.md` — live recon results.
-2. Numbered plan files `02`–`10` — one per audit domain.
+2. Numbered plan files `02`–`11` — one per audit domain (`11` = the Wave 3
+   MCP/API-key surface, added 2026-11-16 — see §10).
 3. `specs/security/quick-wins.md` — fix-this-week items.
 4. `specs/security/findings-register.md` — running register.
 5. (Later) `specs/tasks/SEC-*.md` task files, one per finding/remediation —
@@ -139,3 +144,29 @@ Additional verified (testssl.sh / gitleaks / ffuf):
 - No committed secrets in git history (gitleaks).
 - Weak shared SESSION_SECRET (16 bytes) in (gitignored) env files (T-01).
 - No real file exposures (ffuf + curl).
+
+## 10. Cross-references (overlap with the arch-hardening plan)
+
+Several items here duplicate work owned elsewhere in the repo's plans. Each is
+listed with its canonical owner — fix once, in one place, and mark the other as
+blocked-on/cites. (Amended 2026-11-16; see `specs/arch-hardening-specs/00-overview.md`
+§Amendment log for the parallel edits there.)
+
+| Item here | Overlaps | Canonical owner |
+|---|---|---|
+| QW-1, T-01 (SESSION_SECRET), QW-6/T-06 (release/, .env 600) | C3 secrets hygiene | `T018` + `specs/arch-hardening-specs/40-operations.md` §5 (rotation runbook) |
+| QW-10 (auth-event audit logging) | monitoring/logging work | `T025` (monitoring runbook) and — for the product-facing audit trail — Wave 2 collab row G (`30-collaboration.md` §5) |
+| QW-12 (cargo/npm audit triage) | advisory tooling | `SEC-018` (this folder's audit task) + existing CI `cargo deny check` (amended 2026-11-16 — was `T024`, a metrics task, poor owner fit) |
+| QW-7/R-01 (frontend host headers) | nothing in arch-hardening | **this folder** (SEC-009) |
+| Backup/restore drill (09 §1.5, SEC-022) | backup procedure ownership | `T011` + `docs/operations-backup.md` (single owner — amended 2026-11-16); the drill record lives there |
+| Swagger/OpenAPI exposure (R-02, SEC-010) | nothing in arch-hardening | **this folder** (SEC-010) |
+| CSRF `instance` field (R-04, F-03, SEC-011) | nothing in arch-hardening | **this folder** (SEC-011) |
+| Regression tests in CI (10-remediation §1.2) | e2e CI wiring | `T017` (Playwright + browsers in CI) |
+
+**Beyond overlap — the Wave 3 gap (added 2026-11-16):** the MCP/API-key
+surface designed in `specs/mcp/` (bearer keys, minting, the `/mcp` mount) is
+not audited by any phase here. It is covered by the new
+[`11-mcp-api-key-surface.md`](11-mcp-api-key-surface.md) (SEC-028) — the
+design itself stays owned by `specs/mcp/`; this folder audits it like any
+other auth surface. Wave 3a (credentials) is designed to land **before**
+Wave 2, so this phase is scheduled alongside those tasks, not after them.

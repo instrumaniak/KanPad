@@ -31,7 +31,7 @@ pub struct CreateCardInput {
     /// Owning column id (`>= 1`).
     #[garde(range(min = 1))]
     pub column_id: i32,
-    /// Explicit position (insert-with-open-gap; clamped in store, never 400).
+    /// Explicit position (between-neighbours key; clamped in store, never 400).
     #[garde(skip)]
     pub position: Option<i32>,
     /// Card description (`<= 10_000` chars); null allowed.
@@ -149,7 +149,7 @@ pub struct ChecklistResponse {
     pub created_at: String,
     /// `updated_at`, same shape.
     pub updated_at: String,
-    /// Items, `position ASC`.
+    /// Items, sort-key order.
     pub items: Vec<ChecklistItemResponse>,
 }
 
@@ -177,7 +177,7 @@ pub struct CardDetailResponse {
     pub updated_at: String,
     /// Attached labels (`id` order).
     pub labels: Vec<CardLabelRef>,
-    /// Nested checklists (`id` order) with items (`position ASC`).
+    /// Nested checklists (`id` order) with items (sort-key order).
     pub checklists: Vec<ChecklistResponse>,
     /// Checklist rollup (`None` = the card owns no checklist).
     #[serde(skip_serializing_if = "Option::is_none")]

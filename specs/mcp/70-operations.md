@@ -105,7 +105,7 @@ unauthenticated and on its own port):
 | `kanpad_mcp_tool_result_bytes` | histogram | `tool` |
 | `kanpad_mcp_tool_truncated_total` | counter | `tool` — how often a bound was hit |
 | `kanpad_api_key_auth_total` | counter | `outcome` (`ok` / `unknown` / `revoked` / `expired` / `scope_denied`) |
-| `kanpad_api_key_active` | gauge | — (count of non-revoked, non-expired keys) |
+| `kanpad_api_key_active` | gauge | — (count of non-revoked, non-expired keys; computed **on scrape** via `COUNT(*)` over `api_keys` — no background task, no staleness) |
 | `kanpad_agent_rate_limited_total` | counter | — |
 
 **The `scope_denied` counter is the interesting one.** A steady stream of it

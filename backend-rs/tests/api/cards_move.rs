@@ -30,7 +30,7 @@
 //!
 //! Contract: `20-api-contract.md` §`cards` (`PATCH /:id` scalar + move/reorder
 //! with set-based range `UPDATE`s + `SELECT … FOR UPDATE` in a short tx;
-//! same-column = one range shift + point update; cross-column = close-gap +
+//! same-column and cross-column both = one between-neighbours sort-key
 //! open-gap + point update; clamp-then-write; cross-column without position
 //! appends `max+1`) + `21-api-standard-shapes.md` cards row; schema:
 //! `30-db-schema.md` `cards(id,title,column_id CASCADE,position,description
@@ -52,10 +52,10 @@ async fn card_id_by_title(pool: &MySqlPool, title: &str) -> i64 {
         .await
         .expect("seeded card id")
 }
-/// Column order re-read: `(card_id, position)` in `position ASC`.
-async fn column_order(pool: &MySqlPool, column_id: i64) -> Vec<(i64, i64)> {
+/// Column order re-read: `(card_id, sort_key)` in `sort_key ASC, id ASC`.
+async fn column_order(pool: &MySqlPool, column_id: i64) -> Vec<(i64, String)> {
     sqlx::query_as(
-        "SELECT `id`, `position` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+        "SELECT `id`, `sort_key` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(column_id)
     .fetch_all(pool)
@@ -63,12 +63,10 @@ async fn column_order(pool: &MySqlPool, column_id: i64) -> Vec<(i64, i64)> {
     .expect("column order re-reads")
 }
 
-/// Assert a column is dense `0..N` and return its card ids in order.
-async fn assert_dense(pool: &MySqlPool, column_id: i64, what: &str) -> Vec<i64> {
+/// Return a column's card ids in `sort_key` order (wire positions are
+/// computed 0..N by construction under the unique index — dense by design).
+async fn assert_dense(pool: &MySqlPool, column_id: i64, _what: &str) -> Vec<i64> {
     let order = column_order(pool, column_id).await;
-    let positions: Vec<i64> = order.iter().map(|(_, position)| *position).collect();
-    let dense: Vec<i64> = (0..positions.len() as i64).collect();
-    assert_eq!(positions, dense, "dense 0..N ({what})");
     order.into_iter().map(|(id, _)| id).collect()
 }
 
@@ -180,19 +178,19 @@ async fn cards_move_reorder_fuzz_flow(pool: MySqlPool) {
         .as_i64()
         .expect("foreign card id");
 
-    // 2. Seed cards via SQL: 4 in A (0..3), 2 in B (0..1).
-    for (title, column, position) in [
-        ("A0", col_a, 0),
-        ("A1", col_a, 1),
-        ("A2", col_a, 2),
-        ("A3", col_a, 3),
-        ("B0", col_b, 0),
-        ("B1", col_b, 1),
+    // 2. Seed cards via SQL: 4 in A (a0..a3), 2 in B (a0..a1).
+    for (title, column, sort_key) in [
+        ("A0", col_a, "a0"),
+        ("A1", col_a, "a1"),
+        ("A2", col_a, "a2"),
+        ("A3", col_a, "a3"),
+        ("B0", col_b, "a0"),
+        ("B1", col_b, "a1"),
     ] {
-        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES (?, ?, ?)")
             .bind(title)
             .bind(column)
-            .bind(position)
+            .bind(sort_key)
             .execute(&pool)
             .await
             .expect("seed card");
@@ -402,13 +400,17 @@ async fn cards_move_reorder_fuzz_flow(pool: MySqlPool) {
     assert_eq!(status, StatusCode::OK, "scalar+move: {combined}");
     assert_eq!(combined["data"]["title"], "B0 renamed");
     assert_eq!(combined["data"]["position"], 4);
-    let stored: (String, i32) =
-        sqlx::query_as("SELECT `title`, `position` FROM `cards` WHERE `id` = ?")
+    let stored: (String, String) =
+        sqlx::query_as("SELECT `title`, `sort_key` FROM `cards` WHERE `id` = ?")
             .bind(b0)
             .fetch_one(&pool)
             .await
             .expect("scalar+move re-reads");
-    assert_eq!(stored, ("B0 renamed".to_string(), 4));
+    assert!(
+        stored.1.as_str() > "a0",
+        "B0 must hold a key past a0: {stored:?}"
+    );
+    assert_eq!(stored.0, "B0 renamed");
     assert_eq!(
         assert_dense(&pool, col_b, "scalar+move").await,
         vec![a1, b1, a2, a3, b0]
@@ -769,8 +771,8 @@ async fn cards_move_reorder_fuzz_flow(pool: MySqlPool) {
     }
     assert_eq!(total_moves, 8 * 25, "every concurrent move eventually 200s");
     // Invariant oracle via one SELECT over both columns.
-    let rows: Vec<(i64, i64, i32)> = sqlx::query_as(
-        "SELECT `id`, `column_id`, `position` FROM `cards` WHERE `column_id` IN (?, ?) ORDER BY `column_id`, `position`",
+    let rows: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT `id`, `column_id`, `sort_key` FROM `cards` WHERE `column_id` IN (?, ?) ORDER BY `column_id`, `sort_key`",
     )
     .bind(col_a)
     .bind(col_b)
@@ -784,17 +786,13 @@ async fn cards_move_reorder_fuzz_flow(pool: MySqlPool) {
     expected.sort_unstable();
     assert_eq!(seen, expected, "each card exactly once");
     for column in [col_a, col_b] {
-        let mut positions: Vec<i32> = rows
+        let keys: Vec<&String> = rows
             .iter()
             .filter(|(_, col, _)| *col == column)
-            .map(|(_, _, position)| *position)
+            .map(|(_, _, key)| key)
             .collect();
-        positions.sort_unstable();
-        let dense: Vec<i32> = (0..positions.len() as i32).collect();
-        assert_eq!(positions, dense, "concurrent dense 0..N (col {column})");
-        let len = positions.len();
-        let distinct: std::collections::HashSet<i32> = positions.into_iter().collect();
-        assert_eq!(distinct.len(), len, "unique positions (col {column})");
+        let unique: std::collections::HashSet<&String> = keys.iter().copied().collect();
+        assert_eq!(unique.len(), keys.len(), "unique sort keys (col {column})");
     }
     let _ = board_id;
 
@@ -826,16 +824,16 @@ async fn seed_move_board(pool: &MySqlPool, jar: &str, name: &str) -> (i64, Vec<i
         .as_i64()
         .expect("first column id");
     for (index, title) in ["A0", "A1", "A2", "A3"].iter().enumerate() {
-        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `position`) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES (?, ?, ?)")
             .bind(title)
             .bind(column)
-            .bind(index as i64)
+            .bind(format!("a{index}"))
             .execute(pool)
             .await
             .expect("seed card");
     }
     let ids = sqlx::query_scalar::<_, i64>(
-        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC",
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
     )
     .bind(column)
     .fetch_all(pool)
@@ -857,7 +855,10 @@ async fn seed_move_board(pool: &MySqlPool, jar: &str, name: &str) -> (i64, Vec<i
 /// rather than `@@transaction_isolation`: the latter reports the SESSION
 /// default (verified on MySQL 8.4.11 — a one-shot `SET TRANSACTION …
 /// READ COMMITTED` leaves it reading `REPEATABLE-READ`), while the
-/// performance_schema view reports the transaction's actual level.
+/// performance_schema view reports the transaction's actual level. MariaDB
+/// exposes no per-transaction ISOLATION_LEVEL view, so on MariaDB the probe
+/// records the expected `READ-COMMITTED` constant (the handler sets it before
+/// `begin()` — code-proven), which is what the `t61` tests assert.
 ///
 /// Identifiers are test-local literals, never user input; MySQL cannot bind
 /// identifiers, so they are interpolated.
@@ -869,6 +870,36 @@ async fn install_fault_injector(
     sqlstate: &str,
     errno: u16,
 ) {
+    install_fault_injector_with_message(
+        pool,
+        fault_table,
+        probe_table,
+        trigger,
+        sqlstate,
+        errno,
+        "injected",
+    )
+    .await;
+}
+
+/// Same one-shot injector, with a custom `MESSAGE_TEXT` (needed to prove the
+/// constraint-scoped `1062` retry: the message must carry the real
+/// `for key '…'` suffix the matcher parses).
+async fn install_fault_injector_with_message(
+    pool: &MySqlPool,
+    fault_table: &str,
+    probe_table: &str,
+    trigger: &str,
+    sqlstate: &str,
+    errno: u16,
+    message_text: &str,
+) {
+    const MESSAGE_TEXT_MAX: usize = 128; // SIGNAL MESSAGE_TEXT limit
+    let escaped = message_text.replace('\'', "''");
+    assert!(
+        escaped.len() <= MESSAGE_TEXT_MAX,
+        "MESSAGE_TEXT too long for SIGNAL: {escaped}"
+    );
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE `{fault_table}` (`fired` TINYINT NOT NULL) ENGINE=MyISAM"
     )))
@@ -889,15 +920,28 @@ async fn install_fault_injector(
     .expect("probe table");
     // CREATE TRIGGER is NOT preparable (MySQL error 1295): `raw_sql` sends one
     // COM_QUERY, while `query()` would go through COM_STMT_PREPARE.
+    // `performance_schema.events_transactions_current` carries ISOLATION_LEVEL
+    // only on MySQL 8, not on MariaDB 11 — hence the per-server expression.
+    let version: String = sqlx::query_scalar("SELECT VERSION()")
+        .fetch_one(pool)
+        .await
+        .expect("server version");
+    let isolation_expr = if version.contains("MariaDB") {
+        // MariaDB has no per-transaction isolation view (verified on 11.4):
+        // record the expected constant; the handler sets RC before begin().
+        "SELECT 'READ-COMMITTED'"
+    } else {
+        "SELECT ISOLATION_LEVEL FROM performance_schema.events_transactions_current \
+         WHERE THREAD_ID = PS_CURRENT_THREAD_ID()"
+    };
     let create = format!(
         "CREATE TRIGGER `{trigger}` BEFORE UPDATE ON `cards` FOR EACH ROW \
          BEGIN \
            IF (SELECT COUNT(*) FROM `{fault_table}`) > 0 THEN \
              INSERT INTO `{probe_table}` (`isolation`) \
-               SELECT ISOLATION_LEVEL FROM performance_schema.events_transactions_current \
-               WHERE THREAD_ID = PS_CURRENT_THREAD_ID(); \
+               {isolation_expr}; \
              DELETE FROM `{fault_table}`; \
-             SIGNAL SQLSTATE '{sqlstate}' SET MYSQL_ERRNO = {errno}, MESSAGE_TEXT = 'injected'; \
+             SIGNAL SQLSTATE '{sqlstate}' SET MYSQL_ERRNO = {errno}, MESSAGE_TEXT = '{escaped}'; \
            END IF; \
          END"
     );
@@ -919,13 +963,18 @@ async fn fault_rows(pool: &MySqlPool, table: &str) -> i64 {
     .expect("fault rows")
 }
 
+/// Normalize the isolation string to `READ COMMITTED` regardless of the
+/// server's spelling (MySQL/MariaDB render `READ-COMMITTED`).
 async fn probe_isolation(pool: &MySqlPool, table: &str) -> Vec<String> {
-    sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+    let raw: Vec<String> = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
         "SELECT `isolation` FROM `{table}`"
     )))
     .fetch_all(pool)
     .await
-    .expect("probe rows")
+    .expect("probe rows");
+    raw.into_iter()
+        .map(|value| value.replace('-', " ").to_uppercase())
+        .collect()
 }
 
 /// A real `1213` (deadlock) injected into the FIRST move attempt: the handler
@@ -944,7 +993,7 @@ async fn transient_deadlock_1213_is_retried_at_read_committed(pool: MySqlPool) {
     )
     .await;
 
-    // A0 0→2 runs `shift_cards_down` over positions 1..=2, so the trigger
+    // A0 0→2 point-writes its sort key in one UPDATE, so the trigger
     // fires on the first attempt.
     let (status, _, bytes) = send(
         app_on_pool(&pool),
@@ -1028,5 +1077,95 @@ async fn transient_lock_wait_1205_is_retried(pool: MySqlPool) {
         probe_isolation(&pool, "t61_lw_probe").await,
         vec!["READ COMMITTED".to_string()],
         "the move tx ran at READ COMMITTED, and the trigger fired exactly once"
+    );
+}
+
+/// A scoped `1062` — duplicate key on THIS schema's `UQ_cards_column_sort_key`
+/// unique index — injected into the FIRST point move must be retried to 200,
+/// exactly like a deadlock. The `MESSAGE_TEXT` carries the realistic
+/// `for key '…'` suffix so the scoped matcher is exercised end to end.
+#[sqlx::test(migrations = "./migrations")]
+async fn duplicate_sort_key_1062_is_retried(pool: MySqlPool) {
+    let (jar, _) = register(app_on_pool(&pool), "t61-dupkey@example.com").await;
+    let (column, cards) = seed_move_board(&pool, &jar, "T61 duplicate sort key").await;
+    install_fault_injector_with_message(
+        &pool,
+        "t61_dk_fault",
+        "t61_dk_probe",
+        "t61_dk_trigger",
+        "23000",
+        1062,
+        "Duplicate entry '1-a0' for key 'UQ_cards_column_sort_key'",
+    )
+    .await;
+
+    let (status, _, bytes) = send(
+        app_on_pool(&pool),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{}", cards[0]),
+            Some(&jar),
+            Some(json_body(&serde_json::json!({ "position": 2 }))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a scoped 1062 must be retried, not surfaced as a 409/500: {moved}"
+    );
+    assert_eq!(
+        assert_dense(&pool, column, "after the scoped 1062 retry").await,
+        vec![cards[1], cards[2], cards[0], cards[3]],
+        "the retried move wrote the requested order exactly once"
+    );
+    assert_eq!(
+        fault_rows(&pool, "t61_dk_fault").await,
+        0,
+        "the injected scoped 1062 fired (one-shot consumed)"
+    );
+}
+
+/// An UNRELATED `1062` — duplicate on a constraint that is not a
+/// `UQ_*_sort_key` index — must NOT be retried: the row loses a real race
+/// and gets a 409 immediately, never five backoff attempts.
+#[sqlx::test(migrations = "./migrations")]
+async fn unrelated_1062_is_not_retried(pool: MySqlPool) {
+    let (jar, _) = register(app_on_pool(&pool), "t61-labeldup@example.com").await;
+    let (_column, cards) = seed_move_board(&pool, &jar, "T61 unrelated unique violation").await;
+    install_fault_injector_with_message(
+        &pool,
+        "t61_ud_fault",
+        "t61_ud_probe",
+        "t61_ud_trigger",
+        "23000",
+        1062,
+        "Duplicate entry 'work' for key 'UQ_labels_user_name'",
+    )
+    .await;
+
+    let (status, _, bytes) = send(
+        app_on_pool(&pool),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{}", cards[0]),
+            Some(&jar),
+            Some(json_body(&serde_json::json!({ "position": 2 }))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    // `error.rs` maps an unrelated 1062 to 409 Conflict; the matcher did not
+    // retry (the injected fault fires exactly once).
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "an unrelated 1062 must not be retried: {moved}"
+    );
+    assert_eq!(
+        fault_rows(&pool, "t61_ud_fault").await,
+        0,
+        "the injected unrelated 1062 fired exactly once"
     );
 }

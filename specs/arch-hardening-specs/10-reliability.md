@@ -28,8 +28,10 @@ encrypted at rest; tested restore (quarterly)" — listed as test plan, unverifi
   the shared path. The script itself is identical.
 - Integrity: verify each dump with `gzip -t` + a `mysql -e "SELECT 1"` pipe-back smoke
   (import into a throwaway DB is the full drill, below).
-- `docs/operations-backup.md` (or a section in `40-operations.md`): procedure +
-  the **restore drill template** and a filled-in drill record.
+- `docs/operations-backup.md` (**single owner** for the procedure, the restore-drill
+  template, and the filled-in drill record — amend 2026-11-16: no "or a section in
+  `40-operations.md`" alternative; `40-operations.md` §3 carries only the ops-side
+  contract and a pointer to this doc).
 
 **Restore drill (the R1 acceptance heart):** on a scratch DB: gunzip → pipe to `mysql`
 → assert table count + row counts vs source (`information_schema.tables`/`COUNT(*)`
@@ -62,16 +64,31 @@ binlog — overkill at this scale).
 
 **Target design:**
 - Single helper `resetSessionCaches(queryClient)` called on **logout success and login
-  success** (and register): `queryClient.clear()` — drops every query + mutation
-  observer state. Simplest correct fix; the alternative (user-scoped keys
-  `['user', userId, ...]`) is rejected as a wide refactor with the same outcome.
-- Ordering: clear **before** setting `['auth','me']` for login (so the new user's `me`
-  write isn't wiped), clear **after** nulling `me` for logout (or clear then set — pick
-  one order and pin it in the test).
-- In-flight requests from user A must not repopulate the cache after clear: React Query
-  `clear()` cancels/ignores… verify — if a late response can still `setQueryData`
-  through an active observer, the fix is to `queryClient.cancelQueries()` first, or
-  key the `me` query per-session. **The red-proof test must simulate a late response.**
+  success** (and register): `await queryClient.cancelQueries()` then `queryClient.clear()`
+  — drops every query + mutation observer state. Simplest correct fix; the alternative
+  (user-scoped keys `['user', userId, ...]`) is rejected as a wide refactor with the
+  same outcome.
+- Ordering (one sequence, pinned in the test — same for login and logout):
+  `await queryClient.cancelQueries()` → `queryClient.clear()` → then
+  set/null `['auth','me']`. Login: `me` written *after* the clear (it must not be
+  wiped); logout: `me` nulled *after* the clear (a cleared cache has no `me`
+  anyway — the explicit null is belt-and-braces for observers that re-render
+  between clear and navigate).
+- In-flight queries from user A must not repopulate the cache after clear.
+  **Verified against the installed `@tanstack/query-core` 5.107.1 source
+  (2026-11-16):** `QueryClient.clear()` → `QueryCache.clear()` → `remove()` →
+  `query.destroy()` → `cancel({ silent: true })` → the retryer rejects synchronously
+  with `CancelledError`; the fetch's `setData` is never reached and the destroyed
+  Query instance is detached. So a late query response **cannot** repopulate the
+  cache — `clear()` alone is sufficient for queries. Still call
+  `queryClient.cancelQueries()` **first** as belt-and-braces (it also covers any
+  code path that observes a non-destroyed query). **Caveat — mutations:**
+  `MutationCache.clear()` only clears the maps; in-flight mutations are NOT
+  cancelled and their `onSuccess`/`onSettled` still run. Mutation callbacks must
+  therefore tolerate post-logout execution (no unconditional `setQueryData` with
+  stale payloads; invalidations refetch as the new session or hit the 401 path).
+  **The red-proof test must simulate a late response landing after the clear**
+  (asserts it does not repopulate), plus a mutation-in-flight-through-logout case.
 
 **Edge cases:** double-logout; logout while a mutation is in flight (its `onSettled`
 invalidate must not resurrect data); login → immediate navigation (no flash of A's
@@ -92,8 +109,8 @@ MySQL published `3306:3306` on all interfaces (C3).
 **Target design:**
 - Remove the `nest` service entirely; `frontend` loses `depends_on: nest`.
 - New `frontend/Dockerfile`: multi-stage — `node:22-bookworm` builder (`npm ci`,
-  `npm run build` with `VITE_API_URL` as build ARG defaulting to the compose-internal
-  API URL `http://localhost:3001`… see caveat) → static runtime
+  `npm run build` with `VITE_API_URL` as build ARG **defaulting to `""`** — see the
+  pinned decision below) → static runtime
   (`nginx:alpine` or `caddy:alpine`) serving `dist/` with SPA fallback to `index.html`,
   `Cache-Control: immutable` for `/assets/*` (hashed) and `no-cache` for `index.html`,
   plus a `/api` reverse-proxy to the `rust` service **for the compose topology only**.
@@ -107,15 +124,23 @@ MySQL published `3306:3306` on all interfaces (C3).
 - `.env.example` for compose-level vars (`DB_PASSWORD`, `APP_ENV`, etc.) — keep dev
   defaults but never document them as production values.
 
-**Edge cases / caveat (decide at implementation):** the SPA in compose can be served
-same-origin (`/api` proxied by the static server) → `VITE_API_URL=""` (relative), which
-is *different* from the production two-origin topology (D-1: prod stays cross-origin
-with baked `VITE_API_URL`). Document this split explicitly: **compose = same-origin dev
-appliance; production = two origins** (`docs/deployment.md` unchanged). If we keep the
-static server proxying `/api`, CSRF/CORS behavior in compose differs from prod — tests
-must not assume either topology; e2e keeps using the direct API base.
-- The `rust` service env must gain `TRUSTED_PROXIES` only if we proxy through the
-  frontend container; if e2e hits rust directly on 3001, leave it empty.
+**Edge cases / pinned decision (resolves the 2026-11 review contradiction):** the
+compose SPA is served **same-origin** — the static server proxies `/api` to `rust`
+and the SPA is built with `VITE_API_URL=""` (relative, no cross-origin). This is
+*different* by design from the production two-origin topology (D-1: prod stays
+cross-origin with baked `VITE_API_URL`; `docs/deployment.md` unchanged). The
+Dockerfile ARG default of `""` **is** the compose path; building the production
+image requires passing `VITE_API_URL=<prod api origin>` explicitly — the two never
+share a default. Document this split explicitly: **compose = same-origin appliance;
+production = two origins**. Consequences pinned now:
+- CSRF/CORS behavior differs between the two topologies (compose rides the
+  proxy's Origin, prod is cross-origin) — tests must not assume either topology;
+  e2e keeps using the direct API base.
+- Because compose is same-origin, `rust` behind the compose proxy needs
+  `TRUSTED_PROXIES` set to the frontend hop (throttling keys off the real client IP,
+  same as the T007 single-origin rule). If e2e hits rust directly on 3001, leave it
+  empty for that path. `CORS_ORIGINS` may stay empty/same-origin in compose; prod
+  stays as `docs/deployment.md` specifies.
 
 **Test plan:** `docker compose up --build` from a clean clone works (manual AC, paste
 output); CI optional job later (not required now — keep CI cost flat, C4). Regression:
@@ -153,7 +178,7 @@ timeout error message should read "Network timeout — check your connection".
 
 **Test plan:** red-first: mock `apiFetch` 401 on a non-auth query → assert clear +
 redirect + single toast; timeout: fake timers + abort → typed error; retry policy: 500
-retries once, 400 doesn't, mutation doesn't. Existing49 auth tests stay green.
+retries once, 400 doesn't, mutation doesn't. Existing 49 auth tests stay green.
 
 ## R6 — Board error states + boundary reset → T015
 

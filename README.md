@@ -132,7 +132,11 @@ $ npm run test:e2e
 
 ## Deployment
 
-KanPad runs as two independent origins:
+**Self-host (Docker)** — one container per concern, same-origin, production-shaped:
+`docker compose up --build` → http://localhost:5173 (TLS required for remote access);
+see **`docs/self-hosting.md`**.
+
+KanPad can also run as two independent origins:
 
 - **SPA** — the static frontend build (`frontend/dist/`), served by any static
   host.

@@ -6,13 +6,15 @@
 //! never a 403 oracle. The nested list checks the board first, then reads its
 //! columns unscoped (the check already proved ownership).
 //!
-//! Create takes `MAX(position)+1` under `SELECT ... FOR UPDATE` in the
-//! caller's tx (an unlocked `MAX` races duplicate positions). Delete runs the
-//! row delete + a set-based gap-close (`position - 1` range `UPDATE`) in ONE
-//! tx — never a reload+save loop. Cards cascade via the DB FK
-//! (`FK_cards_column_id ... ON DELETE CASCADE`, which fans out to
-//! `card_labels`/`checklists`/items/notes the same way). `columns` is a
-//! reserved word: always backticked.
+//! Ordering rides fractional `sort_key`s (T010): every column carries an
+//! `ascii_bin` base62 key and every **move is a single-row write** — no
+//! sibling is ever renumbered. Wire `position` (integer, 0-based) is
+//! COMPUTED at read: `enumerate` for lists/pages, a correlated
+//! `COUNT(*) … sort_key < ?` for single-row reads. Neighbour reads for
+//! moves are unlocked; the append path (`fetch_last_sort_key_for_update` +
+//! `key_between` + INSERT in one tx) keeps the serialized contract today's
+//! `MAX(position) FOR UPDATE` provided. `columns` is a reserved word:
+//! always backticked.
 //!
 //! `DATETIME` selects need NO type override: with the in-tree session store
 //! (T65) the `sqlx` `time` feature is no longer enabled, so `query!` maps a
@@ -30,7 +32,7 @@ use super::types::{ColumnResponse, format_timestamp};
 
 /// One `columns` row (assembled by [`fetch_column_owned`]/[`fetch_columns`];
 /// cards ride separately via `common::card_summary` so the column select stays
-/// TEXT-free).
+/// TEXT-free). `position` is COMPUTED at read (T010) — never stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnRow {
     /// `columns.id`.
@@ -39,7 +41,7 @@ pub struct ColumnRow {
     pub board_id: BoardId,
     /// Column name.
     pub name: String,
-    /// Zero-based position.
+    /// Wire position (0-based, computed).
     pub position: i32,
     /// `columns.created_at`.
     pub created_at: NaiveDateTime,
@@ -48,16 +50,19 @@ pub struct ColumnRow {
 }
 
 /// Fetch one owned column (join proves ownership: foreign/missing id →
-/// `RowNotFound` → 404, never 403).
+/// `RowNotFound` → 404, never 403). The wire position is a correlated
+/// `COUNT(*) … sort_key < ?` over the unique `(board_id, sort_key)` index.
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_column_owned<'e, E>(ex: E, user_id: i32, id: i32) -> Result<ColumnRow, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT c.`id`, c.`board_id` AS \"board_id: i32\", c.`name`, c.`position`, \
-          c.`created_at`, \
-          c.`updated_at` \
+        "SELECT c.`id` AS \"id!\", c.`board_id` AS \"board_id!: i32\", c.`name` AS \"name!\", \
+          (SELECT COUNT(*) FROM `columns` p \
+            WHERE p.`board_id` = c.`board_id` AND p.`sort_key` < c.`sort_key`) AS \"position!: i64\", \
+          c.`created_at` AS \"created_at!\", \
+          c.`updated_at` AS \"updated_at!\" \
           FROM `columns` c JOIN `boards` b ON b.`id` = c.`board_id` \
           WHERE c.`id` = ? AND b.`user_id` = ?",
         id,
@@ -70,67 +75,107 @@ where
         id: ColumnId::from(row.id),
         board_id: BoardId::from(row.board_id),
         name: row.name,
-        position: row.position,
+        position: i32::try_from(row.position).map_err(|_| AppError::Internal(Internal))?,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
 }
 
-/// Fetch a board's columns, `position ASC` (nested unpaginated in the list
-/// body — cards attach separately). The caller proves board ownership first
-/// via [`crate::common::ownership::check_board_owned`].
+/// Fetch a board's columns, `sort_key ASC, id ASC` (nested unpaginated in the
+/// list body — cards attach separately). Positions are the enumerate index.
+/// The caller proves board ownership first via [`crate::common::ownership::check_board_owned`].
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_columns<'e, E>(ex: E, board_id: i32) -> Result<Vec<ColumnRow>, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let rows = sqlx::query!(
-        "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, `position`, \
+        "SELECT `id`, `board_id` AS \"board_id: i32\", `name`, \
           `created_at`, \
           `updated_at` \
-          FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+          FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
         board_id
     )
     .fetch_all(ex)
     .await
     .map_err(AppError::Db)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| ColumnRow {
+    let mut out = Vec::with_capacity(rows.len());
+    for (index, row) in rows.into_iter().enumerate() {
+        out.push(ColumnRow {
             id: ColumnId::from(row.id),
             board_id: BoardId::from(row.board_id),
             name: row.name,
-            position: row.position,
+            position: i32::try_from(index).map_err(|_| AppError::Internal(Internal))?,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        })
-        .collect())
+        });
+    }
+    Ok(out)
 }
 
-/// Current `MAX(position)` on a board (`-1` when empty) locking the range for
-/// the insert that follows. MUST run inside the create tx (`FOR UPDATE` outside
-/// a tx locks nothing); `MAX(INT)` decodes as `i64` (`LONGLONG`), narrowed via
-/// `try_from` (never a silent `as` cast).
-///
-/// The `max_pos!: i64` alias pins type AND nullability (`!`) so the row type
-/// is server-independent: MySQL 8.4 reports `COALESCE(MAX(...), -1)` NOT NULL
-/// while MariaDB 10.6 reports it nullable, and a bare `: i64` override does
-/// not pin nullability (sqlx wraps in `Option` whenever the server says
-/// nullable). The expression is never NULL by construction (`-1` fallback).
+/// A board's sibling `sort_key`s, ascending, excluding `exclude_id` (the
+/// moving column) when set — the between-neighbours computation for moves.
+/// Neighbor reads are deliberately UNLOCKED (D3: last-write-wins for
+/// concurrent same-gap drops; uniqueness rides the unique index).
 #[tracing::instrument(skip(ex))]
-pub async fn max_position_for_update<'e, E>(ex: E, board_id: i32) -> Result<i32, AppError>
+pub async fn fetch_column_keys_in_board<'e, E>(
+    ex: E,
+    board_id: i32,
+    exclude_id: Option<i32>,
+) -> Result<Vec<(i32, String)>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let pairs: Vec<(i32, String)> = match exclude_id {
+        Some(id) => sqlx::query!(
+            "SELECT `id`, `sort_key` FROM `columns` \
+             WHERE `board_id` = ? AND `id` != ? ORDER BY `sort_key` ASC, `id` ASC",
+            board_id,
+            id
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?
+        .into_iter()
+        .map(|row| (row.id, row.sort_key))
+        .collect(),
+        None => sqlx::query!(
+            "SELECT `id`, `sort_key` FROM `columns` \
+             WHERE `board_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
+            board_id
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?
+        .into_iter()
+        .map(|row| (row.id, row.sort_key))
+        .collect(),
+    };
+    Ok(pairs)
+}
+
+/// The highest `sort_key` currently on a board (`None` when the board has no
+/// columns), locking the last index record for the insert that follows. MUST
+/// run inside the create tx (`FOR UPDATE` outside a tx locks nothing). The
+/// last-key read + `key_between` + INSERT in one tx is the serialized append
+/// contract (same as the pre-T010 `MAX(position) FOR UPDATE`).
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_last_sort_key_for_update<'e, E>(
+    ex: E,
+    board_id: i32,
+) -> Result<Option<String>, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" \
-          FROM `columns` WHERE `board_id` = ? FOR UPDATE",
+        "SELECT `sort_key` FROM `columns` WHERE `board_id` = ? \
+         ORDER BY `sort_key` DESC LIMIT 1 FOR UPDATE",
         board_id
     )
-    .fetch_one(ex)
+    .fetch_optional(ex)
     .await
     .map_err(AppError::Db)?;
-    i32::try_from(row.max_pos).map_err(|_| AppError::Internal(Internal))
+    Ok(row.map(|row| row.sort_key))
 }
 
 /// Insert a column row; returns the new id (`last_insert_id` as `u64` →
@@ -140,21 +185,42 @@ pub async fn insert_column<'e, E>(
     ex: E,
     board_id: i32,
     name: &str,
-    position: i32,
+    sort_key: &str,
 ) -> Result<i32, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let result = sqlx::query!(
-        "INSERT INTO `columns` (`name`, `position`, `board_id`) VALUES (?, ?, ?)",
+        "INSERT INTO `columns` (`name`, `sort_key`, `board_id`) VALUES (?, ?, ?)",
         name,
-        position,
+        sort_key,
         board_id
     )
     .execute(ex)
     .await
     .map_err(AppError::Db)?;
     i32::try_from(result.last_insert_id()).map_err(|_| AppError::Internal(Internal))
+}
+
+/// Point-write a column's `sort_key` (the single-row move).
+#[tracing::instrument(skip(ex))]
+pub async fn point_move_column_sort_key<'e, E>(
+    ex: E,
+    id: i32,
+    sort_key: &str,
+) -> Result<(), AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    sqlx::query!(
+        "UPDATE `columns` SET `sort_key` = ? WHERE `id` = ?",
+        sort_key,
+        id
+    )
+    .execute(ex)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(())
 }
 
 /// Rename an owned column (the caller pre-reads via [`fetch_column_owned`] for
@@ -173,8 +239,8 @@ where
 
 /// Delete a column row. Cards cascade via `FK_cards_column_id`
 /// (`ON DELETE CASCADE`, fanning out to label links, checklists, and notes
-/// DB-side). The caller closes the position gap next (same tx) and pre-read
-/// the row ([`fetch_column_owned`]) for ownership + the deleted position.
+/// DB-side). No gap is closed — sibling `sort_key`s are untouched (T010).
+/// The caller pre-read the row ([`fetch_column_owned`]) for ownership.
 #[tracing::instrument(skip(ex))]
 pub async fn delete_column_row<'e, E>(ex: E, id: i32) -> Result<(), AppError>
 where
@@ -184,25 +250,6 @@ where
         .execute(ex)
         .await
         .map_err(AppError::Db)?;
-    Ok(())
-}
-
-/// Close the position gap left by a delete: one set-based range `UPDATE`
-/// shifts every later sibling down by one (never a reload+save loop).
-#[tracing::instrument(skip(ex))]
-pub async fn close_column_gap<'e, E>(ex: E, board_id: i32, position: i32) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "UPDATE `columns` SET `position` = `position` - 1 \
-          WHERE `board_id` = ? AND `position` > ?",
-        board_id,
-        position
-    )
-    .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
     Ok(())
 }
 
@@ -250,47 +297,65 @@ where
     Ok(ordered)
 }
 
-/// Rewrite card positions to the given id order with ONE set-based
-/// `UPDATE ... CASE` (`ordered_ids[0]` becomes position 0 — never N saves).
+/// Rewrite card sort keys to the given `(id, sort_key)` assignments in
+/// **two phases** (park, then assign): phase 1 parks every assigned row at a
+/// unique temporary key outside the base62 key space (`tmp-<id>`), phase 2
+/// assigns the final keys with one set-based `UPDATE ... CASE`. A
+/// single-phase even rewrite transiently violates the unique
+/// `(column_id, sort_key)` index when one row's new key equals an
+/// un-rewritten row's old key (the same reason the rebalance is two-phase).
 /// Empty input skips the statement (a `CASE` with no `WHEN` is invalid SQL).
 /// Dynamic arity defeats `query!` literals, so this rides `QueryBuilder`;
-/// ids/positions ride `push_bind` only (never `push` of values). `push_bind`
-/// emits a bare `?` with no surrounding spaces, so every `push` fragment
-/// that follows a bind carries a leading space (see `30-db-schema.md`).
+/// ids/keys ride `push_bind` only (never `push` of values). `push_bind`
+/// emits a bare `?` with no surrounding spaces, so every `push` fragment that
+/// follows a bind carries a leading space (see `30-db-schema.md`).
 #[tracing::instrument(skip(ex))]
-pub async fn rewrite_card_positions<'e, E>(
-    ex: E,
+pub async fn rewrite_card_sort_keys(
+    ex: &mut sqlx::MySqlConnection,
     column_id: i32,
-    ordered_ids: &[i32],
-) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    if ordered_ids.is_empty() {
+    assignments: &[(i32, String)],
+) -> Result<(), AppError> {
+    if assignments.is_empty() {
         return Ok(());
     }
+    // Phase 1 — park the assigned rows at unique temporary keys.
+    {
+        let mut park: QueryBuilder<MySql> = QueryBuilder::new(
+            "UPDATE `cards` SET `sort_key` = CONCAT('tmp-', `id`) WHERE `column_id` = ",
+        );
+        park.push_bind(column_id);
+        park.push(" AND `id` IN (");
+        {
+            let mut ids = park.separated(", ");
+            for (id, _) in assignments {
+                ids.push_bind(*id);
+            }
+        }
+        park.push(")");
+        park.build().execute(&mut *ex).await.map_err(AppError::Db)?;
+    }
+    // Phase 2 — assign the final keys with one set-based CASE.
     let mut builder: QueryBuilder<MySql> =
-        QueryBuilder::new("UPDATE `cards` SET `position` = CASE `id` ");
-    for (position, id) in ordered_ids.iter().enumerate() {
-        let slot = i32::try_from(position).map_err(|_| AppError::Internal(Internal))?;
-        // `push_bind` emits a bare `?` (no surrounding spaces), so every
-        // `push` fragment that FOLLOWS a bind carries a leading space (the
-        // initial `QueryBuilder::new` fragment already ends with one, so the
-        // first loop `WHEN`'s extra space is harmless).
+        QueryBuilder::new("UPDATE `cards` SET `sort_key` = CASE `id` ");
+    for (id, sort_key) in assignments {
         builder.push(" WHEN ");
         builder.push_bind(*id);
         builder.push(" THEN ");
-        builder.push_bind(slot);
+        builder.push_bind(sort_key.as_str());
     }
-    builder.push(" ELSE `position` END WHERE `column_id` = ");
+    builder.push(" ELSE `sort_key` END WHERE `column_id` = ");
     builder.push_bind(column_id);
-    builder.build().execute(ex).await.map_err(AppError::Db)?;
+    builder
+        .build()
+        .execute(&mut *ex)
+        .await
+        .map_err(AppError::Db)?;
     Ok(())
 }
 
-/// Source-column card ids in `position ASC` (the target mirrors source order
+/// Source-column card ids in `sort_key ASC` (the target mirrors source order
 /// on move). Locks the rows (`FOR UPDATE`) — MUST run inside the move tx.
-/// One query: the caller assigns positions and writes via
+/// One query: the caller assigns keys and writes via
 /// [`move_cards_into`] next.
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_source_card_ids_for_update<'e, E>(
@@ -301,7 +366,7 @@ where
     E: MySqlExecutor<'e>,
 {
     let rows = sqlx::query!(
-        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC FOR UPDATE",
+        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC FOR UPDATE",
         source_id
     )
     .fetch_all(ex)
@@ -310,43 +375,42 @@ where
     Ok(rows.into_iter().map(|row| row.id).collect())
 }
 
-/// Current `MAX(position)` on the target column (`-1` when empty), locking
-/// the range (`FOR UPDATE`) — MUST run inside the move tx. `MAX(INT)`
-/// decodes as `i64` (`LONGLONG`), narrowed via `try_from` (never silent `as`).
-///
-/// The `max_pos!: i64` alias pins type AND nullability (`!`) so the row type
-/// is server-independent: MySQL 8.4 reports `COALESCE(MAX(...), -1)` NOT NULL
-/// while MariaDB 10.6 reports it nullable, and a bare `: i64` override does
-/// not pin nullability (sqlx wraps in `Option` whenever the server says
-/// nullable). The expression is never NULL by construction (`-1` fallback).
+/// The highest `sort_key` currently on the target column (`None` when the
+/// target is empty), locking the last index record (`FOR UPDATE`) — MUST run
+/// inside the move tx. The last-key read + `keys_between(Some(last), None, n)`
+/// + one `UPDATE ... CASE` is the serialized append contract (the source
+/// select in `sort_key` order carries `id` tiebreaks).
 #[tracing::instrument(skip(ex))]
-pub async fn max_card_position_for_update<'e, E>(ex: E, target_id: i32) -> Result<i32, AppError>
+pub async fn fetch_last_card_sort_key_for_update<'e, E>(
+    ex: E,
+    target_id: i32,
+) -> Result<Option<String>, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" \
-          FROM `cards` WHERE `column_id` = ? FOR UPDATE",
+        "SELECT `sort_key` FROM `cards` WHERE `column_id` = ? \
+         ORDER BY `sort_key` DESC LIMIT 1 FOR UPDATE",
         target_id
     )
-    .fetch_one(ex)
+    .fetch_optional(ex)
     .await
     .map_err(AppError::Db)?;
-    i32::try_from(row.max_pos).map_err(|_| AppError::Internal(Internal))
+    Ok(row.map(|row| row.sort_key))
 }
 
-/// Move `assignments` (`(card_id, position)`, already `position ASC`) into
+/// Move `assignments` (`(card_id, sort_key)`, already `sort_key ASC`) into
 /// `target_id` with ONE set-based `UPDATE ... CASE` (never N saves). The
 /// `WHERE` re-checks `column_id = source_id` so only source rows move.
 /// Skipped by the caller when empty (an empty `IN ()` is invalid SQL).
-/// Dynamic `CASE` arity rules out `query!` — ids/positions are `i32`s bound
-/// server-side (never interpolated), so there is no injection surface.
+/// Dynamic `CASE` arity rules out `query!` — ids/keys are bound server-side
+/// (never interpolated), so there is no injection surface.
 #[tracing::instrument(skip(ex))]
 pub async fn move_cards_into<'e, E>(
     ex: E,
     source_id: i32,
     target_id: i32,
-    assignments: &[(i32, i32)],
+    assignments: &[(i32, String)],
 ) -> Result<(), AppError>
 where
     E: MySqlExecutor<'e>,
@@ -355,12 +419,12 @@ where
     let mut builder: sqlx::QueryBuilder<sqlx::MySql> =
         sqlx::QueryBuilder::new("UPDATE `cards` SET `column_id` = ");
     builder.push_bind(target_id);
-    builder.push(", `position` = CASE `id`");
-    for (id, position) in assignments {
+    builder.push(", `sort_key` = CASE `id`");
+    for (id, sort_key) in assignments {
         builder.push(" WHEN ");
         builder.push_bind(*id);
         builder.push(" THEN ");
-        builder.push_bind(*position);
+        builder.push_bind(sort_key.as_str());
     }
     builder.push(" END WHERE `column_id` = ");
     builder.push_bind(source_id);

@@ -137,21 +137,17 @@ async fn boards_create_and_detail_full_flow(pool: MySqlPool) {
         stored,
         ("Solo".to_string(), "#0079BF".to_string(), owner_id)
     );
-    let column_rows: Vec<(String, i32)> = sqlx::query_as(
-        "SELECT `name`, `position` FROM `columns` WHERE `board_id` = ? ORDER BY `position` ASC",
+    let column_names: Vec<String> = sqlx::query_scalar(
+        "SELECT `name` FROM `columns` WHERE `board_id` = ? ORDER BY `sort_key` ASC",
     )
     .bind(solo_id)
     .fetch_all(&pool)
     .await
     .expect("created columns re-read");
     assert_eq!(
-        column_rows,
-        vec![
-            ("To Do".to_string(), 0),
-            ("In Progress".to_string(), 1),
-            ("Done".to_string(), 2),
-        ],
-        "tx created exactly 3 dense columns"
+        column_names,
+        vec!["To Do", "In Progress", "Done"],
+        "tx created exactly the 3 default columns in order"
     );
 
     // 3. `GET /:id → 200` with the same nested shape (second-GET re-read).

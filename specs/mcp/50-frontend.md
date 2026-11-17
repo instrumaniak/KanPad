@@ -31,7 +31,7 @@ other authenticated routes, and linked from `frontend/src/layouts/sidebar.tsx`.
 | Element | Behaviour |
 |---|---|
 | **List** | One row per key: name, `kp_live_a1b2c3…` prefix, scopes as chips, created date, last used ("3 minutes ago" / "never"), expiry, status (active / expired / revoked). |
-| **Create** | Dialog: name (required), scopes (checkboxes for `read` / `write` / `delete` / `admin`), optional expiry (never / 7 / 30 / 90 days). `read` is pre-selected and the others are not. |
+| **Create** | Dialog: name (required), scopes (checkboxes for `read` / `write` / `delete`), optional expiry (never / 7 / 30 / 90 days). `read` is pre-selected and the others are not. **The `admin` scope is hidden** until a Wave 2 `/admin/*` route exists — offering it today mints a scope that gates nothing (and before O-13's cookie-only rule, widened itself). (Amended 2026-11-16.) |
 | **Reveal** | After creation, a second dialog shows the plaintext secret **once**, in a monospace block, with a copy button and the warning: *"This is the only time it will be shown. Store it in your agent's configuration now."* Closing the dialog discards it permanently. |
 | **Revoke** | Confirmation dialog naming the key and stating plainly: *"Revoking stops all further use of this key. It does not undo changes already made with it."* |
 | **Empty state** | Explains what an agent key is for and links to the integration guide. |
@@ -105,6 +105,15 @@ The card list and the card detail show claim state:
 | Claim expired | nothing (the chip disappears) |
 | Claim released | nothing |
 
+The card detail panel also shows an **artifact chip** per linked link
+(`link_artifact`, §3.6 of `30-tool-surface.md`): a `pr` link renders as
+"PR #42", `branch`/`commit` as a short ref, everything else as the host.
+Chips come from the **`GET /api/v1/cards/{id}/links`** REST route (additive,
+T52 same-PR process) — one fetch per card-detail mount, `target="_blank"
+rel="noopener noreferrer"`, never rendered as raw HTML. This is the read path
+recorded in `90-open-calls.md` O-14 (amended 2026-11-16); agents read the
+same links via the `links` array in `get_card_context`.
+
 **The chip is a hint, not a lock.** A human can still edit a claimed card —
 the claim coordinates *agents*, it does not lock the card. Making it a hard
 lock would mean the human could not correct the agent's work, which is
@@ -129,14 +138,17 @@ a design decision; it is recorded here so it is not forgotten.
 
    ```jsonc
    // opencode.json  (project scope, or ~/.config/opencode/opencode.json)
+   // Schema is FLAT: mcp.<name> directly — there is no "servers" wrapper.
+   // (Amended 2026-11-16 — the earlier example nested kanpad under
+   //  "mcp.servers", which OpenCode does not parse.)
    {
      "$schema": "https://opencode.ai/config.json",
-     "mcp": { "servers": { "kanpad": {
+     "mcp": { "kanpad": {
        "type": "remote",
        "url": "https://api-kanpad-rs.raziur.com/mcp",
        "oauth": false,
        "headers": { "Authorization": "Bearer {env:KANPAD_API_KEY}" }
-     }}}
+     }}
    }
    ```
 
@@ -195,6 +207,7 @@ a prompt injection, `bash` still asks and `git push` still asks.
   for agent clients. A browser-based MCP client would need `AUTHORIZATION`
   added to the CORS `allow_headers` — a later, separate change.
 - **No live agent status polling.** The claim chip is fetched with the card.
-  A websocket/SSE presence channel is out of scope (the collaboration spec
-  already defers realtime).
+  A websocket/SSE presence channel is out of scope for the agent surface (the
+  collaboration spec promotes SSE for browser invalidation only — D-7, 2026-11-16;
+  nothing agent-facing rides it).
 - **No key rotation UI beyond create+revoke.** Rotation is create-then-revoke.

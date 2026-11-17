@@ -263,8 +263,8 @@ async fn checklists_crud_flow(pool: MySqlPool) {
 
     // 4. Seed items via SQL; single GET embeds items position-ordered.
     sqlx::query(
-        "INSERT INTO `checklist_items` (`text`, `is_completed`, `checklist_id`, `position`) VALUES \
-         ('Write test', 0, ?, 0), ('Pass test', 1, ?, 1)",
+        "INSERT INTO `checklist_items` (`text`, `is_completed`, `checklist_id`, `sort_key`) VALUES \
+         ('Write test', 0, ?, 'a0'), ('Pass test', 1, ?, 'a1')",
     )
     .bind(checklist_id)
     .bind(checklist_id)

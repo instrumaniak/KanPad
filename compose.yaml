@@ -1,76 +1,120 @@
 name: kanpad
 
-# T01 contract-freeze compose pin (normative for T02/T50/T51).
-# mysql:8.4 + nest:3000 + rust:3001, named volume, mysqladmin-ping healthcheck.
-# The `client.ts` BASE switch itself lands in T40b — compose + Vite proxy only here.
+# KanPad — production self-host appliance (D-1 Path A).
+#
+# One command on a clean machine:   docker compose up --build
+# Then open http://localhost:5173 (localhost IS a secure context — Secure
+# session cookies work there). For LAN/remote access you need TLS in front:
+# see docs/self-hosting.md (Dokploy / Portainer / any TLS proxy — e.g. Caddy
+# reverse_proxy, or Tailscale Serve for home labs). Plain LAN HTTP cannot
+# log in (Secure __Host- session cookies) — that is TLS doing its job, not
+# a bug to work around.
+#
+# THIS IS NOT THE DEV SETUP (nodejs + rustup native — see README.md) and it
+# is not the org's two-origin production deployment (docs/deployment.md).
+#
+# REQUIRED environment variables (compose ABORTS with this guidance when
+# unset — never defaults shipped for them):
+#   SESSION_SECRET   cookie signing, ≥32 bytes — openssl rand -hex 32
+#   CORS_ORIGINS     your public origin — e.g. https://kanpad.example.com
+#   DB_PASSWORD      the bundled DB's `kanpad` user password (any strong value)
+#
+# DATABASE — MariaDB 11.4 LTS by default. MySQL 8.4 LTS one edit away:
+# comment the `db:` block labeled [MariaDB] and uncomment [MySQL] below.
+# Bring-your-own external DB: comment BOTH blocks and set these instead:
+#   DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD, DB_NAME
+#   (or DATABASE_URL=mysql://user:pass@host:3306/db?…&collation=utf8mb4_unicode_ci)
+
 services:
-  mysql:
-    image: mysql:8.4
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
-      MYSQL_DATABASE: ${DB_NAME:-kanbanflow_dev}
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-changeme}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 20s
-
-  nest:
+  # [DEPLOY] nginx serves the SPA and reverse-proxies /api → rust.
+  # Only published port (loopback-only). Dokploy/Portainer route their domains
+  # at this service on :80 — no other ports are published, anywhere.
+  frontend:
     build:
-      context: ./backend
+      context: ./frontend
+      args:
+        # "" = same-origin — nginx proxies /api to rust. A production origin
+        # may be baked here for a two-origin build, but the appliance's whole
+        # design is same-origin; leave it empty.
+        VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
     ports:
-      - "3000:3000"
-    depends_on:
-      mysql:
-        condition: service_healthy
-    environment:
-      PORT: "3000"
-      DB_HOST: mysql
-      DB_PORT: "3306"
-      DB_USERNAME: ${DB_USERNAME:-root}
-      DB_PASSWORD: ${DB_PASSWORD:-changeme}
-      DB_NAME: ${DB_NAME:-kanbanflow_dev}
-      NODE_ENV: ${NODE_ENV:-development}
+      - "127.0.0.1:5173:80"
 
+  # [DEPLOY] Rust API. Boot applies pending migrations first (production-
+  # legal `migrate run`), then serves. Upgrade = pull + `docker compose up`;
+  # the schema follows the code. A FAILED migration fails closed — the API
+  # never starts; restore from backup (planned: T011 / see specs/tasks) if needed.
   rust:
     build:
       context: ./backend-rs
     restart: unless-stopped
-    ports:
-      - "3001:3001"
-    depends_on:
-      mysql:
-        condition: service_healthy
+    command: ["/busybox/sh", "-c", "/usr/local/bin/backend-rs migrate run && exec /usr/local/bin/backend-rs serve"]
     environment:
+      APP_ENV: production
       PORT: "3001"
-      DB_HOST: mysql
-      DB_PORT: "3306"
-      DB_USERNAME: ${DB_USERNAME:-root}
-      DB_PASSWORD: ${DB_PASSWORD:-changeme}
-      DB_NAME: ${DB_NAME:-kanbanflow_dev}
-      # APP_ENV, not NODE_ENV: the Rust service is not a Node service (T54).
-      # The Nest service above keeps NODE_ENV — separate container, separate
-      # runtime. Passing NODE_ENV to the Rust service now FAILS its boot.
-      APP_ENV: ${APP_ENV:-development}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USERNAME: ${DB_USERNAME:-kanpad}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD — see the header comment (openssl rand -hex 24)}
+      DB_NAME: ${DB_NAME:-kanpad}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET — see the header comment (openssl rand -hex 32)}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS to your origin, e.g. https://kanpad.example.com}
+      # Cold DB init on slow machines can outlast the default 15s probe;
+      # 120s covers fresh MariaDB/MySQL first boots.
+      DB_STARTUP_TIMEOUT_SECS: ${DB_STARTUP_TIMEOUT_SECS:-120}
+      HASH_COST: ${HASH_COST:-2}
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+      # OPTIONAL: trust your TLS proxy so throttling keys on the real
+      # client IP instead of the proxy. Use the proxy's stable address
+      # (e.g. Dokploy's ingress network CIDR); container task IPs drift,
+      # do not pin one. Default empty = X-Forwarded-For is never trusted
+      # (spoof-proof; all users share one throttle bucket).
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+    # no published ports
 
-  frontend:
-    build:
-      context: ./frontend
-    ports:
-      - "5173:5173"
-    depends_on:
-      - nest
+  # [MariaDB] — default bundled database (LTS 11.4; matches KanPad CI and the
+  # production host DB). Canonical healthcheck shipped in the image itself.
+  db:
+    image: mariadb:11.4@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
+    restart: unless-stopped
     environment:
-      # T51 cutover: default target is now Rust (:3001).
-      # Set VITE_API_URL=http://localhost:3000 for a one-line app rollback.
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+      MYSQL_DATABASE: ${DB_NAME:-kanpad}
+      MYSQL_USER: ${DB_USERNAME:-kanpad}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD — see the header comment}
+      # Random root password, printed once to the logs on first boot, never
+      # needed again (the app connects as `kanpad`).
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # [MySQL] — MySQL 8.4 LTS alternative. Comment the [MariaDB] block above,
+  # then uncomment this one AND the mysql-data volume line at the bottom.
+  # the healthcheck below probes TCP because the entrypoint runs a socket-only
+  # temporary init server first (a socket ping lies on fresh volumes).
+  # db:
+  #   image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+  #   restart: unless-stopped
+  #   environment:
+  #     MYSQL_DATABASE: ${DB_NAME:-kanpad}
+  #     MYSQL_USER: ${DB_USERNAME:-kanpad}
+  #     MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD — see the header comment}
+  #     MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+  #   volumes:
+  #     - mysql-data:/var/lib/mysql
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ukanpad", "-p${DB_PASSWORD}"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 30
+  #     start_period: 20s
 
 volumes:
-  mysql-data:
+  mariadb-data:
+  # mysql-data:   # uncomment together with the [MySQL] block above

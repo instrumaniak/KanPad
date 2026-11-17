@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE `checklist_items` SET `sort_key` = ? WHERE `id` = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "804d1563e5851dd0f3996466aee1cc0e260f71963347dd381ce88641f8f218fb"
+}

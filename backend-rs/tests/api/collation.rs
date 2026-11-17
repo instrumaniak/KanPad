@@ -31,6 +31,28 @@ async fn the_connection_uses_the_projects_collation(pool: MySqlPool) {
     );
 }
 
+/// The `sort_key` columns MUST use the binary `ascii_bin` collation
+/// (T010): base62 keys are case-sensitive, and any `*_ci` collation
+/// silently reorders keys. Asserted on every table that carries one.
+#[sqlx::test(migrations = "./migrations")]
+async fn sort_key_columns_use_ascii_bin(pool: MySqlPool) {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT table_name, collation_name FROM information_schema.columns \
+         WHERE table_schema = DATABASE() AND column_name = 'sort_key' \
+           AND table_name IN ('columns', 'cards', 'checklist_items')",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("sort_key collations readable");
+    assert_eq!(rows.len(), 3, "all three sort_key columns exist: {rows:?}");
+    for (table, collation) in rows {
+        assert_eq!(
+            collation, "ascii_bin",
+            "{table}.sort_key must use ascii_bin"
+        );
+    }
+}
+
 /// The pin must be **in the URL the app was given**, not just in effect by
 /// luck (the server's default would have been `utf8mb4_0900_ai_ci`).
 #[sqlx::test(migrations = "./migrations")]

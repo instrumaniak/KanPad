@@ -7,25 +7,21 @@
 //! column via [`crate::common::ownership::check_column_owned`] inside the
 //! caller's tx, so the check and the write that follows are atomic.
 //!
-//! Create with an explicit `position` clamps to `[0, max + 1]` then opens a
-//! gap with a single set-based range `UPDATE` (`position + 1` where
-//! `position >= ?`); the default is `MAX(position) + 1` taken under `SELECT
-//! ... FOR UPDATE` in the create tx (an unlocked `MAX` races duplicate
-//! positions). Delete runs the row delete + a set-based gap-close
-//! (`position - 1` range `UPDATE`) in ONE tx — never a reload+save loop.
-//!
-//! Move/reorder (`column_id`/`position` on `PATCH`, T24b): same-column = one
-//! range shift + one point update; cross-column = close-gap + open-gap +
-//! point update. All range writes are set-based (`position ± 1` with a
-//! `WHERE` band — never find-all-then-save-loop). The tx locks columns in
-//! stable ascending `column_id` order (`min` first) via
-//! [`lock_cards_for_update`], then re-reads the moving card's spot under
-//! `FOR UPDATE` ([`fetch_card_spot_for_update`]) so concurrent moves of
-//! *other* cards cannot stale the shift bands; a card that changed columns
-//! under us (same-card race) restarts the tx instead of writing against an
-//! unlocked column. Requested positions clamp via [`clamp_position`] and the
-//! CLAMPED value is written (same-column upper = `N - 1`, cross-column upper
-//! = `M`, missing cross-column position appends `M = max + 1`).
+//! Ordering rides fractional `sort_key`s (T010): every card carries an
+//! `ascii_bin` base62 key and every create/move/delete is a **single-row
+//! write** — no sibling is ever renumbered. Wire `position` (integer,
+//! 0-based) is COMPUTED at read: `enumerate` for lists/pages (page =
+//! `offset + i`), a correlated `COUNT(*) … sort_key < ?` for single-row
+//! reads, per-column counters for grouped fetches. Default-create appends via
+//! a serialized `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` read +
+//! `key_between`; an explicit `position` clamps to `[0, N]` and takes the
+//! between-neighbours key. Move/reorder locks ONLY the moving row
+//! (`fetch_card_spot_for_update`, `FOR UPDATE`) preserving the same-card-race
+//! `Restart`; neighbour reads stay unlocked (last-write-wins for concurrent
+//! same-gap drops — the unique `(column_id, sort_key)` index decides).
+//! Requested positions clamp via [`crate::common::order_key::clamp_position`]
+//! and the CLAMPED value is written (same-column upper = `others`, cross-
+//! column upper = `M`, missing cross-column position appends).
 //!
 //! List queries never `SELECT` the `description` TEXT: `has_description`
 //! comes from a SQL `CASE` (boolean only), `checklist_progress` from a batch
@@ -61,7 +57,8 @@ use super::types::{
 };
 
 /// One `cards` row (assembled by [`fetch_card_owned`]; labels/checklists ride
-/// separately so the card select stays single-row).
+/// separately so the card select stays single-row). `position` is COMPUTED
+/// at read (T010) — never stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardRow {
     /// `cards.id`.
@@ -70,7 +67,7 @@ pub struct CardRow {
     pub title: String,
     /// `cards.column_id`.
     pub column_id: ColumnId,
-    /// Zero-based position.
+    /// Wire position (0-based, computed).
     pub position: i32,
     /// `cards.description` (`None` = unset; TEXT selected here — never in
     /// lists).
@@ -84,18 +81,21 @@ pub struct CardRow {
 }
 
 /// Fetch one owned card (join proves ownership: foreign/missing id →
-/// `RowNotFound` → 404, never 403).
+/// `RowNotFound` → 404, never 403). The wire position is a correlated
+/// `COUNT(*) … sort_key < ?` over the unique `(column_id, sort_key)` index.
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_card_owned<'e, E>(ex: E, user_id: i32, id: i32) -> Result<CardRow, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT k.`id`, k.`title`, k.`column_id` AS \"column_id: i32\", k.`position`, \
+        "SELECT k.`id` AS \"id!\", k.`title` AS \"title!\", k.`column_id` AS \"column_id!: i32\", \
+          (SELECT COUNT(*) FROM `cards` p \
+            WHERE p.`column_id` = k.`column_id` AND p.`sort_key` < k.`sort_key`) AS \"position!: i64\", \
           k.`description` AS \"description: String\", \
           k.`due_date`, \
-          k.`created_at`, \
-          k.`updated_at` \
+          k.`created_at` AS \"created_at!\", \
+          k.`updated_at` AS \"updated_at!\" \
           FROM `cards` k \
           JOIN `columns` c ON c.`id` = k.`column_id` \
           JOIN `boards` b ON b.`id` = c.`board_id` \
@@ -110,7 +110,7 @@ where
         id: CardId::from(row.id),
         title: row.title,
         column_id: ColumnId::from(row.column_id),
-        position: row.position,
+        position: i32::try_from(row.position).map_err(|_| AppError::Internal(Internal))?,
         description: row.description,
         due_date: row.due_date,
         created_at: row.created_at,
@@ -118,30 +118,71 @@ where
     })
 }
 
-/// Current `MAX(position)` in a column (`-1` when empty) locking the range
-/// for the insert that follows. MUST run inside the create tx (`FOR UPDATE`
-/// outside a tx locks nothing); `MAX(INT)` decodes as `i64` (`LONGLONG`),
-/// narrowed via `try_from` (never a silent `as` cast).
-///
-/// The `max_pos!: i64` alias pins type AND nullability (`!`) so the row type
-/// is server-independent: MySQL 8.4 reports `COALESCE(MAX(...), -1)` NOT NULL
-/// while MariaDB 10.6 reports it nullable, and a bare `: i64` override does
-/// not pin nullability (sqlx wraps in `Option` whenever the server says
-/// nullable). The expression is never NULL by construction (`-1` fallback).
+/// The highest `sort_key` currently in a column (`None` when empty), locking
+/// the last index record for the insert that follows. MUST run inside the
+/// create tx (`FOR UPDATE` outside a tx locks nothing). The last-key read +
+/// `key_between` + INSERT in one tx is the serialized append contract (the
+/// pre-T010 `MAX(position) FOR UPDATE` analog, still effectively
+/// single-record — the win is single-row writes with zero sibling rewrites).
 #[tracing::instrument(skip(ex))]
-pub async fn max_position_for_update<'e, E>(ex: E, column_id: i32) -> Result<i32, AppError>
+pub async fn fetch_last_sort_key_for_update<'e, E>(
+    ex: E,
+    column_id: i32,
+) -> Result<Option<String>, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT COALESCE(MAX(`position`), -1) AS \"max_pos!: i64\" \
-          FROM `cards` WHERE `column_id` = ? FOR UPDATE",
+        "SELECT `sort_key` FROM `cards` WHERE `column_id` = ? \
+         ORDER BY `sort_key` DESC LIMIT 1 FOR UPDATE",
         column_id
     )
-    .fetch_one(ex)
+    .fetch_optional(ex)
     .await
     .map_err(AppError::Db)?;
-    i32::try_from(row.max_pos).map_err(|_| AppError::Internal(Internal))
+    Ok(row.map(|row| row.sort_key))
+}
+
+/// A column's sibling `sort_key`s, ascending, excluding `exclude_id` (the
+/// moving card) when set — the between-neighbours computation for moves and
+/// explicit-position creates. Neighbour reads are deliberately UNLOCKED
+/// (D3: last-write-wins for concurrent same-gap drops; uniqueness rides
+/// the unique index, turning same-key races into a scoped `1062`).
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_card_keys_in_column<'e, E>(
+    ex: E,
+    column_id: i32,
+    exclude_id: Option<i32>,
+) -> Result<Vec<(i32, String)>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let pairs: Vec<(i32, String)> = match exclude_id {
+        Some(id) => sqlx::query!(
+            "SELECT `id`, `sort_key` FROM `cards` \
+             WHERE `column_id` = ? AND `id` != ? ORDER BY `sort_key` ASC, `id` ASC",
+            column_id,
+            id
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?
+        .into_iter()
+        .map(|row| (row.id, row.sort_key))
+        .collect(),
+        None => sqlx::query!(
+            "SELECT `id`, `sort_key` FROM `cards` \
+             WHERE `column_id` = ? ORDER BY `sort_key` ASC, `id` ASC",
+            column_id
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?
+        .into_iter()
+        .map(|row| (row.id, row.sort_key))
+        .collect(),
+    };
+    Ok(pairs)
 }
 
 /// Total cards in a column (the list `Page.total` — plain `COUNT(*)`, no join
@@ -162,26 +203,6 @@ where
     u64::try_from(total.total).map_err(|_| AppError::Internal(Internal))
 }
 
-/// Open a gap for an explicit-position insert: one set-based range `UPDATE`
-/// shifts every card at or after `position` up by one (never a reload+save
-/// loop).
-#[tracing::instrument(skip(ex))]
-pub async fn open_card_gap<'e, E>(ex: E, column_id: i32, position: i32) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "UPDATE `cards` SET `position` = `position` + 1 \
-          WHERE `column_id` = ? AND `position` >= ?",
-        column_id,
-        position
-    )
-    .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
 /// Insert a card row; returns the new id (`last_insert_id` as `u64` →
 /// `i32::try_from`, never a silent `as` cast).
 #[tracing::instrument(skip(ex))]
@@ -189,7 +210,7 @@ pub async fn insert_card<'e, E>(
     ex: E,
     column_id: i32,
     title: &str,
-    position: i32,
+    sort_key: &str,
     description: Option<&str>,
     due_date: Option<NaiveDateTime>,
 ) -> Result<i32, AppError>
@@ -197,11 +218,11 @@ where
     E: MySqlExecutor<'e>,
 {
     let result = sqlx::query!(
-        "INSERT INTO `cards` (`title`, `column_id`, `position`, `description`, `due_date`) \
+        "INSERT INTO `cards` (`title`, `column_id`, `sort_key`, `description`, `due_date`) \
           VALUES (?, ?, ?, ?, ?)",
         title,
         column_id,
-        position,
+        sort_key,
         description,
         due_date
     )
@@ -273,9 +294,9 @@ where
 }
 
 /// Delete a card row. Label links/checklists/items/notes fan out via DB
-/// `ON DELETE CASCADE` FKs — no manual cleanup loop. The caller closes the
-/// position gap next (same tx) and pre-read the row ([`fetch_card_owned`])
-/// for ownership + the deleted position.
+/// `ON DELETE CASCADE` FKs — no manual cleanup loop. No gap is closed —
+/// sibling `sort_key`s are untouched (T010). The caller pre-read the row
+/// ([`fetch_card_owned`]) for ownership.
 #[tracing::instrument(skip(ex))]
 pub async fn delete_card_row<'e, E>(ex: E, id: i32) -> Result<(), AppError>
 where
@@ -288,74 +309,24 @@ where
     Ok(())
 }
 
-/// Close the position gap left by a delete: one set-based range `UPDATE`
-/// shifts every later sibling down by one (never a reload+save loop).
-#[tracing::instrument(skip(ex))]
-pub async fn close_card_gap<'e, E>(ex: E, column_id: i32, position: i32) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "UPDATE `cards` SET `position` = `position` - 1 \
-          WHERE `column_id` = ? AND `position` > ?",
-        column_id,
-        position
-    )
-    .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
-/// Clamp a requested card position into `[0, upper]` (pure: the unit subject
-/// for move clamping). Callers pass the max WRITABLE index — `N - 1` for a
-/// same-column reorder of `N` cards, `M` for a cross-column insert into `M`
-/// cards (so `M` appends at `max + 1`) — and write the returned value (never
-/// the raw request).
-pub fn clamp_position(requested: i32, upper: i32) -> i32 {
-    requested.clamp(0, upper.max(0))
-}
-
-/// Lock every card row of one column in `(column_id, position)` order
-/// (`ORDER BY position ASC ... FOR UPDATE`) — MUST run inside the move tx.
-/// Returns the locked card ids (the caller derives the count); the locks are
-/// held until the tx commits, so the count and every shift band computed from
-/// it are stable. Cross-column moves call this once per column in ascending
-/// `column_id` order (`min` first) so opposite-direction moves serialize
-/// instead of deadlocking.
-#[tracing::instrument(skip(ex))]
-pub async fn lock_cards_for_update<'e, E>(ex: E, column_id: i32) -> Result<Vec<i32>, AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    let rows = sqlx::query!(
-        "SELECT `id` FROM `cards` WHERE `column_id` = ? ORDER BY `position` ASC FOR UPDATE",
-        column_id
-    )
-    .fetch_all(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(rows.into_iter().map(|row| row.id).collect())
-}
-
-/// Re-read the moving card's `(column_id, position)` under `FOR UPDATE`
+/// Re-read the moving card's `(column_id, sort_key)` under `FOR UPDATE`
 /// (ownership join included: foreign/missing id → `RowNotFound` → 404, never
-/// 403). MUST run inside the move tx AFTER [`lock_cards_for_update`]: the
-/// spot is fresh (a concurrent move that committed before our locks is
-/// visible) and the row lock serializes concurrent moves of the SAME card.
-/// The caller restarts the tx when the column differs from the pre-lock read
-/// (same-card race — writing against an unlocked column is never allowed).
+/// 403). MUST run inside the move tx AFTER any sibling reads: the row lock
+/// serializes concurrent moves of the SAME card; the caller restarts the tx
+/// when the column differs from the pre-lock read (same-card race — writing
+/// against an unlocked column is never allowed). `sort_key` is returned for
+/// fresh-index computation by the move worker.
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_card_spot_for_update<'e, E>(
     ex: E,
     user_id: i32,
     id: i32,
-) -> Result<(i32, i32), AppError>
+) -> Result<(i32, String), AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let row = sqlx::query!(
-        "SELECT k.`column_id` AS \"column_id: i32\", k.`position` \
+        "SELECT k.`column_id` AS \"column_id: i32\", k.`sort_key` \
           FROM `cards` k \
           JOIN `columns` c ON c.`id` = k.`column_id` \
           JOIN `boards` b ON b.`id` = c.`board_id` \
@@ -366,80 +337,26 @@ where
     .fetch_one(ex)
     .await
     .map_err(AppError::Db)?;
-    Ok((row.column_id, row.position))
+    Ok((row.column_id, row.sort_key))
 }
 
-/// Same-column shift down (moving to a HIGHER index): one set-based range
-/// `UPDATE` moves every card in `(old, new]` down by one (never a
-/// reload+save loop). No-op when the band is empty — callers skip it when
-/// `new == old`, the `UPDATE` itself is safe either way.
-#[tracing::instrument(skip(ex))]
-pub async fn shift_cards_down<'e, E>(
-    ex: E,
-    column_id: i32,
-    old_position: i32,
-    new_position: i32,
-) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "UPDATE `cards` SET `position` = `position` - 1 \
-          WHERE `column_id` = ? AND `position` > ? AND `position` <= ?",
-        column_id,
-        old_position,
-        new_position
-    )
-    .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
-/// Same-column shift up (moving to a LOWER index): one set-based range
-/// `UPDATE` moves every card in `[new, old)` up by one (never a reload+save
-/// loop).
-#[tracing::instrument(skip(ex))]
-pub async fn shift_cards_up<'e, E>(
-    ex: E,
-    column_id: i32,
-    new_position: i32,
-    old_position: i32,
-) -> Result<(), AppError>
-where
-    E: MySqlExecutor<'e>,
-{
-    sqlx::query!(
-        "UPDATE `cards` SET `position` = `position` + 1 \
-          WHERE `column_id` = ? AND `position` >= ? AND `position` < ?",
-        column_id,
-        new_position,
-        old_position
-    )
-    .execute(ex)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(())
-}
-
-/// Point-write the moving card after its gap work (same-column shift or
-/// cross-column close+open): sets both `column_id` and `position` in one
-/// row write. The caller passes the CLAMPED position (never the raw
-/// request).
+/// Point-write the moving card: sets `column_id` and `sort_key` in one
+/// row write (never a neighbour-touching rewrite). The caller passes the
+/// between-neighbours key for the requested (clamped) index.
 #[tracing::instrument(skip(ex))]
 pub async fn point_move_card<'e, E>(
     ex: E,
     id: i32,
     column_id: i32,
-    position: i32,
+    sort_key: &str,
 ) -> Result<(), AppError>
 where
     E: MySqlExecutor<'e>,
 {
     sqlx::query!(
-        "UPDATE `cards` SET `column_id` = ?, `position` = ? WHERE `id` = ?",
+        "UPDATE `cards` SET `column_id` = ?, `sort_key` = ? WHERE `id` = ?",
         column_id,
-        position,
+        sort_key,
         id
     )
     .execute(ex)
@@ -589,7 +506,7 @@ pub struct DetailItemRow {
     pub is_completed: i8,
     /// `checklist_items.checklist_id`.
     pub checklist_id: i32,
-    /// Zero-based position.
+    /// Wire position (0-based, computed per checklist at read).
     pub position: i32,
     /// `checklist_items.created_at`.
     pub created_at: NaiveDateTime,
@@ -597,8 +514,9 @@ pub struct DetailItemRow {
     pub updated_at: NaiveDateTime,
 }
 
-/// Items for all of one card's checklists (`checklist_id, position ASC`) via
-/// a subselect — one query, no dynamic `IN` needed.
+/// Items for all of one card's checklists (`checklist_id, sort_key ASC`) via
+/// a subselect — one query, no dynamic `IN` needed. Positions are per-group
+/// enumerate indexes assigned in Rust (the fetch is group-ordered).
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_detail_items<'e, E>(ex: E, card_id: i32) -> Result<Vec<DetailItemRow>, AppError>
 where
@@ -606,29 +524,38 @@ where
 {
     let rows = sqlx::query!(
         "SELECT i.`id`, i.`text`, i.`is_completed`, \
-          i.`checklist_id` AS \"checklist_id: i32\", i.`position`, \
+          i.`checklist_id` AS \"checklist_id: i32\", \
           i.`created_at`, \
           i.`updated_at` \
           FROM `checklist_items` i \
           WHERE i.`checklist_id` IN (SELECT c.`id` FROM `checklists` c WHERE c.`card_id` = ?) \
-          ORDER BY i.`checklist_id` ASC, i.`position` ASC",
+          ORDER BY i.`checklist_id` ASC, i.`sort_key` ASC, i.`id` ASC",
         card_id
     )
     .fetch_all(ex)
     .await
     .map_err(AppError::Db)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| DetailItemRow {
+    let mut items = Vec::with_capacity(rows.len());
+    let mut current_checklist = -1_i32;
+    let mut next_position = 0_i32;
+    for row in rows {
+        if row.checklist_id != current_checklist {
+            current_checklist = row.checklist_id;
+            next_position = 0;
+        }
+        let position = next_position;
+        next_position += 1;
+        items.push(DetailItemRow {
             id: row.id,
             text: row.text,
             is_completed: row.is_completed,
             checklist_id: row.checklist_id,
-            position: row.position,
+            position,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        })
-        .collect())
+        });
+    }
+    Ok(items)
 }
 
 /// Render a [`CardRow`] + its nests for the wire. Progress rolls up from the
@@ -722,8 +649,6 @@ struct CardPageRow {
     has_description: i64,
     /// `cards.column_id`.
     column_id: i32,
-    /// Zero-based position.
-    position: i32,
     /// `cards.due_date` (`None` = unset).
     due_date: Option<NaiveDateTime>,
     /// `cards.created_at`.
@@ -751,8 +676,9 @@ pub type PageLabelTuple = (i32, i32, String, String);
 /// One progress rollup for a page: `(card_id, total, completed)`.
 pub type PageProgressTuple = (i32, i64, i64);
 
-/// Page `SELECT` for a column's cards (`position ASC`, TEXT-free). The caller
-/// proves ownership first via [`crate::common::ownership::check_column_owned`].
+/// Page `SELECT` for a column's cards (`sort_key ASC, id ASC`, TEXT-free).
+/// Wire positions are `offset + index` (computed). The caller proves
+/// ownership first via [`crate::common::ownership::check_column_owned`].
 /// Built with
 /// `QueryBuilder` (shared-filter discipline per `30-db-schema.md`; user text
 /// is never `push`ed — only bound ids/limits).
@@ -770,11 +696,11 @@ where
         "SELECT k.`id`, k.`title`, \
           (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' \
             THEN 1 ELSE 0 END) AS `has_description`, \
-          k.`column_id`, k.`position`, k.`due_date`, k.`created_at`, k.`updated_at` \
+          k.`column_id`, k.`due_date`, k.`created_at`, k.`updated_at` \
           FROM `cards` k WHERE k.`column_id` = ",
     );
     builder.push_bind(column_id);
-    builder.push(" ORDER BY k.`position` ASC LIMIT ");
+    builder.push(" ORDER BY k.`sort_key` ASC, k.`id` ASC LIMIT ");
     builder.push_bind(limit);
     builder.push(" OFFSET ");
     builder.push_bind(offset);
@@ -788,21 +714,25 @@ where
         .fetch_all(ex)
         .await
         .map_err(AppError::Db)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            (
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let position = offset
+                .checked_add(u32::try_from(index).map_err(|_| AppError::Internal(Internal))?)
+                .and_then(|position| i32::try_from(position).ok())
+                .ok_or(AppError::Internal(Internal))?;
+            Ok((
                 row.id,
                 row.title,
                 row.has_description != 0,
                 row.column_id,
-                row.position,
+                position,
                 row.due_date,
                 row.created_at,
                 row.updated_at,
-            )
+            ))
         })
-        .collect())
+        .collect::<Result<Vec<_>, AppError>>()
 }
 
 /// Label links for a page of cards (`card_id, label id` order). Empty input
@@ -875,7 +805,7 @@ where
 }
 
 /// Assemble a page of TEXT-free rows + label links + progress rollups into
-/// wire [`CardSummary`]s, preserving the `position ASC` page order. Pure: no
+/// wire [`CardSummary`]s, preserving the page order. Pure: no
 /// SQL.
 #[allow(clippy::too_many_arguments)]
 pub fn to_summaries(
@@ -930,30 +860,4 @@ pub fn to_summaries(
         });
     }
     Ok(summaries)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::clamp_position;
-
-    /// `clamp_position` unit: in-range passes through, negatives pin to 0,
-    /// over-large pins to `upper` (the caller passes `N - 1` same-column /
-    /// `M` cross-column and WRITES the result — see `cards_move.rs` for the
-    /// written-value integration proof).
-    #[test]
-    fn clamp_position_pins_to_closed_range() {
-        assert_eq!(clamp_position(2, 5), 2);
-        assert_eq!(clamp_position(0, 5), 0);
-        assert_eq!(clamp_position(5, 5), 5);
-        assert_eq!(clamp_position(-1, 5), 0);
-        assert_eq!(clamp_position(-50, 3), 0);
-        assert_eq!(clamp_position(6, 5), 5);
-        assert_eq!(clamp_position(999, 3), 3);
-        // Degenerate upper (empty/singleton column): still `[0, 0]`.
-        assert_eq!(clamp_position(0, 0), 0);
-        assert_eq!(clamp_position(7, 0), 0);
-        assert_eq!(clamp_position(-7, 0), 0);
-        // Negative upper is defensive-only (callers never pass one): pins 0.
-        assert_eq!(clamp_position(3, -4), 0);
-    }
 }

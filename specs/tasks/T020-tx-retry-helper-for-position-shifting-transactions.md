@@ -6,19 +6,27 @@
 
 ## Goal
 
-Deadlock/lock-wait (`1213`/`1205`) retry exists **only** in `cards/routes.rs::move_card`
-(5 attempts, `READ COMMITTED` before `BEGIN`, stable lock order, explicit rollback,
-linear backoff). Every other transaction that shifts positions or takes `FOR UPDATE` is
-single-shot → falls into the generic-500 arm (`error.rs:389`) → client-visible 500
-under concurrent drag-drop.
+Deadlock/lock-wait (`1213`/`1205`, scoped `1062`) retry exists inline in **six**
+write sites post-T010: `create_card` and `update_card`'s move worker
+(`cards/routes.rs:112,325`), checklist-item create/update (`checklists/routes.rs:260,359`),
+column update (`columns/routes.rs:192`), and bulk `move_cards` (`columns/routes.rs:348`).
+Transactions that still shift positions or take `FOR UPDATE` single-shot → fall into the
+generic-500 arm (`error.rs`) → client-visible 500 under concurrent use: `delete_card`,
+`delete_checklist`/`delete_item`, `create_column`/`delete_column`, notes/boards/labels/tags,
+`common/rebalance.rs` (32 `FOR UPDATE` sites across 7 files — re-enumerate, don't assume).
+*(Amendment 2026-11-16: the pre-T010 scope note listing `create_card`/`move_cards` et al. as
+single-shot was stale — corrected against the tree.)*
 
 1. Extract a **shared kernel helper** (`src/common/tx_retry.rs`): bounded attempts
    (5), linear backoff, explicit rollback between attempts, optional
    `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` before `BEGIN`, retrying on
    `is_transient_lock_error` (**1213 | 1205 | 1062** — post-T010 matcher).
-2. Apply it to the remaining lock-taking transactions: `create_card`, `delete_card`,
-   `update_card`, bulk `move_cards` (`columns/routes.rs:269-301`), plus an audit of
-   every remaining `tx.begin()` site — each gets the helper or a comment why not.
+2. Apply it to the remaining lock-taking transactions: `delete_card` and whichever
+   single-shot sites a fresh `FOR UPDATE` enumeration finds (notes/boards/labels/tags,
+   checklist/column deletes, `common/rebalance.rs`) — the six inline sites switch to
+   the helper behavior-preserving; bulk `move_cards` is **not** single-shot (already
+   retried). Audit of every remaining `tx.begin()` site — each gets the helper or a
+   comment why not.
 3. **Exhausted retries → 503 + `Retry-After`** (busy), not generic 500.
 
 ## Depends On
@@ -38,12 +46,13 @@ users (D-2).
 ## Spec References
 
 - `specs/arch-hardening-specs/20-performance.md` §Retry helper (post-T010 scope,
-  design, edge cases, test plan).
-- `specs/arch-hardening-specs/00-overview.md` — finding R4; **D-5 (T010 → T020)**;
+  design, edge cases, test plan — amended 2026-11-16, pass 2: six inline sites).
+- `specs/arch-hardening-specs/00-overview.md` — finding R4 (re-derived 2026-11-16); **D-5 (T010 → T020)**;
   global DoD.
-- `backend-rs/src/features/cards/routes.rs:234-386` (the reference implementation to
-  generalize), `backend-rs/src/error.rs:389` (generic-500 arm), `backend-rs/src/features/columns/routes.rs:269-301`
-  (bulk move), T010's task file (`specs/tasks/T010-*.md` — matcher extension to 1062,
+- `backend-rs/src/features/cards/routes.rs:325` (`update_card`'s move worker — the
+  reference implementation to generalize) and `:112` (`create_card`),
+  `backend-rs/src/error.rs` (generic-500 arm), `backend-rs/src/features/columns/routes.rs:348`
+  (bulk move, already retried), T010's task file (`specs/tasks/T010-*.md` — matcher extension to 1062,
   lock semantics it removed).
 - `backend-rs/tests/README.md` (harness rules), `backend-rs/tests/api/cards_move.rs`
   (existing race/fuzz suite).
@@ -54,8 +63,8 @@ users (D-2).
 |---|---|
 | `backend-rs/src/common/tx_retry.rs` | **NEW** — `with_tx_retry` helper + unit tests |
 | `backend-rs/src/common/mod.rs` | Register module |
-| `backend-rs/src/features/cards/routes.rs` | Replace inline retry in `move_card` with the helper (behavior-preserving); apply to create/delete/update |
-| `backend-rs/src/features/columns/routes.rs` | Bulk `move_cards` through the helper |
+| `backend-rs/src/features/cards/routes.rs` | Replace inline retry in `move_card` and `create_card` with the helper (behavior-preserving); apply to remaining single-shot sites |
+| `backend-rs/src/features/columns/routes.rs`, `.../checklists/routes.rs` | Switch the four existing inline retry loops (`move_cards`, column update, checklist-item create/update) to the helper — no behavior change |
 | Audit: boards/columns/notes/checklists/projects/auth `tx.begin()` sites | Helper or explanatory comment (one-line each) |
 | `backend-rs/src/error.rs` | Exhausted-retry → 503 + `Retry-After` mapping |
 | `backend-rs/.sqlx/` | Regen if queries change (pinned CLI, MySQL, db `kanpad` — T009) |
@@ -80,7 +89,8 @@ TDD throughout.
    and document worst case, explicit rollback, optional `READ COMMITTED`).
 5. Swap `move_card`'s inline loop to the helper (existing `cards_move.rs` race/fuzz
    suites must stay green — behavior-preserving refactor).
-6. Apply to `create_card`, `delete_card`, `update_card`, bulk `move_cards`; audit all
+6. Six existing inline sites switch to the helper (behavior-preserving refactor);
+   apply to `delete_card` and remaining single-shot sites found by enumeration; audit all
    `tx.begin()` sites (comment each pass/skip decision).
 7. Gates: fmt, clippy `-D warnings -A pedantic`, full suite MySQL + MariaDB,
    `sqlx prepare --check`; persistence assertions per touched endpoint (AGENTS.md).
@@ -94,8 +104,9 @@ TDD throughout.
 - Same-card race keeps T010's `Restart` short-circuit (logical conflict ≠ lock
   conflict — don't retry it).
 - Worst-case retry time must fit the 30 s request timeout.
-- Both MySQL 8.4 + MariaDB 10.6 green; harness rules (explicit imports, `assert_problem`
-  labels); no commit without approval.
+- Both MySQL 8.4 + MariaDB 11.4 green (the CI matrix legs; 10.6 only if T011 confirms
+  prod runs it — see `specs/arch-hardening-specs/40-operations.md` §6); harness rules
+  (explicit imports, `assert_problem` labels); no commit without approval.
 
 ## Acceptance Criteria
 

@@ -17,6 +17,13 @@
 | Backups | same `scripts/backup-db.sh` + systemd timer | same script + cPanel cron |
 | Monitoring | same hosted uptime check on `/ready` + JSON logs | same |
 
+**Wave 3 note (2026-11-16, pass 2):** when the MCP surface lands
+(`specs/mcp/`), `/mcp` rides the **same** API origin and container — no new
+port, no new service, no new proxy route. Path B's proxy must additionally
+satisfy the MCP proxy requirements (read timeout > `MCP_TIMEOUT_SECS`, no
+response buffering, unchanged `Host`, untouched `Authorization` —
+`specs/mcp/70-operations.md` §2).
+
 **Path A exists for:** contributors, load testing (T026), and orgs that want a
 one-command self-host (README checklist item "Docker & templates"). **Path B remains
 production** until/unless the org standardizes on a VPS. Neither path may silently
@@ -33,8 +40,11 @@ Deliverable summary: `compose.yaml` builds from clean clone; `frontend/Dockerfil
 ## 3. Backups & restore (T011) — full design in `10-reliability.md` §R1
 
 Ops-side contract: script at `scripts/backup-db.sh`, retention 7d/4w, optional offsite
-hook, systemd timer + cPanel cron examples, drill template + first drill record. This
-is R1's closure and the **prerequisite for every production migration** (cutover
+hook, systemd timer + cPanel cron examples, drill template + first drill record.
+Triggering, verification and the drill record live in **`docs/operations-backup.md`**
+(single owner — amended 2026-11-16, no second copy of the procedure here). This
+section is the ops contract only.
+This is R1's closure and the **prerequisite for every production migration** (cutover
 doctrine: restore is the only DB rollback).
 
 ## 4. Monitoring & logging (T025, D-4)
@@ -55,7 +65,9 @@ doctrine: restore is the only DB rollback).
   live in this file's runbook table so an operator has one page.
 - **Metrics:** `/metrics` stays opt-in (`METRICS_PORT`); T024 makes the series useful;
   scraping is a *future* option — if ever added, it's network-local only. No
-  Grafana/Prometheus ships now (D-4).
+  Grafana/Prometheus ships now (D-4). Wave 3 note: when `MCP_ENABLED`, the
+  MCP/key series (`kanpad_mcp_*`, `kanpad_api_key_*`, `kanpad_agent_rate_limited_total`)
+  land on the same opt-in listener (`specs/mcp/70-operations.md` §3).
 
 ## 5. Secrets & config hygiene (T018, C3)
 
@@ -81,6 +93,13 @@ doctrine: restore is the only DB rollback).
 T011's drill (which connects to the real DB) must **record `SELECT VERSION()`** and
 both docs get corrected (T019 owns doc sync). CI already tests both engines — the
 docs must name what production actually runs.
+
+**Consequence (amendment 2026-11-16):** the CI MariaDB leg currently runs **11.4**
+(`.github/workflows/backend-rs.yml`, `backend-mariadb` job). If T011 records prod as
+10.6.x, either restore a 10.6 leg (or replace 11.4 with 10.6 in the matrix), or record
+the accepted delta **in writing in this section** — CI must not silently exercise the
+wrong version. The arch-hardening DoD wording ("CI matrix legs") already defers to
+this check.
 
 ## 7. Deploy sequence (T019 — docs/proxy consolidation)
 

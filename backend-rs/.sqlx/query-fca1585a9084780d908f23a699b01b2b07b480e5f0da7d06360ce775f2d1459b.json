@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT `sort_key` FROM `checklist_items` WHERE `checklist_id` = ? ORDER BY `sort_key` DESC LIMIT 1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sort_key",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | BINARY | NO_DEFAULT_VALUE",
+          "collation": 224,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "kanpad.checklist_items",
+            "name": "sort_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "fca1585a9084780d908f23a699b01b2b07b480e5f0da7d06360ce775f2d1459b"
+}

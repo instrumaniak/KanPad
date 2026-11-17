@@ -5,24 +5,6 @@ tasks:
     depends: ~
     phase: 0
     critical: false
-  T002:
-    name: npm workspace
-    status: pending
-    depends: ~
-    phase: 0
-    critical: false
-  T003:
-    name: streamlined release workflow
-    status: pending
-    depends: ~
-    phase: 0
-    critical: false
-  T004:
-    name: fix e2e issues & others
-    status: pending
-    depends: ~
-    phase: 0
-    critical: false
   T005:
     name: "BE-RS: DB connectivity & error logging"
     status: done
@@ -58,19 +40,13 @@ tasks:
     critical: false
   T010:
     name: Fractional sort-key ordering for positions
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: false
-  T011:
-    name: Automated DB backups + restore drill
-    status: pending
-    depends: ~
-    phase: 0
-    critical: true
   T012:
     name: Repair compose.yaml + frontend Dockerfile
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: true
@@ -178,4 +154,109 @@ tasks:
     status: done
     depends: ~
     phase: 0
+    critical: false
+  T029:
+    name: sql query observability
+    status: pending
+    depends:
+      - T024
+    phase: 1
+    critical: false
+  T030:
+    name: Sentry + OpenTelemetry observability stack
+    status: pending
+    depends:
+      - T029
+    phase: 1
+    critical: false
+  T031:
+    name: "Collab: M1+M2 migrations + personal-workspace backfill"
+    status: pending
+    depends:
+      - T027
+    phase: 2
+    critical: true
+  T032:
+    name: "Collab: authz kernel + extractors"
+    status: pending
+    depends:
+      - T031
+    phase: 2
+    critical: true
+  T033:
+    name: "Collab: enforce authz on boards/columns/cards"
+    status: pending
+    depends:
+      - T032
+    phase: 2
+    critical: true
+  T034:
+    name: "Collab: enforce authz on projects/notes/tags/checklists/labels"
+    status: pending
+    depends:
+      - T033
+    phase: 2
+    critical: false
+  T035:
+    name: "Collab: workspace membership management API"
+    status: pending
+    depends:
+      - T032
+    phase: 2
+    critical: false
+  T036:
+    name: "Collab: optimistic concurrency (version + 409)"
+    status: pending
+    depends:
+      - T033
+    phase: 2
+    critical: false
+  T037:
+    name: "Collab: activity log (append-only + read APIs)"
+    status: pending
+    depends:
+      - T033
+    phase: 2
+    critical: true
+  T038:
+    name: "Collab: admin panel (users + activity)"
+    status: pending
+    depends:
+      - T037
+    phase: 2
+    critical: false
+  T039:
+    name: "Collab: frontend sharing UX + cache-key scoping"
+    status: pending
+    depends:
+      - T035
+    phase: 2
+    critical: false
+  T040:
+    name: "Collab: realtime SSE transport + presence"
+    status: pending
+    depends:
+      - T032
+      - T037
+    phase: 2
+    critical: true
+  T041:
+    name: "Collab: comments + mentions + notifications backend"
+    status: pending
+    depends:
+      - T032
+      - T033
+      - T034
+      - T040
+    phase: 2
+    critical: false
+  T042:
+    name: "Collab: frontend (SSE hook, presence, comments, inbox)"
+    status: pending
+    depends:
+      - T035
+      - T039
+      - T040
+      - T041
+    phase: 2
     critical: false

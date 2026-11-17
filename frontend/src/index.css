@@ -24,12 +24,29 @@
     animation: none;
   }
 }
+/* Inter — VARIABLE font only (fvar wght 100–900). Never declare a static
+   weight here with a `100 900` descriptor: the browser treats the single face
+   as covering the whole range and does NOT synthesize bold, so every weight
+   (500/600/700) silently renders as 400 — <strong> looks identical to plain
+   text. This src is Google's official v20 latin variable subset. */
 @font-face {
   font-family: 'Inter';
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
-  src: url('https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2')
+  src: url('https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2')
+    format('woff2');
+}
+
+/* Inter italics — same rule: a variable wght axis, style declared `italic`.
+   Without this face, <em> falls back to synthetic oblique (or nothing
+   noticeable) in engines that won't shear a variable font. */
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('https://fonts.gstatic.com/s/inter/v20/UcC53FwrK3iLTcvneQg7Ca725JhhKnNqk6L5UUM.woff2')
     format('woff2');
 }
 
@@ -54,6 +71,8 @@
   --label-green: #22C55E;
   --label-blue: #3B82F6;
   --label-purple: #A855F7;
+  --label-teal: #14B8A6;
+  --label-pink: #EC4899;
 
   /* === Typography === */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -147,6 +166,8 @@
   --label-green: #4ADE80;
   --label-blue: #60A5FA;
   --label-purple: #C084FC;
+  --label-teal: #2DD4BF;
+  --label-pink: #F472B6;
 
   /* shadcn/ui — Dark */
   --foreground: #DFE6EF;
@@ -215,6 +236,8 @@
   --color-label-green: var(--label-green);
   --color-label-blue: var(--label-blue);
   --color-label-purple: var(--label-purple);
+  --color-label-teal: var(--label-teal);
+  --color-label-pink: var(--label-pink);
 
   /* Sidebar */
   --color-sidebar: var(--sidebar);
@@ -400,3 +423,51 @@
     animation: none;
   }
 }
+
+/* === pele (mermaid-compatible diagram renderer) — Noir theme mapping ===
+   One var-referenced block: `.dark` on <html> flips the underlying tokens,
+   so this works in both light and dark mode without duplication.
+   --pele-font / --pele-font-mono MUST stay byte-identical to the render
+   options passed in mermaid-diagram.tsx (drawn font = measured font). */
+.pele {
+  --pele-bg: var(--background);
+  --pele-fg: var(--foreground);
+  --pele-fg-on-light: #18181B; /* source-fixed light fills — fixed by design */
+  --pele-fg-on-dark: #FFFFFF; /* source-fixed dark fills — fixed by design */
+  --pele-muted: var(--muted-foreground);
+  --pele-line: var(--text-secondary);
+  --pele-surface: var(--surface);
+  --pele-surface-alt: var(--card);
+  --pele-border: var(--border);
+  --pele-accent: var(--label-blue);
+  --pele-critical: var(--error);
+  --pele-error: var(--error);
+  --pele-font: Inter, system-ui, -apple-system, sans-serif;
+  --pele-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --pele-title-weight: 600;
+  --pele-heading-weight: 600;
+  --pele-bold-weight: 600;
+  --pele-radius: var(--radius);
+  --pele-series-1: var(--label-blue);
+  --pele-series-2: var(--label-orange);
+  --pele-series-3: var(--label-green);
+  --pele-series-4: var(--label-red);
+  --pele-series-5: var(--label-teal);
+  --pele-series-6: var(--label-yellow);
+  --pele-series-7: var(--label-purple);
+  --pele-series-8: var(--label-pink);
+}
+
+/* === highlight.js minimal token palette (shared markdown renderer) ===
+   var()-referenced: flips with the theme, no duplication. */
+.hljs { color: var(--text-primary); }
+.hljs-comment, .hljs-quote { color: var(--text-secondary); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name, .hljs-tag { color: var(--label-purple); }
+.hljs-string, .hljs-attr, .hljs-template-variable, .hljs-type { color: var(--label-green); }
+.hljs-number, .hljs-literal { color: var(--label-orange); }
+.hljs-title, .hljs-section, .hljs-selector-id, .hljs-selector-class { color: var(--label-blue); }
+.hljs-variable, .hljs-template-tag, .hljs-deletion { color: var(--label-red); }
+.hljs-regexp, .hljs-link { color: var(--label-teal); }
+.hljs-symbol, .hljs-bullet, .hljs-subst { color: var(--label-yellow); }
+.hljs-meta { color: var(--muted-foreground); }
+.hljs-addition { color: var(--label-green); }

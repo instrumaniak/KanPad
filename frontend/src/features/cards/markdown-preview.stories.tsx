@@ -5,7 +5,7 @@ const meta = {
   title: 'Features/Cards/MarkdownPreview',
   component: MarkdownPreview,
   tags: ['autodocs'],
-  args: { content: '# Hello\n\nThis is **markdown**.' },
+  args: { content: '**Fix** the `login` *loop* bug — ++sign it++ or [docs](https://example.com)' },
 } satisfies Meta<typeof MarkdownPreview>;
 
 export default meta;

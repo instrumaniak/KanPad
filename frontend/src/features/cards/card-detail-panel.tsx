@@ -1,14 +1,11 @@
-import { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
+import { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { useUpdateCard, useCard, type Card as CardType, type CardDetail } from './use-cards';
+import { LazyMarkdownRenderer } from '../notes/lazy-markdown-renderer';
 import { LabelPicker } from '../labels/label-picker';
 import { DueDatePicker } from './due-date-picker';
 import { ChecklistSection } from '../checklists';
 
-const MarkdownPreview = lazy(() =>
-  import('./markdown-preview').then((m) => ({ default: m.MarkdownPreview }))
-);
-import {
-  Sheet,
+import { Sheet,
   SheetContent,
 } from '@/components/ui/sheet';
 import {
@@ -294,9 +291,15 @@ export function CardDetailPanel({ card, open, onOpenChange }: CardDetailPanelPro
                 />
               </TabsContent>
               <TabsContent value="preview">
-                <Suspense fallback={<div className="min-h-[200px] rounded-md border border-input bg-background p-3">Loading preview...</div>}>
-                  <MarkdownPreview content={description} />
-                </Suspense>
+                {description.trim() ? (
+                  <Suspense fallback={<div className="min-h-[200px] rounded-md border border-input bg-background p-3">Loading preview...</div>}>
+                    <LazyMarkdownRenderer content={description} />
+                  </Suspense>
+                ) : (
+                  <p className="min-h-[200px] rounded-md border border-input bg-background p-3 text-muted-foreground text-sm italic">
+                    Nothing to preview
+                  </p>
+                )}
               </TabsContent>
             </Tabs>
 

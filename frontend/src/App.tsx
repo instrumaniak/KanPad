@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createAppQueryClient } from './lib/app-query-client';
@@ -9,34 +9,15 @@ import { AppLayout } from './layouts/app-layout';
 import { Spinner } from './components/spinner';
 import { RouteErrorBoundaryWithLocation } from './components/route-error-boundary-with-location';
 import { SessionExpiryHandler } from './components/session-expiry-handler';
-
-const RegisterForm = lazy(() =>
-  import('./features/auth/register-form').then((m) => ({ default: m.RegisterForm }))
-);
-const LoginForm = lazy(() =>
-  import('./features/auth/login-form').then((m) => ({ default: m.LoginForm }))
-);
-const ProjectList = lazy(() =>
-  import('./features/projects/project-list').then((m) => ({ default: m.ProjectList }))
-);
-const BoardList = lazy(() =>
-  import('./features/boards/board-list').then((m) => ({ default: m.BoardList }))
-);
-const ArchivedBoards = lazy(() =>
-  import('./features/boards/archived-boards').then((m) => ({ default: m.ArchivedBoards }))
-);
-const BoardView = lazy(() =>
-  import('./features/boards/board-view/board-view').then((m) => ({ default: m.BoardView }))
-);
-const NotesPage = lazy(() =>
-  import('./features/notes/note-list').then((m) => ({ default: m.NoteList }))
-);
-const NoteDetailPage = lazy(() =>
-  import('./features/notes/note-detail-page').then((m) => ({ default: m.NoteDetailPage }))
-);
-const NoteEditPage = lazy(() =>
-  import('./features/notes/note-edit-page').then((m) => ({ default: m.NoteEditPage }))
-);
+import { RegisterForm } from './features/auth/register-form';
+import { LoginForm } from './features/auth/login-form';
+import { ProjectList } from './features/projects/project-list';
+import { BoardList } from './features/boards/board-list';
+import { ArchivedBoards } from './features/boards/archived-boards';
+import { BoardView } from './features/boards/board-view/board-view';
+import { NoteList } from './features/notes/note-list';
+import { NoteDetailPage } from './features/notes/note-detail-page';
+import { NoteEditPage } from './features/notes/note-edit-page';
 
 function ForgotPasswordPage() {
   return (
@@ -60,6 +41,20 @@ function LoadingFallback() {
 function App() {
   const [queryClient] = useState(() => createAppQueryClient());
 
+  // Idle prefetch the lazy markdown payload after first paint. Silent on
+  // failure — the lazy boundary still loads on demand.
+  useEffect(() => {
+    const prefetch = () => {
+      void import('./features/notes/markdown-renderer').catch(() => {});
+    };
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(prefetch, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(prefetch, 1500);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
@@ -79,7 +74,7 @@ function App() {
                     <Route path="/" element={<BoardList />} />
                     <Route path="/archived-boards" element={<ArchivedBoards />} />
                     <Route path="/projects" element={<ProjectList />} />
-                    <Route path="/notes" element={<NotesPage />} />
+                    <Route path="/notes" element={<NoteList />} />
                     <Route path="/notes/:id" element={<NoteDetailPage />} />
                     <Route path="/notes/:id/edit" element={<NoteEditPage />} />
                     <Route

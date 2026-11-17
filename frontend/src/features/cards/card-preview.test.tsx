@@ -168,3 +168,61 @@ describe('CardPreview', () => {
     expect(badge).toHaveAttribute('aria-label', 'Due date: Today');
   });
 });
+
+describe('CardPreview markdown title', () => {
+  const baseCard = {
+    id: 1,
+    title: 'Preview Card',
+    column_id: 1,
+    position: 0,
+    has_description: false,
+    due_date: null as string | null,
+    labels: [],
+    created_at: '2024-01-01',
+    updated_at: '2024-01-01',
+  };
+
+  it('renders basic markdown in the card title (bold/emphasis/code)', () => {
+    render(
+      <CardPreview
+        card={{ ...baseCard, title: '**Fix** the `login` *bug*', due_date: null }}
+      />,
+    );
+    expect(screen.getByText('Fix').tagName).toBe('STRONG');
+    expect(screen.getByText('login').tagName).toBe('CODE');
+    expect(screen.getByText('bug').tagName).toBe('EM');
+  });
+
+  it('filters javascript: URLs in title links (sanitize)', () => {
+    render(
+      <CardPreview
+        card={{ ...baseCard, title: '[click](javascript:alert(1))', due_date: null }}
+      />,
+    );
+    // the unsafe link is not rendered as a link at all; it renders as inert text
+    expect(document.querySelector('a')).toBeNull();
+    expect(document.querySelector('[href]')).toBeNull();
+  });
+
+  it('renders http(s) links in title with target=_blank and rel=noopener', () => {
+    render(
+      <CardPreview
+        card={{ ...baseCard, title: '[docs](https://example.com/spec)', due_date: null }}
+      />,
+    );
+    const link = screen.getByRole('link', { name: 'docs' });
+    expect(link).toHaveAttribute('href', 'https://example.com/spec');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('renders raw HTML in the title as escaped text, never as markup', () => {
+    render(
+      <CardPreview
+        card={{ ...baseCard, title: '<img src=x onerror=alert(1)> broken', due_date: null }}
+      />,
+    );
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByText(/broken/)).toBeInTheDocument();
+  });
+});

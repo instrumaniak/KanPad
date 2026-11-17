@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Letters } from 'lucide-react';
 import type { Card as CardType } from './use-cards';
 import type { ReactNode } from 'react';
+import { MarkdownPreview } from './markdown-preview';
 import { LabelBadge } from '../labels/label-badge';
 import { getDueDateBadge } from './date-utils';
 import { ProgressBar } from '../checklists/progress-bar';
@@ -13,12 +14,18 @@ interface CardPreviewProps {
 
 export function CardPreview({ card, actions }: CardPreviewProps) {
   const dueDateBadge = useMemo(() => getDueDateBadge(card.due_date), [card.due_date]);
+  // Parse the title's markdown once per title — the card face re-renders on
+  // every drag tick, and the markdown parse is the only non-trivial work here.
+  const title = useMemo(
+    () => <MarkdownPreview content={card.title} />,
+    [card.title],
+  );
   const hasCornerContent = card.has_description || !!actions;
 
   return (
     <>
       <div className={`relative flex items-start gap-2${hasCornerContent ? ' pr-6' : ''}`}>
-        <span className="flex-1 break-words">{card.title}</span>
+        <span className="flex-1 break-words">{title}</span>
         {hasCornerContent && (
           <div className="absolute top-0 right-0 flex items-start gap-1">
             {card.has_description && (

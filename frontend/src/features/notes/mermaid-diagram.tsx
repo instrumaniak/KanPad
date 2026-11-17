@@ -1,15 +1,18 @@
 import { useEffect, useRef, useId } from 'react';
 import DOMPurify from 'dompurify';
 
-type MermaidApi = typeof import('mermaid')['default'];
+type PeleLazy = typeof import('pele/lazy');
 
-let mermaidInitialized = false;
-let mermaidPromise: Promise<MermaidApi> | null = null;
-function loadMermaid(): Promise<MermaidApi> {
-  if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then((m) => m.default);
+let peleLazyPromise: Promise<PeleLazy> | null = null;
+function loadPele(): Promise<PeleLazy> {
+  if (!peleLazyPromise) {
+    // A rejected import must not poison the cache forever — retry on next render.
+    peleLazyPromise = import('pele/lazy').catch((err) => {
+      peleLazyPromise = null;
+      throw err;
+    });
   }
-  return mermaidPromise;
+  return peleLazyPromise;
 }
 
 interface MermaidDiagramProps {
@@ -28,22 +31,34 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
     let cancelled = false;
     const seq = ++renderSeqRef.current;
 
-    loadMermaid()
-      .then((mermaid) => {
-        if (cancelled || seq !== renderSeqRef.current) return;
-        if (!mermaidInitialized) {
-          mermaid.initialize({ startOnLoad: false, theme: 'default' });
-          mermaidInitialized = true;
-        }
-        return mermaid.render(id, code);
-      })
+    // pele ids: letters/digits/-/_ only (React useId contains ':')
+    const idPrefix = id.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    loadPele()
+      .then((pele) =>
+        pele.renderAsync(code, {
+          idPrefix,
+          // Must match --pele-font / --pele-font-mono exactly (drawn = measured)
+          fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+          fontFamilyMono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          // pele default allows http/https images — a user diagram could hotlink a
+          // remote image (silent third-party fetch on every note view). Off.
+          images: false,
+        }),
+      )
       .then((res) => {
         if (cancelled || seq !== renderSeqRef.current) return;
-        if (res?.svg && container.isConnected) {
-          container.innerHTML = DOMPurify.sanitize(res.svg);
+        if (container.isConnected) {
+          if (res?.svg) {
+            container.innerHTML = DOMPurify.sanitize(res.svg, { FORBID_TAGS: ['style'] });
+          } else {
+            container.innerHTML = '<pre class="text-red-500 text-sm">Failed to render diagram</pre>';
+          }
         }
       })
       .catch(() => {
+        // PeleError (and any other failure) → static fallback. pele messages can
+        // echo diagram source, so they are never rendered.
         if (cancelled || seq !== renderSeqRef.current) return;
         if (container.isConnected) {
           container.innerHTML = '<pre class="text-red-500 text-sm">Failed to render diagram</pre>';
@@ -61,7 +76,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
       ref={containerRef}
       className="my-4 flex justify-center"
       role="img"
-      aria-label={`Diagram: ${code.slice(0, 50)}`}
+      aria-label="Diagram"
     />
   );
 }

@@ -26,6 +26,7 @@ The backend is rewritten from node.js to rust. The spec files related to that:
 
 ## General Agent Instructions
 
+- Whenever in doubt follow industry standards and community best practices
 - Plan the implementation including edge cases, verify your plan by web search or documentation.
 - TDD - do Test driven development. check coverage.
 - Task Breakdown: Always break tasks into smaller, trackable todo items using `todowrite`.

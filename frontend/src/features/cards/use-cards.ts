@@ -14,6 +14,7 @@ import {
   type CardDetail,
   type CardSummary,
 } from './cards.api';
+import { currentSessionEpoch } from '@/lib/query-client-reset';
 
 const cardKeys = {
   byColumn: (columnId: number, page?: number, limit?: number) => {
@@ -77,7 +78,9 @@ export function useMoveCard() {
       // The generated `UpdateCardInput.column_id` is `number | null | undefined`
       // (an explicit `null` clears it server-side). A move needs a real
       // target column, so both "absent" and "null" mean "no move" here.
-      if (targetColumnId === undefined || targetColumnId === null) return { previousCards };
+      if (targetColumnId === undefined || targetColumnId === null) {
+        return { previousCards, sessionEpoch: currentSessionEpoch() };
+      }
 
       // Find source column and card
       const allCardsQueries = queryClient.getQueriesData<Card[]>({ queryKey: ['cards'] });
@@ -110,9 +113,15 @@ export function useMoveCard() {
         ]);
       }
 
-      return { previousCards };
+      return { previousCards, sessionEpoch: currentSessionEpoch() };
     },
     onError: (_err, _variables, context) => {
+      // Session boundary crossed while the mutation was in flight?
+      // A concrete-value rollback would recreate the query with the
+      // PREVIOUS user's snapshot — skip it.
+      if (context?.sessionEpoch !== undefined && context.sessionEpoch !== currentSessionEpoch()) {
+        return;
+      }
       if (context?.previousCards) {
         Object.entries(context.previousCards).forEach(([columnId, cards]) => {
           queryClient.setQueryData(['cards', Number(columnId)], cards);
@@ -163,9 +172,12 @@ export function useReorderCard() {
         });
       }
 
-      return { previousCards, sourceColumnId };
+      return { previousCards, sourceColumnId, sessionEpoch: currentSessionEpoch() };
     },
     onError: (_err, _variables, context) => {
+      if (context?.sessionEpoch !== undefined && context.sessionEpoch !== currentSessionEpoch()) {
+        return;
+      }
       if (context?.sourceColumnId !== undefined && context?.previousCards) {
         queryClient.setQueryData(['cards', context.sourceColumnId], context.previousCards);
       }
@@ -196,9 +208,12 @@ export function useDeleteCard() {
         }
       }
 
-      return { previousCards };
+      return { previousCards, sessionEpoch: currentSessionEpoch() };
     },
     onError: (_err, _id, context) => {
+      if (context?.sessionEpoch !== undefined && context.sessionEpoch !== currentSessionEpoch()) {
+        return;
+      }
       if (context?.previousCards) {
         context.previousCards.forEach(({ columnId, cards }) => {
           queryClient.setQueryData(['cards', columnId], cards);

@@ -15,6 +15,7 @@ import type {
   ChecklistItem,
   Checklist,
 } from './checklists.api';
+import { currentSessionEpoch } from '@/lib/query-client-reset';
 
 export const checklistKeys = {
   all: ['checklists'] as const,
@@ -120,9 +121,15 @@ export function useUpdateChecklistItem() {
         };
       });
 
-      return { previousCardData };
+      return { previousCardData, sessionEpoch: currentSessionEpoch() };
     },
     onError: (_error: Error, _variables, context) => {
+      // A session boundary crossed while the mutation was in flight — the
+      // rollback would recreate ['card', cardId] with the previous user's
+      // snapshot. Skip it.
+      if (context?.sessionEpoch !== undefined && context.sessionEpoch !== currentSessionEpoch()) {
+        return;
+      }
       if (context?.previousCardData) {
         queryClient.setQueryData(['card', _variables.cardId], context.previousCardData);
       }

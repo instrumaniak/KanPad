@@ -27,6 +27,28 @@
  *   live (it already reads `error.status` — no rewire needed).
  */
 
+/**
+ * In-flight requests are aborted after this delay and rejected with a typed
+ * {@link TimeoutError}. 15 s ≈ 30× the API p95 NFR (<500 ms,
+ * `specs/arch-hardening-specs/20-performance.md`) — generous headroom for
+ * legitimate cold paths (DB lock waits, slow VPS I/O) while still bounding a
+ * hung connection so it surfaces as an error instead of a forever-spinner.
+ * Exported so tests and future callers can reference the default.
+ */
+export const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Typed error for «this request exceeded DEFAULT_TIMEOUT_MS». Distinct from
+ * `AbortError` (caller-cancelled) and from `ApiError` (server responded with
+ * a non-2xx) so the retry predicate and `getErrorMessage` can route it.
+ */
+export class TimeoutError extends Error {
+  constructor(message = 'Network timeout — check your connection') {
+    super(message);
+    this.name = 'TimeoutError';
+  }
+}
+
 export interface ApiResponse<T> {
   data: T;
   message?: string;
@@ -118,17 +140,52 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(`${BASE}${path}`, { ...FETCH_OPTIONS, ...init, headers });
-  if (!response.ok) {
-    throw await parseFailure(response);
-  }
-  if (response.status === 204) {
-    return undefined as T;
+  const callerSignal = init?.signal ?? undefined;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, DEFAULT_TIMEOUT_MS);
+  // Chain a caller-supplied signal: aborting it aborts OUR controller, so the
+  // fetch still stops — but the catch below distinguishes the two causes and
+  // only our own timeout is re-labelled as a TimeoutError.
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort();
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
   }
   try {
-    return (await response.json()) as T;
-  } catch {
-    throw new ApiError(response.status, 'Unexpected response format');
+    const response = await fetch(`${BASE}${path}`, {
+      ...FETCH_OPTIONS,
+      ...init,
+      signal: controller.signal,
+      headers,
+    });
+    if (!response.ok) {
+      throw await parseFailure(response);
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new ApiError(response.status, 'Unexpected response format');
+    }
+  } catch (err) {
+    // A caller-initiated abort always wins (explicit user action); only an
+    // abort originating from OUR timer is re-labelled as a TimeoutError.
+    if (timedOut && !callerSignal?.aborted) {
+      throw new TimeoutError();
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
   }
 }
 

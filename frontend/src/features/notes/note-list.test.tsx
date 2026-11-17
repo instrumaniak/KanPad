@@ -95,7 +95,7 @@ vi.mock('@/components/ui/use-toast', () => ({
 describe('NoteList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseNotes.mockReturnValue({ data: mockNotesData, isLoading: false });
+    mockUseNotes.mockReturnValue({ data: mockNotesData, isLoading: false, isError: false });
     mockUseDeleteNote.mockReturnValue({ mutate: mockMutate });
   });
 
@@ -176,5 +176,79 @@ describe('NoteList', () => {
     renderWithProviders(<NoteList />);
     fireEvent.click(screen.getByText('Second Note'));
     expect(mockNavigate).toHaveBeenCalledWith('/notes/2');
+  });
+});
+
+describe('NoteList error states', () => {
+  const mockRefetch = vi.fn();
+
+  beforeEach(() => {
+    mockRefetch.mockClear();
+    mockUseNotes.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error('boom'),
+      refetch: mockRefetch,
+    });
+  });
+
+  it('shows the error state with retry when the notes fetch fails (never the empty state)', () => {
+    renderWithProviders(<NoteList />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load notes');
+    expect(screen.getByRole('alert')).toHaveTextContent('boom');
+    expect(screen.queryByText('No notes yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('NoteList error states — header stays interactive, 401 suppressed, cache kept', () => {
+  const mockRefetch = vi.fn();
+
+  beforeEach(() => {
+    mockRefetch.mockClear();
+    mockUseNotes.mockReturnValue({
+      data: mockNotesData,
+      isLoading: false,
+      isError: true,
+      error: new Error('stale refetch failed'),
+      refetch: mockRefetch,
+    });
+  });
+
+  it('renders notes from cache when a background refetch fails (M1)', () => {
+    renderWithProviders(<NoteList />);
+    expect(screen.getByText('First Note')).toBeInTheDocument();
+    expect(screen.getByText('Second Note')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps the header and create action available while the list errors (D5)', () => {
+    mockUseNotes.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error('boom'),
+      refetch: mockRefetch,
+    });
+    renderWithProviders(<NoteList />);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText('Notes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /new note/i })).toBeInTheDocument();
+  });
+
+  it('renders the skeleton (not an error card) for a 401 — the T014 global handler owns the redirect (m3)', () => {
+    mockUseNotes.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Session expired'), { status: 401 }),
+      refetch: mockRefetch,
+    });
+    renderWithProviders(<NoteList />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('No notes yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('First Note')).not.toBeInTheDocument();
   });
 });

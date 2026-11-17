@@ -27,6 +27,11 @@ Close the cheap-but-real hygiene gaps:
 **T016** — both tasks edit `frontend/package.json` (T016 wires the budget script;
 T018 adds/moves dependencies). Serialized so two agents never edit the file at once.
 
+> **Lockfile shift note (2026-11-17, T016):** T016 removed `mermaid` and added
+> `pele@1.13.0` (exact pin) — `frontend/package-lock.json` shifted accordingly.
+> T018's dep moves will rebase on top of that lockfile; `npm ls mermaid` is empty and
+> `pele` must survive T018's dependency reshuffles.
+
 ## Phase
 
 0

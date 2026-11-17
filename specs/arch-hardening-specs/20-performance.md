@@ -5,6 +5,49 @@
 
 ## Bundle: route splitting + mermaid (P1, P2) → T016
 
+> **Amendment 2026-11-17 (T016 implementation):** the renderer is no longer mermaid —
+> it is **pele** (`obsidianmd/pele`, MIT, Obsidian team; pinned exact `1.13.0`, loaded
+> via `pele/lazy` so each diagram-type chunk loads on first use). The budget-gate
+> mechanism is unchanged, but the measured numbers were refreshed on 2026-11-17:
+> pre-fix dist = 5 JS files; entry 251,476 B raw / 69,824 B gzip · rolldown-runtime
+> 1,116 / 658 · vendor-react 451,942 / 138,217 · vendor 925,976 / 278,425 ·
+> vendor-mermaid 4,896,991 / 1,355,682; `modulepreload` referenced runtime,
+> vendor-react, **vendor-mermaid**, vendor → ≈1.84 MB gzip initial on every cold load.
+> Post-fix (catch-all `vendor` and `app` groups removed, `vendor-react` kept) dist =
+> 83 JS files; route-level chunks restored; **initial gzip (entry `<script
+> type="module" src>` + `modulepreload` hrefs) = 167,385 B** (gate measurement, node
+> zlib) — well under the old
+> 300 KB aspiration, so the 300 KB figure is retired; the gate is measure-then-set
+> (167,385 B measured + ~19.5 % headroom = **200,000 B**; per-chunk limit **80,000 B**,
+> covering vendor-react 67,627 B + ~18.3 %). The gate guards regression, not an
+> absolute target — a ratchet task in a later wave is suggested.
+> Follow-up correction (same day): the first fix measured 221,534 B with an
+> over-capturing `vendor-react` regex that hoisted the react-* ecosystem (react-markdown,
+> react-router, …) into the initial chunk; boundary-anchoring it to
+> `(react|react-dom|scheduler)` dropped vendor-react 451,942 → 218,921 B raw
+> (138,453 → 67,627 B gzip) and the numbers above were re-ratcheted.
+>
+> **Second amendment (same day, 2026-11-17):** user directive — perceive-snappiness
+> first; the 83-file lazy split was judged too fragmented (one chunk per lucide icon,
+> cold-landing routes paying an extra round trip, and two markdown renderers to boot).
+> **All app routes are now static imports; a single `vendor` chunk holds all
+> node_modules except the markdown/pele family (kept off the initial path, lazy via
+> `LazyMarkdownRenderer`; pele/lazy keeps its per-type split)** — 58 JS files,
+> **initial gzip = 257,986 B** (entry 69,500 + runtime 429 + vendor 188,057). Gate
+> re-set to **310,000 B** initial / **225,000 B** per-chunk. The 167,385 B / 200,000 B
+> / 80,000 B figures above are superseded. Card-details panel Preview tab now uses
+> `LazyMarkdownRenderer` (GFM + highlight.js + mermaid — feature parity with notes);
+> `MarkdownPreview` (kept, unwired there) now renders the board card face title
+> (basic markdown, `inline` mode, memoized, links stopPropagation + target=_blank);
+> `markdown-renderer` + the markdown/pele family are excluded from the initial path via
+> an explicit LAZY_ONLY_PACKAGES set in vite.config.ts (packages with an out-of-family
+> prod consumer — dequal → aria-query, is-alphabetical/is-alphanumerical/is-decimal →
+> bcp-47 — deliberately stay in vendor). pele 1.13.0 stays exact-pinned and lazy;
+> budget-gate red-proof re-verified at the new numbers (eager pele in the entry → 559,701 B → gate exits 1 → revert → OK).
+> Also refreshed: the stale 2026-11-13/2026-11-16 P2 measured dates cited below are
+> superseded by the 2026-11-17 re-paste above. For what the second amendment changed
+> (all routes static, single vendor), see the block immediately below.
+
 **Current state:** source is correctly lazy — 9 `React.lazy` routes (`App.tsx:11-37`),
 lazy mermaid (`mermaid-diagram.tsx:9-11`), lazy markdown renderers. But the **production
 build defeats it**: `dist/` has 5 JS files, the entry chunk contains exactly one dynamic
@@ -17,6 +60,14 @@ cause: the rolldown `codeSplitting.groups` in
 merges entry-containing modules and keeps `entryFileNames`, collapsing route chunks;
 the mermaid group (priority 30) gets statically linked from the merged entry. (Numbers
 re-measured 2026-11-16; the original "3.1 MB / ~1.29 MB" figures predated the T010 rebuild.)
+
+> **Superseded by the dated notes above (implementation + second amendment,
+> 2026-11-17):** the "Target design" below is the pre-implementation plan — mermaid
+> (not pele), 300 KB budget aspiration, 150 KB per-chunk, `chunkSizeWarningLimit`
+> 300. Kept for history; the amendment blocks win on every number. The `vendor`
+> catch-all removal was added during implementation (same bug class as `app`); the
+> second amendment then restored one deliberate catch-all `vendor` group with the
+> markdown/pele family excluded — the distinction that matters is what's *in* it.
 
 **Target design:**
 1. **Diagnose first (spike step):** `npx vite build --debug` / rolldown chunk report

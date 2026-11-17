@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useProjects, useCreateProject, useUpdateProject, useDeleteProject } from './use-projects';
+import { resetSessionCaches } from '@/lib/query-client-reset';
 import * as projectsApi from './projects.api';
 import type { components } from '@/lib/api/schema';
 
@@ -282,5 +283,93 @@ describe('useDeleteProject', () => {
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+});
+
+describe('useUpdateProject post-boundary guard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does NOT recreate the projects cache after a session boundary mid-flight', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const initialData = pageFixture([projectFixture({ id: 1, name: 'Original', board_count: 0 })]);
+    (projectsApi.fetchProjects as ReturnType<typeof vi.fn>).mockResolvedValue(initialData);
+
+    let rejectUpdate!: (err: unknown) => void;
+    (projectsApi.updateProject as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectUpdate = reject;
+      }),
+    );
+
+    const { result: queryResult } = renderHook(() => useProjects(), { wrapper });
+    await waitFor(() => expect(queryResult.current.isSuccess).toBe(true));
+
+    const { result: mutationResult } = renderHook(() => useUpdateProject(), { wrapper });
+
+    mutationResult.current.mutate({ id: 1, name: 'Updated' });
+
+    // Optimistic rename applied.
+    await waitFor(() => {
+      const entries = queryClient.getQueriesData<{ data: { name: string }[] }>({
+        queryKey: ['projects'],
+      });
+      expect(entries[0]?.[1]?.data?.[0]?.name).toBe('Updated');
+    });
+
+    // Session boundary lands while the mutation is in flight.
+    await resetSessionCaches(queryClient);
+
+    rejectUpdate(new Error('Update failed'));
+
+    await waitFor(() => expect(mutationResult.current.isError).toBe(true));
+
+    // The rollback MUST NOT recreate ['projects', …] with the previous
+    // user's snapshot.
+    expect(queryClient.getQueriesData({ queryKey: ['projects'] })).toHaveLength(0);
+  });
+
+  it('rolls the optimistic rename back when NO boundary intervenes', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const initialData = pageFixture([projectFixture({ id: 1, name: 'Original', board_count: 0 })]);
+    (projectsApi.fetchProjects as ReturnType<typeof vi.fn>).mockResolvedValue(initialData);
+    (projectsApi.updateProject as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Update failed'),
+    );
+
+    const { result: queryResult } = renderHook(() => useProjects(), { wrapper });
+    await waitFor(() => expect(queryResult.current.isSuccess).toBe(true));
+
+    const { result: mutationResult } = renderHook(() => useUpdateProject(), { wrapper });
+
+    mutationResult.current.mutate({ id: 1, name: 'Updated' });
+
+    await waitFor(() => expect(mutationResult.current.isError).toBe(true));
+
+    // Same epoch — the previous snapshot MUST be restored (guard must not
+    // over-fence: rollback only dies at a session boundary).
+    const entries = queryClient.getQueriesData<{ data: { name: string }[] }>({
+      queryKey: ['projects'],
+    });
+    expect(entries[0]?.[1]?.data?.[0]?.name).toBe('Original');
   });
 });

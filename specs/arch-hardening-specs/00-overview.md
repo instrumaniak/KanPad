@@ -95,8 +95,8 @@ in the tree vs verified absent — no speculation.
 
 | ID | Sev | Finding | Evidence | Closed by |
 |----|-----|---------|----------|-----------|
-| P1 | **HIGH** | Route code-splitting defeated in the production build: all 9 `React.lazy` routes merge into one entry chunk (rolldown `codeSplitting.groups` capture); `dist/` has 5 JS files, 1 dynamic import | `frontend/vite.config.ts:32-60`; `frontend/dist/assets/` (measured) | T016 |
-| P2 | **HIGH** | The mermaid chunk (measured 2026-11-13: **4.9 MB raw / ~1.36 MB gzip**) is `modulepreload`ed **and** dynamically imported from the entry → initial JS incl. `/login` ≈ **1.85 MB gzip** (index 68 KB + vendor 278 KB + vendor-react 138 KB + vendor-mermaid 1.36 MB, all modulepreloaded) | `frontend/dist/index.html:23-26`, `frontend/dist/assets/` (measured gzip, post-T010 rebuild) | T016 |
+| P1 | **HIGH** | Route code-splitting defeated in the production build: all 9 `React.lazy` routes merge into one entry chunk (rolldown `codeSplitting.groups` capture); `dist/` has 5 JS files, 1 dynamic import. **2026-11-17 (T016): fixed + closed** — catch-all `vendor`/`app` groups removed; post-fix dist has route-level chunks. **Second amendment (2026-11-17, same day): all app routes are now static imports** (user directive — perceive-snappiness first); markdown/pele stay lazy; one `vendor` chunk; 58 JS files | `frontend/vite.config.ts`; `frontend/dist/assets/` (measured) | T016 |
+| P2 | **HIGH** | The mermaid chunk (measured 2026-11-17: **4.9 MB raw / 1,355,682 B gzip**; was 2026-11-13/2026-11-16 figures, now stale) was `modulepreload`ed from the entry → initial JS incl. `/login` ≈ **1.84 MB gzip**. **2026-11-17 (T016): closed by replacing the renderer with pele 1.13.0** (`pele/lazy`, per-type chunks on demand; mermaid chunk gone) → **initial gzip = 257,986 B** (entry 69,500 + runtime 429 + vendor 188,057; TS second amendment — all app routes static, `markdown-renderer` + pele stay lazy with idle prefetch) | `frontend/dist/index.html:23-26`, `frontend/dist/assets/` (measured 2026-11-17) | T016 |
 | P3 | **HIGH** | Board loads ALL cards unpaginated in one response and renders them all — no virtualization, no `useInfiniteQuery`, O(N) `CardDetailPanel` instances per board | `frontend/src/features/columns/columns.api.ts:52-54`, `backend-rs/src/features/columns/routes.rs:69-70`, no `virtual` in `frontend/src` | T021 |
 | P4 | MEDIUM-HIGH | Cross-column drag writes `setQueryData` on **every `dragOver` event**; `allColumns` prop identity changes per write → full-board re-render at pointer-move rate | `frontend/src/features/cards/drag-drop-context.tsx:100-186`, `frontend/src/features/boards/board-view.tsx:256,269` | T021 |
 | P5 | MEDIUM | Lists use `LIMIT/OFFSET` with **no page ceiling**; notes/projects search is `LIKE '%q%'` (leading wildcard — `IDX_notes_title` can never serve it; no FULLTEXT anywhere) | `backend-rs/src/extract.rs:115-135`, `backend-rs/src/features/notes/store.rs:354-357`, grep `FULLTEXT` → 0 | T022 (ceilings), T023 (FTS) |
@@ -119,7 +119,7 @@ in the tree vs verified absent — no speculation.
 | ID | Sev | Finding | Evidence | Closed by |
 |----|-----|---------|----------|-----------|
 | C1 | MEDIUM | Manual deploys: build on a machine → upload; 3+ divergent proxy script copies (`scripts/app-proxy.js`, `release/app-proxy{,-v2,-plus}.js`); no deploy script; README documents the deleted Nest stack | `release/`, `scripts/`, `README.md:47-131` | T019 |
-| C2 | MEDIUM | No bundle-size gate in CI; `chunkSizeWarningLimit` raised to 800; build-only packages (`shadcn`, `tailwindcss`, `@tailwindcss/vite`, `tw-animate-css`) in prod `dependencies`; undeclared `@radix-ui/react-tabs`/`-tooltip` imports (work via hoisting only) | `frontend/vite.config.ts:31`, `frontend/package.json`, `frontend/src/components/ui/{tabs,tooltip}.tsx` | T016 (gate), T018 (deps) |
+| C2 | MEDIUM | No bundle-size gate in CI; `chunkSizeWarningLimit` raised to 800; build-only packages (`shadcn`, `tailwindcss`, `@tailwindcss/vite`, `tw-animate-css`) in prod `dependencies`; undeclared `@radix-ui/react-tabs`/`-tooltip` imports (work via hoisting only). **2026-11-17 (T016): CI half closed** — `frontend/scripts/check-bundle-budget.mjs` wired into the `web` job after `vite build` (initial gzip ≤ 310,000 B; per-chunk ≤ 225,000 B; red-proofed — second amendment re-set at 257,986 B measured); `chunkSizeWarningLimit` 800 → 700. Deps half stays with T018 | `frontend/vite.config.ts`, `frontend/package.json`, `frontend/src/components/ui/{tabs,tooltip}.tsx` | T016 (gate, done), T018 (deps) |
 | C3 | LOW | Secrets at mode 644 (spec wants 600); `release/.env` shares the live `SESSION_SECRET` with `backend-rs/.env`; dev compose publishes MySQL on 0.0.0.0:3306; prod DB version documented inconsistently (MariaDB 10.6 vs 11.4) | `ls -l`, `compose.yaml:14`, `docs/mariadb-compat.md:3` vs `specs/security/06-infrastructure-deployment.md:77` | T018 (secrets), T012 (bind), T011/T025 (version check) |
 | C4 | LOW / POSITIVE | Production footprint already minimal (static SPA + ~17 MB binary + existing DB on shared LiteSpeed host) — the low-cost baseline to preserve; CI heavy but $0 (public repo) | `docs/deployment.md`, `backend-rs/Dockerfile` | preserve (constraint in every ops task) |
 
@@ -155,6 +155,14 @@ cards/columns write paths **T010→T020**.
 Dated amendments to this constitution (per README rule: spec/tree disagreements are
 fixed in place and recorded here). Design details in `10`/`20`/`30`/`31`/`32`/`33`/`40` carry their
 own amendment notes in-line where relevant.
+
+- **2026-11-17 — P1/P2/C2 (T016):** renderer swapped from mermaid to pele 1.13.0
+  (`pele/lazy`, exact pin); catch-all `vendor`/`app` codeSplitting groups removed;
+  initial gzip re-measured at **257,986 B** (was ≈1.84 MB; second amendment —
+  all app routes static, single vendor chunk); budget gate
+  (310,000 B initial / 225,000 B per-chunk) wired into CI `web` job; the
+  2026-11-13/2026-11-16 P2 measured figures above are superseded by the 2026-11-17
+  re-paste. 300 KB absolute target retired — the gate is a regression guard.
 
 - **2026-11-16 — Wave-2 implementation tasks authored ahead of the review
   (user decision):** the rows A–L implementation task files now exist and are wired

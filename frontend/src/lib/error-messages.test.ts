@@ -7,10 +7,30 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toEqual(ERROR_MESSAGES.network);
   });
 
+  it('returns network error for Firefox network failures', () => {
+    const error = new TypeError('NetworkError when attempting to fetch resource.');
+    expect(getErrorMessage(error)).toEqual(ERROR_MESSAGES.network);
+  });
+
+  it('returns network error for Safari network failures', () => {
+    const error = new TypeError('Load failed');
+    expect(getErrorMessage(error)).toEqual(ERROR_MESSAGES.network);
+  });
+
   it('returns timeout error for AbortError', () => {
     const error = new Error('Aborted');
     error.name = 'AbortError';
     expect(getErrorMessage(error)).toEqual(ERROR_MESSAGES.timeout);
+  });
+
+  it('returns timeout error for TimeoutError, preferring its friendly message', () => {
+    const error = new Error('Network timeout — check your connection');
+    error.name = 'TimeoutError';
+    expect(getErrorMessage(error)).toEqual({
+      ...ERROR_MESSAGES.timeout,
+      message: 'Network timeout — check your connection',
+    });
+    expect(getErrorMessage(error).message).toBe('Network timeout — check your connection');
   });
 
   it('returns unauthorized error for 401 Response', () => {
@@ -43,11 +63,52 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toEqual(ERROR_MESSAGES.validation);
   });
 
+  it('prefers the server message for status-routed errors, keeping taxonomy shape', () => {
+    const validation = new Error('Name is required') as Error & { status: number };
+    validation.status = 400;
+    expect(getErrorMessage(validation)).toEqual({
+      ...ERROR_MESSAGES.validation,
+      message: 'Name is required',
+    });
+
+    const server = new Error('Internal inconsistency') as Error & { status: number };
+    server.status = 500;
+    expect(getErrorMessage(server)).toEqual({
+      ...ERROR_MESSAGES.server,
+      message: 'Internal inconsistency',
+    });
+  });
+
+  it('keeps the unauthorized taxonomy (redirect) while preferring the server message', () => {
+    const error = new Error('Session token invalid') as Error & { status: number };
+    error.status = 401;
+    expect(getErrorMessage(error)).toEqual({
+      ...ERROR_MESSAGES.unauthorized,
+      message: 'Session token invalid',
+    });
+    expect(getErrorMessage(error).redirect).toBe('/login');
+  });
+
+  it('prefers the server message nested under error.response (axios-style)', () => {
+    const error = { response: { status: 400 }, message: 'Title must be at most 200 chars' };
+    expect(getErrorMessage(error)).toEqual({
+      ...ERROR_MESSAGES.validation,
+      message: 'Title must be at most 200 chars',
+    });
+  });
+
   it('returns unknown error for unrecognized error', () => {
     expect(getErrorMessage('something')).toEqual(ERROR_MESSAGES.unknown);
   });
 
   it('returns unknown error for null', () => {
     expect(getErrorMessage(null)).toEqual(ERROR_MESSAGES.unknown);
+  });
+
+  it('keeps the server detail for unknown errors when present', () => {
+    expect(getErrorMessage(new Error('boom'))).toEqual({
+      ...ERROR_MESSAGES.unknown,
+      message: 'boom',
+    });
   });
 });

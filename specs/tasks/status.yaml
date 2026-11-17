@@ -52,26 +52,26 @@ tasks:
     critical: true
   T013:
     name: Session cache hygiene on logout/login
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: true
   T014:
     name: Global 401 handling + query retry policy + timeouts
-    status: pending
+    status: done
     depends:
       - T013
     phase: 0
     critical: false
   T015:
     name: Board error states + error boundary resetKeys
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: false
   T016:
-    name: "Fix bundle: route chunks + lazy mermaid + CI size budget"
-    status: pending
+    name: "Fix bundle: static app + vendor chunk + CI size budget"
+    status: done
     depends: ~
     phase: 0
     critical: false
@@ -260,3 +260,9 @@ tasks:
       - T041
     phase: 2
     critical: false
+  T043:
+    name: Anonymous /api/auth/me fire storm on guest routes
+    status: done
+    depends: ~
+    phase: 0
+    critical: true

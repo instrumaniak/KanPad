@@ -34,7 +34,10 @@ vi.mock('react-markdown', () => ({
 
 vi.mock('remark-gfm', () => ({ default: {} }));
 vi.mock('rehype-raw', () => ({ default: {} }));
-vi.mock('rehype-sanitize', () => ({ default: {} }));
+vi.mock('rehype-sanitize', () => ({
+  default: {},
+  defaultSchema: { tagNames: ['p', 'strong', 'em', 'u'] },
+}));
 vi.mock('rehype-highlight', () => ({ default: {} }));
 
 vi.mock('./mermaid-diagram', () => ({

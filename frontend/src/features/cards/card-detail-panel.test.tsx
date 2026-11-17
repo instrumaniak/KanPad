@@ -299,7 +299,11 @@ describe('CardDetailPanel', () => {
 
   describe('Markdown description editor', () => {
     beforeAll(async () => {
-      await import('./markdown-preview');
+      // Warm the actual payload too — the lazy boundary resolves on first
+      // render; a cold 380 KB chunk under a loaded machine blows waitFor's 1 s
+      // default and flakes this suite.
+      await import('../notes/markdown-renderer');
+      await import('../notes/lazy-markdown-renderer');
     });
 
     it('defaults to Edit tab with textarea visible', async () => {
@@ -323,7 +327,7 @@ describe('CardDetailPanel', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Hello');
-      });
+      }, { timeout: 10000 });
       expect(screen.getByRole('list')).toBeInTheDocument();
     });
 

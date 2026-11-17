@@ -714,3 +714,230 @@ describe('BoardView', () => {
     });
   });
 });
+
+describe('BoardView error states', () => {
+  const httpError = (status: number | undefined, message: string) =>
+    Object.assign(new Error(message), status !== undefined ? { status } : {});
+
+  const mockRefetchBoard = vi.fn();
+  const mockRefetchColumns = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRefetchBoard.mockClear();
+    mockRefetchColumns.mockClear();
+    Object.defineProperty(window, 'innerWidth', { writable: true, value: 1024 });
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+    mockBoardId = '1';
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      error: null,
+      data: mockBoardResponse,
+      refetch: mockRefetchBoard,
+    });
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      error: null,
+      data: [mockColumn],
+      refetch: mockRefetchColumns,
+    });
+  });
+
+  it('shows error UI with retry when the columns query fails (never an empty board)', () => {
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'Columns unavailable'),
+      data: undefined,
+      refetch: mockRefetchColumns,
+    });
+    render(<BoardView />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load board');
+    expect(screen.getByRole('alert')).toHaveTextContent('Columns unavailable');
+    // Not the empty-board lookalike:
+    expect(screen.queryByTestId('column-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('No cards found')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('add-column-button')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockRefetchBoard).toHaveBeenCalledTimes(1);
+    expect(mockRefetchColumns).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows error UI with retry when the board query fails', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'Board unavailable'),
+      data: undefined,
+      refetch: mockRefetchBoard,
+    });
+    render(<BoardView />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load board');
+    expect(screen.getByRole('alert')).toHaveTextContent('Board unavailable');
+    expect(screen.queryByTestId('column-1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockRefetchBoard).toHaveBeenCalledTimes(1);
+    expect(mockRefetchColumns).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the not-found view for a 404 board fetch (no misleading retry button)', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(404, 'Not found'),
+      data: undefined,
+      refetch: mockRefetchBoard,
+    });
+    render(<BoardView />);
+    expect(screen.getByText('Board not found')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('renders the loading state for a 401 board rejection — the T014 global handler owns the redirect', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(401, 'Session expired'),
+      data: undefined,
+      refetch: mockRefetchBoard,
+    });
+    render(<BoardView />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('Board not found')).not.toBeInTheDocument();
+    expect(screen.getByText('Loading...')).toBeInTheDocument();
+  });
+
+  it('renders the loading state for a 401 columns rejection — the T014 global handler owns the redirect', () => {
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(401, 'Session expired'),
+      data: undefined,
+      refetch: mockRefetchColumns,
+    });
+    render(<BoardView />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Loading...')).toBeInTheDocument();
+  });
+});
+
+describe('BoardView error states — last-good cached data', () => {
+  const httpError = (status: number | undefined, message: string) =>
+    Object.assign(new Error(message), status !== undefined ? { status } : {});
+
+  const mockRefetchBoard = vi.fn();
+  const mockRefetchColumns = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRefetchBoard.mockClear();
+    mockRefetchColumns.mockClear();
+    Object.defineProperty(window, 'innerWidth', { writable: true, value: 1024 });
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+    mockBoardId = '1';
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      error: null,
+      data: mockBoardResponse,
+      refetch: mockRefetchBoard,
+    });
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      error: null,
+      data: [mockColumn],
+      refetch: mockRefetchColumns,
+    });
+  });
+
+  it('renders the board from cached columns when a background refetch fails', () => {
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'columns refetch failed'),
+      data: [mockColumn],
+      refetch: mockRefetchColumns,
+    });
+    render(<BoardView />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('column-1')).toBeInTheDocument();
+    expect(screen.getByText('Test Board')).toBeInTheDocument();
+  });
+
+  it('renders the board from cached board data when a background refetch fails', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'board refetch failed'),
+      data: mockBoardResponse,
+      refetch: mockRefetchBoard,
+    });
+    render(<BoardView />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Test Board')).toBeInTheDocument();
+    expect(screen.getByTestId('column-1')).toBeInTheDocument();
+  });
+
+  it('shows the error state when BOTH queries fail', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'board down'),
+      data: undefined,
+      refetch: mockRefetchBoard,
+    });
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'columns down'),
+      data: undefined,
+      refetch: mockRefetchColumns,
+    });
+    render(<BoardView />);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
+
+  it('shows the generic error state for board 404 + columns 500 (columns failure wins)', () => {
+    mockUseBoard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(404, 'gone'),
+      data: undefined,
+      refetch: mockRefetchBoard,
+    });
+    mockUseColumns.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: httpError(500, 'columns down'),
+      data: undefined,
+      refetch: mockRefetchColumns,
+    });
+    render(<BoardView />);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.queryByText('Board not found')).not.toBeInTheDocument();
+  });
+});

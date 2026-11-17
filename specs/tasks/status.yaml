@@ -65,7 +65,7 @@ tasks:
     critical: false
   T015:
     name: Board error states + error boundary resetKeys
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: false

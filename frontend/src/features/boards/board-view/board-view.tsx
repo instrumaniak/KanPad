@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ErrorState } from '@/components/error-state';
 import { useBoard, useUpdateBoard, type BoardViewMode } from '../use-boards';
 import { useColumns, useCreateColumn } from '../../columns/use-columns';
 import { Column } from '../../columns/column';
@@ -20,13 +21,20 @@ import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
 
+// Loose status read on unknown errors — avoids depending on ApiError class identity across module boundaries (same rationale as T014's handler).
+function errorStatus(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object' || !('status' in err)) return undefined;
+  const status = (err as { status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
+}
+
 export function BoardView() {
   const { boardId } = useParams<{ boardId: string }>();
   const navigate = useNavigate();
   const id = boardId ? parseInt(boardId, 10) : 0;
 
-  const { data: boardResponse, isLoading: boardLoading } = useBoard(id);
-  const { data: columns, isLoading: columnsLoading } = useColumns(id);
+  const { data: boardResponse, isLoading: boardLoading, isError: boardQueryError, error: boardError, refetch: refetchBoard } = useBoard(id);
+  const { data: columns, isLoading: columnsLoading, isError: columnsQueryError, error: columnsError, refetch: refetchColumns } = useColumns(id);
   const { data: allLabels } = useLabels();
 
   const board = boardResponse?.data;
@@ -164,10 +172,42 @@ export function BoardView() {
     }
   };
 
-  if (boardLoading || columnsLoading) {
+  // 401-shaped errors: T014's global session-expiry handler owns the UX
+  // (single-flight cache clear → soft navigate /login → one toast). Render the
+  // loading state — not an error — until the handler unmounts this route.
+  // NB: deliberately coarse — a 401 on one query and a genuine failure on the
+  // other both land here while T014 is mounted (it redirects regardless).
+  // Depends on SessionExpiryHandler being mounted in App.tsx; reliance documented in T015 §Notes.
+  if (boardLoading || columnsLoading || errorStatus(boardError) === 401 || errorStatus(columnsError) === 401) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  // A 404 board fetch is a permanent "not found", not a retryable failure —
+  // fall through to the not-found view (no misleading retry button).
+  const boardNotFound = boardQueryError && errorStatus(boardError) === 404;
+
+  // Last-good data wins: React Query preserves `data` on a background/refetch
+  // failure — a full-screen error would hide a perfectly good board. Only fail
+  // hard when there is nothing to show.
+  const boardFailed = boardQueryError && !boardResponse && !boardNotFound;
+  const columnsFailed = columnsQueryError && !columns;
+
+  if (boardFailed || columnsFailed) {
+    const activeError = columnsFailed ? columnsError : boardError;
+    return (
+      <div className="flex flex-1 items-center justify-center p-6">
+        <ErrorState
+          title="Failed to load board"
+          message={activeError instanceof Error ? activeError.message : 'Something went wrong'}
+          onRetry={() => {
+            void refetchBoard();
+            void refetchColumns();
+          }}
+        />
       </div>
     );
   }

@@ -57,13 +57,16 @@ export class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, Route
     console.error('RouteErrorBoundary caught:', error, errorInfo);
   }
 
-  componentDidUpdate(prevProps: RouteErrorBoundaryProps) {
-    if (this.state.hasError && prevProps.resetKeys !== this.props.resetKeys) {
+  componentDidUpdate(prevProps: RouteErrorBoundaryProps, prevState: RouteErrorBoundaryState) {
+    // prevState.didCatch guard (upstream react-error-boundary parity): never reset
+    // on the commit that caught the error — the key change that rode along with
+    // the crash must not trigger an immediate reset → re-render → re-crash cycle.
+    if (this.state.hasError && prevState.hasError && prevProps.resetKeys !== this.props.resetKeys) {
       const prevKeys = prevProps.resetKeys ?? [];
       const nextKeys = this.props.resetKeys ?? [];
       const hasChanged =
         prevKeys.length !== nextKeys.length ||
-        prevKeys.some((key, i) => key !== nextKeys[i]);
+        prevKeys.some((key, i) => !Object.is(key, nextKeys[i]));
       if (hasChanged) {
         this.setState({ hasError: false, error: null, retryCount: 0 });
         this.props.onReset?.();

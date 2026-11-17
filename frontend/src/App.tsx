@@ -7,7 +7,7 @@ import { ToastProvider } from './components/ui/toast-provider';
 import { GuestRoute } from './features/auth/guest-route';
 import { AppLayout } from './layouts/app-layout';
 import { Spinner } from './components/spinner';
-import { RouteErrorBoundary } from './components/route-error-boundary';
+import { RouteErrorBoundaryWithLocation } from './components/route-error-boundary-with-location';
 import { SessionExpiryHandler } from './components/session-expiry-handler';
 
 const RegisterForm = lazy(() =>
@@ -67,7 +67,7 @@ function App() {
           <SessionExpiryHandler />
           <AuthProvider>
             <Suspense fallback={<LoadingFallback />}>
-              <RouteErrorBoundary>
+              <RouteErrorBoundaryWithLocation>
                 <Routes>
                   <Route element={<GuestRoute />}>
                     <Route path="/register" element={<RegisterForm />} />
@@ -90,7 +90,7 @@ function App() {
 
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
-              </RouteErrorBoundary>
+              </RouteErrorBoundaryWithLocation>
             </Suspense>
           </AuthProvider>
         </ToastProvider>

@@ -10,6 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/empty-state';
 import { LoadingSkeleton } from '@/components/loading-skeleton';
+import { ErrorState } from '@/components/error-state';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +28,13 @@ import { useToast } from '@/components/ui/use-toast';
 import { useToastHelpers } from '@/lib/toast-helpers';
 
 const typeFilters = ['All', 'General', 'Board', 'Project', 'Card'] as const;
+
+// Loose status read — avoids depending on ApiError class identity across module boundaries (same rationale as board-view's helper and T014's handler duck-typing).
+function errorStatus(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object' || !('status' in err)) return undefined;
+  const status = (err as { status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
+}
 
 export function NoteList() {
   const navigate = useNavigate();
@@ -62,7 +70,7 @@ export function NoteList() {
 
 
 
-  const { data, isLoading } = useNotes(filters);
+  const { data, isLoading, isError, error, refetch } = useNotes(filters);
   const notes = data?.data ?? [];
 
   const handleDelete = () => {
@@ -152,7 +160,19 @@ export function NoteList() {
         </div>
       </div>
       <ScrollArea className="flex-1 px-6 pb-6">
-        {isLoading ? (
+        {errorStatus(error) === 401 ? (
+          // 401: T014's global handler owns the UX (cache clear → /login) —
+          // no error card, just the loading skeleton until the route unmounts.
+          <LoadingSkeleton count={4} />
+        ) : isError && !data ? (
+          // Last-good data wins: React Query keeps `data` on a background
+          // refetch failure — keep showing it rather than a blocking error.
+          <ErrorState
+            title="Failed to load notes"
+            message={error instanceof Error ? error.message : 'Something went wrong'}
+            onRetry={() => refetch()}
+          />
+        ) : isLoading ? (
           <LoadingSkeleton count={4} />
         ) : notes.length === 0 ? (
           <EmptyState

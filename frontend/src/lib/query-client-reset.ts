@@ -1,4 +1,4 @@
-import type { QueryClient } from '@tanstack/react-query';
+import { notifyManager, type QueryClient } from '@tanstack/react-query';
 
 /**
  * Monotonic session-boundary counter. `resetSessionCaches()` bumps it BEFORE
@@ -34,9 +34,48 @@ export function currentSessionEpoch(): number {
  * returns — a write made before the clear is wiped. `MutationCache.clear()`
  * does NOT cancel in-flight mutations; their callbacks still run and must
  * tolerate executing after a session boundary (see `currentSessionEpoch`).
+ *
+ * `exceptQueryHash` spares a single query from the removal — but only when
+ * it carries no data. It exists for the global 401 handler's exempt
+ * (clear-only) path: an exempt 401 that destroys the data-less `['auth','me']`
+ * bootstrap query makes the mounted observer re-create + refetch it, whose
+ * 401 triggers another clear — a self-sustaining fire storm (T043). Sparing
+ * the data-less query breaks the cycle. A query that still holds data (e.g.
+ * a focus-refetch of `me` that 401s with the previous user's last-good
+ * payload, which TanStack keeps on refetch error) is destroyed like
+ * everything else: the mounted provider re-creates and refetches it once, it
+ * 401s without data, and is spared then — so at most one extra request and
+ * zero stale-identity leakage on a shared tab.
+ *
+ * In all cases every other query is removed and the mutation cache is
+ * cleared; the epoch bump and `cancelQueries()` are identical.
  */
-export async function resetSessionCaches(queryClient: QueryClient): Promise<void> {
+export async function resetSessionCaches(
+  queryClient: QueryClient,
+  options?: { exceptQueryHash?: string },
+): Promise<void> {
   sessionEpoch += 1;
   await queryClient.cancelQueries();
-  queryClient.clear();
+  const queryCache = queryClient.getQueryCache();
+  const exceptHash = options?.exceptQueryHash;
+  const spared =
+    exceptHash === undefined
+      ? undefined
+      : queryCache.getAll().find(
+          (query) => query.queryHash === exceptHash && query.state.data === undefined,
+        );
+  if (spared === undefined) {
+    queryClient.clear();
+    return;
+  }
+  // `queryCache.clear()` removes inside `notifyManager.batch(...)` (one
+  // notification pass); mirror that here so the spare path doesn't pay N
+  // synchronous observer notification passes on a shared tab.
+  notifyManager.batch(() => {
+    for (const query of queryCache.getAll()) {
+      if (query === spared) continue;
+      queryCache.remove(query);
+    }
+    queryClient.getMutationCache().clear();
+  });
 }

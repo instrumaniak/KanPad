@@ -159,6 +159,61 @@ describe('SessionExpiryHandler', () => {
     expect(screen.getByText('Protected Page')).toBeInTheDocument();
   });
 
+  it('an exempt 401 from a non-bootstrap query still gets the full flush (shared-tab hygiene)', async () => {
+    const { queryClient } = rig('/board');
+
+    fireEvent.click(screen.getByTestId('fire-me'));
+
+    // Only the bootstrap ['auth','me'] data-less query is spared — an exempt
+    // trigger like ['me'] (or any user-scoped query) is destroyed with
+    // everything else so no cached identity survives on a shared tab.
+    await waitFor(() => expect(queryClient.getQueryData(['boards'])).toBeUndefined());
+    expect(queryClient.getQueryData(['notes'])).toBeUndefined();
+    expect(queryClient.getQueryData(['me'])).toBeUndefined();
+    expect(screen.queryByTestId('toast-error')).not.toBeInTheDocument();
+    expect(screen.getByText('Protected Page')).toBeInTheDocument();
+  });
+
+  it('spares a data-less bootstrap me query from the exempt-path flush but removes siblings', async () => {
+    const { queryClient } = rig('/board');
+    const unauthorizedError = Object.assign(new Error('Authentication is required.'), {
+      status: 401,
+    });
+    // A mounted-but-refetching-capable bootstrap query, holding no data —
+    // the exact shape whose destruction re-creates and refetches it (T043).
+    const meQuery = queryClient.getQueryCache().build(queryClient, {
+      queryKey: ['auth', 'me'],
+      queryFn: () => Promise.reject(unauthorizedError),
+      meta: { skipSessionExpiryRedirect: true },
+    });
+
+    queryClient.getQueryCache().config.onError?.(unauthorizedError, meQuery);
+
+    await waitFor(() => expect(queryClient.getQueryData(['notes'])).toBeUndefined());
+    expect(queryClient.getQueryData(['boards'])).toBeUndefined();
+    expect(queryClient.getQueryCache().find({ queryKey: ['auth', 'me'] })).toBe(meQuery);
+    expect(screen.queryByTestId('toast-error')).not.toBeInTheDocument();
+  });
+
+  it('destroys a bootstrap me query that still holds data — stale identity never survives an exempt 401', async () => {
+    const { queryClient } = rig('/board');
+    const unauthorizedError = Object.assign(new Error('Authentication is required.'), {
+      status: 401,
+    });
+    const meQuery = queryClient.getQueryCache().build(queryClient, {
+      queryKey: ['auth', 'me'],
+      queryFn: () => Promise.reject(unauthorizedError),
+      meta: { skipSessionExpiryRedirect: true },
+    });
+    queryClient.setQueryData(['auth', 'me'], { marker: 'user-a' });
+
+    queryClient.getQueryCache().config.onError?.(unauthorizedError, meQuery);
+
+    await waitFor(() => expect(queryClient.getQueryData(['auth', 'me'])).toBeUndefined());
+    expect(queryClient.getQueryData(['boards'])).toBeUndefined();
+    expect(queryClient.getQueryData(['notes'])).toBeUndefined();
+  });
+
   it('an actionable 401 racing an exempt (me) 401 in the same synchronous burst still redirects and toasts exactly once', async () => {
     const { queryClient } = rig('/board');
 

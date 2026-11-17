@@ -18,12 +18,30 @@ function isUnauthorized(error: unknown): boolean {
 interface SessionExpiryMeta {
   /** Handler does nothing at all (credential POSTs — bad credentials are form-level errors). */
   skipSessionExpiry?: unknown;
-  /** Cache is cleared, but no redirect / toast (bootstrap `me`: AppLayout owns the redirect). */
+  /** Cache is cleared (a data-less bootstrap `me` is spared), but no redirect / toast (bootstrap `me`: AppLayout owns the redirect). */
   skipSessionExpiryRedirect?: unknown;
 }
 
 function metaOf(meta: unknown): SessionExpiryMeta {
   return (typeof meta === 'object' && meta !== null ? meta : {}) as SessionExpiryMeta;
+}
+
+const BOOTSTRAP_ME_KEY = ['auth', 'me'];
+
+/**
+ * Returns the queryHash to spare from the exempt-path flush when the 401 was
+ * produced by the bootstrap `['auth', 'me']` query — the only always-mounted,
+ * data-less query in the app, whose destruction by the clear re-creates and
+ * refetches it (T043). Any other exempt trigger gets no spare: the full flush
+ * must still remove cached user-scoped data.
+ */
+function bootstrapMeTriggerHash(query: unknown): string | undefined {
+  if (typeof query !== 'object' || query === null) return undefined;
+  const { queryKey, queryHash } = query as { queryKey?: unknown; queryHash?: unknown };
+  if (typeof queryHash !== 'string') return undefined;
+  if (!Array.isArray(queryKey) || queryKey.length !== 2) return undefined;
+  if (queryKey[0] !== BOOTSTRAP_ME_KEY[0] || queryKey[1] !== BOOTSTRAP_ME_KEY[1]) return undefined;
+  return queryHash;
 }
 
 /**
@@ -43,6 +61,13 @@ function metaOf(meta: unknown): SessionExpiryMeta {
  * - `skipSessionExpiry`        — no handler actions at all.
  * - `skipSessionExpiryRedirect` — clear-only; no navigate/toast.
  * On guest routes the handler is also clear-only (nothing to redirect to).
+ *
+ * The clear-only path spares the bootstrap `['auth', 'me']` query from the
+ * flush when it is the one whose 401 is being handled (see
+ * `resetSessionCaches`): destroying it makes the mounted observer re-create +
+ * refetch it, whose 401 re-enters this handler — a self-sustaining fire
+ * storm (T043). Every sibling query is still removed and the mutation cache
+ * is still flushed.
  */
 export function SessionExpiryHandler() {
   const queryClient = useQueryClient();
@@ -64,7 +89,7 @@ export function SessionExpiryHandler() {
     const previousQueryOnError = queryCache.config.onError;
     const previousMutationOnError = mutationCache.config.onError;
 
-    const handle = (error: unknown, meta: unknown) => {
+    const handle = (error: unknown, meta: unknown, triggeringQuery?: unknown) => {
       if (metaOf(meta).skipSessionExpiry === true) return;
       if (!isUnauthorized(error)) return;
       const { navigate: nav, location: loc, toast: show } = latestRef.current;
@@ -74,9 +99,18 @@ export function SessionExpiryHandler() {
 
       // Exempt (me/guest-route) 401s take NO single-flight slot: concurrent
       // clears are idempotent, and an actionable 401 racing them must not be
-      // dropped (it owns the navigate/toast below).
+      // dropped (it owns the navigate/toast below). The bootstrap ['auth','me']
+      // query is spared from the flush — destroying it is what let the clear →
+      // re-subscribe → refetch cycle self-sustain (T043). Any other trigger
+      // still gets the full flush so cached user-scoped data never survives on
+      // a shared tab; the destroyed me query refetches once, 401s, and its
+      // exempt handler spares it, so the cycle terminates.
       if (clearOnly) {
-        void resetSessionCaches(queryClient).catch(() => {
+        const spareHash = bootstrapMeTriggerHash(triggeringQuery);
+        void resetSessionCaches(
+          queryClient,
+          spareHash !== undefined ? { exceptQueryHash: spareHash } : undefined,
+        ).catch(() => {
           // Best effort — an exempt 401 never blocks on the clear.
         });
         return;
@@ -99,7 +133,7 @@ export function SessionExpiryHandler() {
     };
 
     queryCache.config.onError = (error, query) => {
-      handle(error, query.meta);
+      handle(error, query?.meta, query);
     };
     mutationCache.config.onError = (error, _variables, _onMutateResult, mutation) => {
       handle(error, mutation.meta);

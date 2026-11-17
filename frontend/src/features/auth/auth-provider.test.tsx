@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { ToastProvider } from '@/components/ui/toast-provider';
+import { SessionExpiryHandler } from '@/components/session-expiry-handler';
 import { AuthProvider } from './auth-provider';
 import { useAuth } from './use-auth';
 
@@ -399,6 +402,44 @@ describe('session cache hygiene', () => {
     expect(authApi.meApi).toHaveBeenCalledTimes(1);
     // The observer re-attaches on a later effect hop; wait for the context to catch up.
     await waitFor(() => expect(result.current.user).toEqual(newUser));
+  });
+});
+
+describe('AuthProvider on a guest route with the global 401 handler mounted (T043)', () => {
+  const unauthorized = () =>
+    Object.assign(new Error('Authentication is required.'), { status: 401 });
+
+  it('fires the bootstrap me fetch exactly once on mount — never a refetch loop', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    (authApi.meApi as ReturnType<typeof vi.fn>).mockRejectedValue(unauthorized());
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/login']}>
+          <ToastProvider>
+            <SessionExpiryHandler />
+            <AuthProvider>
+              <div>Guest Page</div>
+            </AuthProvider>
+          </ToastProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryCache().find({ queryKey: ['auth', 'me'] })?.state.status,
+      ).toBe('error'),
+    );
+    // The fire storm (T043) reproduced hundreds of calls in ~1.5 s; half a
+    // second of quiescence after the first fetch is conclusive, and bounded.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(authApi.meApi).toHaveBeenCalledTimes(1);
   });
 });
 

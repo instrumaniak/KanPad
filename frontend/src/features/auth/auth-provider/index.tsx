@@ -12,8 +12,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryFn: meApi,
     retry: false,
     staleTime: 5 * 60 * 1000,
-    // The global 401 handler (T014) clears the cache for this 401 too, but the
-    // redirect stays AppLayout-owned — exempt redirect/toast only.
+    // The global 401 handler (T014) spares this query from the exempt-path
+    // cache flush (T043) — destroying it here would re-create and refetch it
+    // in a self-sustaining loop — but the redirect stays AppLayout-owned:
+    // exempt redirect/toast only.
     meta: { skipSessionExpiryRedirect: true },
   });
 

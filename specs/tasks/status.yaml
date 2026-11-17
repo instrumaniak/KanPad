@@ -70,8 +70,8 @@ tasks:
     phase: 0
     critical: false
   T016:
-    name: "Fix bundle: route chunks + lazy mermaid + CI size budget"
-    status: pending
+    name: "Fix bundle: static app + vendor chunk + CI size budget"
+    status: done
     depends: ~
     phase: 0
     critical: false
@@ -260,3 +260,9 @@ tasks:
       - T041
     phase: 2
     critical: false
+  T043:
+    name: Anonymous /api/auth/me fire storm on guest routes
+    status: done
+    depends: ~
+    phase: 0
+    critical: true

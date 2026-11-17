@@ -2,6 +2,7 @@ import { useCallback, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { registerApi, loginApi, meApi, logoutApi } from '../auth.api';
 import { AuthContext, type AuthContextType } from '../auth-context';
+import { resetSessionCaches } from '@/lib/query-client-reset';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -15,14 +16,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const registerMutation = useMutation({
     mutationFn: registerApi,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
+    onSuccess: async (data) => {
+      await resetSessionCaches(queryClient);
+      // Register logs the user in and returns the user payload — write it from
+      // the response (same ordering rule as login). invalidateQueries here
+      // would be a no-op: the clear above emptied the cache.
+      queryClient.setQueryData(['auth', 'me'], data);
     },
   });
 
   const loginMutation = useMutation({
     mutationFn: loginApi,
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      await resetSessionCaches(queryClient);
+      // me is written AFTER the clear so it survives (ordering pinned by test).
       queryClient.setQueryData(['auth', 'me'], data);
     },
   });
@@ -30,6 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logoutMutation = useMutation({
     mutationFn: logoutApi,
     onSuccess: async () => {
+      await resetSessionCaches(queryClient);
+      // Belt-and-braces null for observers that re-render between clear and
+      // navigate; a cleared cache has no me anyway.
       queryClient.setQueryData(['auth', 'me'], null);
     },
   });

@@ -52,7 +52,7 @@ tasks:
     critical: true
   T013:
     name: Session cache hygiene on logout/login
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: true

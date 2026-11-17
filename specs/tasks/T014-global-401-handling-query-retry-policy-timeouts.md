@@ -90,6 +90,35 @@ TDD: red-first for each of the three behaviors.
       or un-dead — either way greppable single implementation.
 - [ ] Full frontend suite green; `tsc --noEmit` clean; lesson appended.
 
+## Carried from T013 review (2026-11-17)
+
+T013 review (verdict "ship with nits") raised two items owned by this task — both
+stem from `queryClient.clear()` not cancelling in-flight **mutations**:
+
+1. **In-flight mutation callbacks can repopulate an emptied cache (the one residual
+   R2 path).** `MutationCache.clear()` never cancels; `onSuccess`/`onSettled` still run.
+   Unconditional `setQueryData` in mutation lifecycle callbacks recreates the query
+   post-boundary — this codebase has live instances (`use-cards.ts:100,107,118,152,
+   193,204`, `drag-drop-context.tsx:83`, `use-projects.ts:54`). Once T014 wires
+   `resetSessionCaches()` into a **global** 401 handler, the hazard window is "any
+   in-flight mutation when any 401 lands". Requirement: either restrict feature-side
+   cache writes across a session boundary (e.g., a `sessionEpoch` counter bumped in
+   `resetSessionCaches()` and consulted in the affected mutation callbacks), or
+   explicitly accept-and-document the residual window in this task's §Notes — decide
+   before shipping the 401 wiring. Review those call sites by name; do not demand a
+   global rewrite if a narrow guard covers them.
+2. **Session-setting response treated as failure never resets the cache.** If login
+   or register succeeds server-side (cookie set) but the client treats the response
+   as an error (non-2xx with cookie, parse failure, aborted request), `onSuccess`
+   never runs and the mounted observer keeps A's identity. T014 must not leave B
+   holding A's cache in this path either — for example by covering it via the global
+   401 handling (and checking the bootstrap-`['auth','me']` exemption direction: it
+   exists to avoid double-redirect, not to leak cache). At minimum, document the
+   residual in §Notes.
+
+(Both documented in `specs/tasks/T013-*.md` §Notes items 1–5 and
+`docs/lessons/frontend.md` "Session cache hygiene (2026-11-17)".)
+
 ## Notes
 
 (filled in during/after implementation)

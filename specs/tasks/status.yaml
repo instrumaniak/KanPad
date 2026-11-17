@@ -46,7 +46,7 @@ tasks:
     critical: false
   T012:
     name: Repair compose.yaml + frontend Dockerfile
-    status: pending
+    status: done
     depends: ~
     phase: 0
     critical: true

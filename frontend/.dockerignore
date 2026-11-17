@@ -1,0 +1,21 @@
+# Keep the build context small and the image honest.
+node_modules
+dist
+dist-ssr
+
+# Local env must never reach the build — Vite statically bakes
+# import.meta.env.VITE_API_URL otherwise (see ../compose.yaml). Reincluded
+# with `!` only the *example* files, never real ones.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Test/storybook artifacts — not part of the static bundle source.
+# NOTE: `.storybook/` itself stays — tsconfig.json references
+# ./.storybook/tsconfig.json (`tsc -b` fails without it).
+e2e/
+test-results/
+storybook-static/
+
+*.log
+.git

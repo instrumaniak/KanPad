@@ -58,7 +58,7 @@ tasks:
     critical: true
   T014:
     name: Global 401 handling + query retry policy + timeouts
-    status: pending
+    status: done
     depends:
       - T013
     phase: 0

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
-import { resetSessionCaches } from './query-client-reset';
+import { resetSessionCaches, currentSessionEpoch } from './query-client-reset';
 
 const createClient = () =>
   new QueryClient({
@@ -61,5 +61,23 @@ describe('resetSessionCaches', () => {
     await expect(fetchPromise).rejects.toThrow();
 
     expect(queryClient.getQueryData(['boards'])).toBeUndefined();
+  });
+
+  it('bumps the session epoch so in-flight mutation rollbacks can fence themselves', async () => {
+    const queryClient = createClient();
+    const before = currentSessionEpoch();
+
+    await resetSessionCaches(queryClient);
+
+    expect(currentSessionEpoch()).toBe(before + 1);
+  });
+
+  it('bumps the epoch before clearing so callbacks see the new boundary', async () => {
+    const queryClient = createClient();
+    queryClient.setQueryData(['boards'], [{ id: 5 }]);
+    const before = currentSessionEpoch();
+    // The epoch must be observable as bumped by the time any awaited work runs.
+    await resetSessionCaches(queryClient);
+    expect(currentSessionEpoch()).toBeGreaterThan(before);
   });
 });

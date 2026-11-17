@@ -8,6 +8,7 @@ import {
   type ProjectsPage,
   type ProjectsQuery,
 } from './projects.api';
+import { currentSessionEpoch } from '@/lib/query-client-reset';
 
 export function useProjects(query: ProjectsQuery = {}) {
   const resolved = resolveProjectsQuery(query);
@@ -46,9 +47,15 @@ export function useUpdateProject() {
         };
       });
 
-      return { previous };
+      return { previous, sessionEpoch: currentSessionEpoch() };
     },
     onError: (_err, _vars, context) => {
+      // A session boundary crossed while the mutation was in flight — the
+      // rollback would recreate ['projects', …] with the previous user's
+      // snapshot. Skip it.
+      if (context?.sessionEpoch !== undefined && context.sessionEpoch !== currentSessionEpoch()) {
+        return;
+      }
       if (context?.previous) {
         for (const [key, data] of context.previous) {
           queryClient.setQueryData(key, data);

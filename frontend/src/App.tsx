@@ -1,12 +1,14 @@
 import { useState, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createAppQueryClient } from './lib/app-query-client';
 import { AuthProvider } from './features/auth/auth-provider';
 import { ToastProvider } from './components/ui/toast-provider';
 import { GuestRoute } from './features/auth/guest-route';
 import { AppLayout } from './layouts/app-layout';
 import { Spinner } from './components/spinner';
 import { RouteErrorBoundary } from './components/route-error-boundary';
+import { SessionExpiryHandler } from './components/session-expiry-handler';
 
 const RegisterForm = lazy(() =>
   import('./features/auth/register-form').then((m) => ({ default: m.RegisterForm }))
@@ -56,22 +58,13 @@ function LoadingFallback() {
 }
 
 function App() {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 5 * 60 * 1000,
-            retry: false,
-          },
-        },
-      }),
-  );
+  const [queryClient] = useState(() => createAppQueryClient());
 
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <ToastProvider>
+          <SessionExpiryHandler />
           <AuthProvider>
             <Suspense fallback={<LoadingFallback />}>
               <RouteErrorBoundary>

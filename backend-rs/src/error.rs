@@ -33,6 +33,11 @@ pub const PROBLEM_JSON: &str = "application/problem+json";
 /// `TimeoutLayer`; 504 is proxy semantics, so the origin uses 503).
 const TIMEOUT_RETRY_AFTER: &str = "30";
 
+/// `Retry-After` seconds attached to lock-class busy responses (`1213` /
+/// `1205` — the request lost a race to concurrent contention, which clears
+/// sub-second; a 2 s floor is plenty for clients to retry against).
+const BUSY_RETRY_AFTER: &str = "2";
+
 /// One field-level failure inside the problem `errors[]` extension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct FieldError {
@@ -369,6 +374,28 @@ impl IntoResponse for AppError {
                             Vec::new(),
                         )
                     }
+                    // Lock-class contention that survived the bounded retry
+                    // (or a non-retried straggler): the honest "busy" signal —
+                    // 503 + `Retry-After: 2`, no new `AppError` variant, same
+                    // `service-unavailable` slug as the pool/timeout arms.
+                    sqlx::Error::Database(_)
+                        if crate::common::retry::is_lock_class_sqlx_error(&error) =>
+                    {
+                        let mut response = problem_response(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "service-unavailable",
+                            "Service Unavailable",
+                            "The database is temporarily unavailable. Please try again."
+                                .to_string(),
+                            instance,
+                            Vec::new(),
+                        );
+                        response.headers_mut().insert(
+                            header::RETRY_AFTER,
+                            HeaderValue::from_static(BUSY_RETRY_AFTER),
+                        );
+                        response
+                    }
                     // Pool exhaustion / closed pool / transport failure: the
                     // runtime 503 mapping (boot connection-refused stays fatal;
                     // `/ready` mirrors this red state in T05).
@@ -671,16 +698,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn db_lock_class_error_renders_503_with_retry_after_2() {
+        // A `40001` (serialization-failure SQLSTATE) stub cannot downcast to
+        // the driver's concrete error, so this exercises the documented
+        // SQLSTATE fallback of the lock-class predicate (the `1205`/`HY000`
+        // arm is covered end-to-end by the T020 API injector tests, which
+        // sign a raw error through a real trigger).
+        let (status, headers, body) = render(AppError::Db(stub_db_error("40001"))).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["type"], format!("{PROBLEM_BASE}/service-unavailable"));
+        assert_eq!(body["status"], 503);
+        assert_eq!(
+            headers.get(header::RETRY_AFTER).unwrap(),
+            BUSY_RETRY_AFTER,
+            "lock-class busy responses carry Retry-After: 2"
+        );
+        let raw = serde_json::to_string(&body).unwrap();
+        assert!(!raw.contains("40001"), "driver SQLSTATE leaked: {raw}");
+        assert!(!raw.contains("Duplicate"), "driver text leaked: {raw}");
+        // The instance remains exact.
+        assert_eq!(body["instance"], "GET /probe#test-id");
+    }
+
+    #[tokio::test]
+    async fn db_1062_stays_409_conflict_without_retry_after() {
+        // Scoped or not, `1062` is a class-23 integrity violation — it maps
+        // to 409 and carries NO Retry-After (the caller's input lost, not a
+        // busy race). Unchanged from before T020.
+        for error in [stub_db_error("1062"), stub_unique_violation_error()] {
+            let (status, headers, body) = render(AppError::Db(error)).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(body["type"], format!("{PROBLEM_BASE}/conflict"));
+            assert!(
+                headers.get(header::RETRY_AFTER).is_none(),
+                "409 responses must not carry Retry-After"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn unexpected_db_errors_and_internal_are_generic_500() {
         for error in [
             AppError::Db(stub_db_error("2003")),
             AppError::Db(sqlx::Error::WorkerCrashed),
             AppError::Internal(Internal),
         ] {
-            let (status, _, body) = render(error).await;
+            let (status, headers, body) = render(error).await;
             assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(body["type"], format!("{PROBLEM_BASE}/internal"));
             assert_eq!(body["detail"], "An unexpected error occurred.");
+            // The generic 500 carries NO Retry-After (lock-class 503s only).
+            assert!(
+                headers.get(header::RETRY_AFTER).is_none(),
+                "the generic 500 must not carry Retry-After"
+            );
             let raw = serde_json::to_string(&body).unwrap();
             assert!(!raw.contains("sqlx"), "driver text leaked: {raw}");
             assert!(!raw.contains("Duplicate"), "sql text leaked: {raw}");

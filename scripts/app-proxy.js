@@ -1,3 +1,10 @@
+// KanPad cPanel Node-hop proxy — the ONLY proxy source of truth.
+// (The divergent release/app-proxy*.js copies were deleted 2026-11-18, T019;
+// `release/` holds deploy artifacts only.)
+// Contract — Host unchanged, X-Forwarded-For appended, X-Forwarded-Proto
+// preserved (https fallback), TRUSTED_PROXIES = exactly this hop:
+// docs/deployment.md §"Proxy contract". cPanel layout: spawns `backend-rs`
+// from the same directory (`__dirname/backend-rs`).
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const path = require('node:path');

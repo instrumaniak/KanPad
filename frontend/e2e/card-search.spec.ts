@@ -1,14 +1,15 @@
 import { expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 import { monitoringTest } from './test-utils';
 
-const API_BASE_URL = 'http://localhost:3000';
+const API_BASE_URL = E2E_API;
 const TEST_EMAIL = 'e2e-cardsearch@test.local';
 const TEST_PASSWORD = 'Test1234!';
 
 monitoringTest.describe('Card Search E2E', () => {
   monitoringTest.describe.configure({ timeout: 90000 });
   monitoringTest.beforeAll(async ({ request }) => {
-    const res = await request.post(`${API_BASE_URL}/api/auth/register`, {
+    const res = await request.post(`${API_BASE_URL}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -19,22 +20,22 @@ monitoringTest.describe('Card Search E2E', () => {
   monitoringTest(
     'searches cards by title, clears, shows empty state, preserves across list toggle',
     async ({ page, request }) => {
-      const loginRes = await request.post(`${API_BASE_URL}/api/auth/login`, {
+      const loginRes = await request.post(`${API_BASE_URL}/api/v1/auth/login`, {
         data: { email: TEST_EMAIL, password: TEST_PASSWORD },
       });
       const cookies = loginRes.headers()['set-cookie'] || '';
 
-      const boardRes = await request.post(`${API_BASE_URL}/api/boards`, {
+      const boardRes = await request.post(`${API_BASE_URL}/api/v1/boards`, {
         data: { name: `Card Search Board ${Date.now()}` },
         headers: { Cookie: cookies },
       });
       const boardId = (await boardRes.json()).data.id;
 
-      const colResA = await request.post(`${API_BASE_URL}/api/boards/${boardId}/columns`, {
+      const colResA = await request.post(`${API_BASE_URL}/api/v1/boards/${boardId}/columns`, {
         data: { name: 'To Do', board_id: boardId },
         headers: { Cookie: cookies },
       });
-      const colResB = await request.post(`${API_BASE_URL}/api/boards/${boardId}/columns`, {
+      const colResB = await request.post(`${API_BASE_URL}/api/v1/boards/${boardId}/columns`, {
         data: { name: 'Done', board_id: boardId },
         headers: { Cookie: cookies },
       });
@@ -47,7 +48,7 @@ monitoringTest.describe('Card Search E2E', () => {
         ['Zulu task', colA],
       ];
       for (const [title, column_id] of seed) {
-        await request.post(`${API_BASE_URL}/api/cards`, {
+        await request.post(`${API_BASE_URL}/api/v1/cards`, {
           data: { title, column_id, position: 0 },
           headers: { Cookie: cookies },
         });

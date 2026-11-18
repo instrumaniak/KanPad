@@ -11,7 +11,12 @@ use garde::Validate;
 use tower_sessions::Session;
 
 use crate::{
-    common::{ids::Role, label_seed::ensure_default_labels, validation::normalize_email},
+    common::{
+        ids::Role,
+        label_seed::ensure_default_labels,
+        tx_retry::{TxRetryOpts, with_tx_retry},
+        validation::normalize_email,
+    },
     error::{AppError, AppResult, Internal},
     extract::AuthSession,
     state::AppState,
@@ -84,13 +89,18 @@ pub async fn register(
 
     let password_hash = hash_password(&input.password, state.settings.hash_cost)?;
 
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    let user_id = insert_user_row(&mut *tx, &input.email, &password_hash).await?;
-    ensure_default_labels(&mut *tx, user_id)
-        .await
-        .map_err(AppError::Db)?;
-    let user = find_user_by_id(&mut *tx, user_id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    let input = &input;
+    let password_hash = &password_hash;
+    let user = with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        let user_id = insert_user_row(&mut *tx, &input.email, password_hash).await?;
+        ensure_default_labels(&mut *tx, user_id)
+            .await
+            .map_err(AppError::Db)?;
+        find_user_by_id(&mut *tx, user_id)
+            .await
+            .map(|user| (tx, user))
+    })
+    .await?;
 
     // Session persistence failures carry no payload (`Internal` is a unit
     // struct); only a static message is logged server-side — never session

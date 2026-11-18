@@ -83,8 +83,9 @@ export class ApiError extends Error {
 
 /**
  * Backend origin switch. Default stays relative so the Vite dev proxy keeps
- * working; setting `VITE_API_URL` points the frontend at `:3000` (Nest) vs
- * `:3001` (Rust) during cutover. Owned here (T40b), not in `vite.config.ts`.
+ * working; setting `VITE_API_URL` points the frontend at an absolute API origin
+ * (`:3001` Rust in dev; the two-origin prod path). Owned here (T40b), not in
+ * `vite.config.ts`.
  */
 export const BASE: string = import.meta.env.VITE_API_URL ?? '';
 

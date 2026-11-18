@@ -77,28 +77,28 @@ tasks:
     critical: false
   T017:
     name: Retarget Playwright to backend-rs + enable in CI
-    status: pending
+    status: done
     depends:
       - T016
     phase: 0
     critical: false
   T018:
     name: Secrets hygiene + dependency declarations
-    status: pending
+    status: done
     depends:
       - T016
     phase: 0
     critical: false
   T019:
     name: Docs/README/proxy sync
-    status: pending
+    status: done
     depends:
       - T012
     phase: 0
     critical: false
   T020:
-    name: Tx-retry helper for position-shifting transactions
-    status: pending
+    name: Tx-retry helper for transient-lock transactions
+    status: done
     depends:
       - T010
     phase: 1
@@ -266,3 +266,26 @@ tasks:
     depends: ~
     phase: 0
     critical: true
+  T044:
+    name: Board column height containment visual
+    status: pending
+    depends:
+      - T021
+      - T022
+    phase: 1
+    critical: false
+  T045:
+    name: backend-rust chrono migration
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
+phases:
+  0: Architecture
+  1: Observability
+  2: Collaboration
+critical_path:
+  - T021
+  - T022
+  - T044
+  

@@ -44,6 +44,13 @@
 //!   [`assert_errors_nonempty`], because the Nest column asserts a different
 //!   body shape than the Rust column. It delegates to the shared core and
 //!   imports it aliased (`assert_errors_nonempty_fields`).
+//! - `tx_retry.rs` — its fault injector (`install_fault_injector`,
+//!   `fire_count`, `probe_isolation`, `seed_tag`) is the T020 exhaustion /
+//!   recovery proof shape: a BEFORE INSERT/DELETE/UPDATE trigger backed by a
+//!   MyISAM counter, in `Counted(n)` and `Always` modes. The T61 precedent in
+//!   `cards_move.rs`/`sort_key_ordering.rs` is one-shot-only and
+//!   BEFORE-UPDATE-only, so promoting it would change those suites' proofs;
+//!   it stays local for the same reason as the T61 one-shot copy.
 //!
 //! ## Import EXPLICITLY, never glob
 //!

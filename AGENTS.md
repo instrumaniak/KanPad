@@ -7,6 +7,8 @@ Tech stack:
 - _Backend_ : Rust, Axum, sqlx : `backend-rs`
 - _Database_: MySQL/MariaDB
 
+Read this file if available: `AGENTS-local.md`
+
 ## Project Specification References
 
 Initial specs:
@@ -26,6 +28,7 @@ The backend is rewritten from node.js to rust. The spec files related to that:
 
 ## General Agent Instructions
 
+- Be aware of system resources. Do not crash anything. Do not run too many things all at once.
 - Whenever in doubt follow industry standards and community best practices
 - Plan the implementation including edge cases, verify your plan by web search or documentation.
 - TDD - do Test driven development. check coverage.
@@ -81,7 +84,7 @@ Keep the summary line strictly between **20 and 50 characters** with no ending p
 
 ## Where lessons live
 
-- Append-only, dated, tagged: `docs/lessons/{data-migration,rust-backend,frontend,backend-node,ci-quality}.md`.
+- Append-only, dated, tagged: `docs/lessons/{data-migration,rust-backend,frontend,backend-node,ci-quality,frontend-visual-testing}.md`.
 - Task-scoped post-mortems: `specs/tasks/Txxx-*.md` (## Lessons section).
 - Rust rewrite post-mortems: `specs/api-rewrite-rs-specs/`.
 - When a lesson becomes a standing rule, promote it to the relevant section above and delete the long story.

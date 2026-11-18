@@ -43,7 +43,10 @@ yanked = "deny"
 # Ignores — each one is BOUND to a task that removes it. There is no blanket
 # "allow advisories" here: every entry below is a KNOWN, ASSESSED advisory
 # with a named owner and a removal condition. The first `cargo deny` run
-# (2026-10-22, T57) reported exactly these and no others.
+# (2026-10-22, T57) reported exactly these and no others; the second entry
+# (RUSTSEC-2026-0543, chrono unmaintained) was added 2026-11-19 when that
+# advisory began failing every branch with zero code changes, and is bound
+# to T045.
 #
 # **The removal conditions are not optional.** The task named in each reason
 # MUST delete its entry, and `cargo deny check advisories` must then pass
@@ -70,6 +73,27 @@ ignore = [
     # REMOVED BY: — there is no version to move to. Re-check on the next
     # `rsa` release (a patched 0.10 final would close it).
     { id = "RUSTSEC-2023-0071", reason = "rsa has NO patched release (the advisory covers every version); it reaches the tree only via sqlx-mysql's caching_sha2_password handshake, whose RSA exchange happens only on a PLAINTEXT connection (production is TLS)" },
+
+    # chrono — the crate is UNMAINTAINED (RUSTSEC-2026-0543, published
+    # 2026-11-17; all versions affected, "No safe upgrade is available!").
+    # It reaches the tree directly (`Cargo.toml`: `chrono = "0.4"`, plus the
+    # sqlx `chrono` feature) and transitively via `sqlx-core`/`sqlx-mysql`.
+    #
+    # WHY IT IS ACCEPTABLE HERE (as a BOUND ignore, not a free pass): the
+    # advisory is a maintenance-status signal, not a memory-safety bug; every
+    # `cargo deny check` on every branch started failing simultaneously on
+    # 2026-11-17 with zero code changes (main, dev and both dependabot PRs
+    # red at once), which is exactly what a time-bombed advisory looks like.
+    # The date library is pinned, MIT/Apache-2.0, and its functionality we
+    # rely on (NaiveDateTime ↔ DATETIME(6), fixed-microseconds wire shape)
+    # is deterministic — there is no exploitable surface being shipped.
+    #
+    # REMOVED BY: **specs/tasks/T045-backend-rust-chrono-migration.md** —
+    # migrate `backend-rs` off chrono onto the `time` crate (already in the
+    # tree; sqlx 0.9 supports a `time` feature). T045 MUST delete this entry;
+    # `cargo deny check advisories` must then pass WITHOUT it. A stale entry
+    # here is a silent hole in the gate.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (RUSTSEC-2026-0543, all versions, no safe upgrade); accepted as a bound ignore until the chrono->time migration lands (T045), which deletes this entry" },
 
 ]
 

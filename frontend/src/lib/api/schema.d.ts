@@ -168,10 +168,13 @@ export interface paths {
          * `POST /api/v1/boards/{boardId}/columns{name?} → 201 {data} + Location`.
          *     The sort key is `key_between(last_key, None)` from a serialized
          *     `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` read in the create tx (the
-         *     serialized append contract — no `1062` retry needed; an over-64-char key
-         *     fires the same in-tx two-phase rebalance as the other append paths); an
-         *     absent name defaults to `New Column` (a present blank still 400s via the
-         *     DTO). Foreign/missing board id rolls back to 404 (no oracle, never 403).
+         *     serialized append contract — no `1062` path there); an over-64-char key
+         *     fires the same in-tx two-phase rebalance as the other append paths. This
+         *     tx is the ONLY un-retried position-rewriting path pre-T020; transient
+         *     lock failures now retry inside the shared kernel (`READ COMMITTED` +
+         *     bounded attempts; exhaustion → 503 + `Retry-After: 2`). An absent name
+         *     defaults to `New Column` (a present blank still 400s via the DTO).
+         *     Foreign/missing board id rolls back to 404 (no oracle, never 403).
          */
         post: operations["create_column"];
         delete?: never;
@@ -386,8 +389,9 @@ export interface paths {
          *     with a single between-neighbours sort-key write (clamped to `[0, N-1]`,
          *     never 400). The response re-reads the stored row (never echoes).
          *     Foreign/missing id → 404, never 403. The transaction runs under `READ
-         *     COMMITTED` and retries the whole PATCH (≤ `MAX_ATTEMPTS` attempts, linear
-         *     backoff) on a `1213`/`1205` or a `UQ_checklist_items_checklist_sort_key`-
+         *     COMMITTED` and retries the whole PATCH inside the shared `with_tx_retry`
+         *     kernel (≤ `MAX_ATTEMPTS` attempts, jittered backoff) on a `1213`/`1205` or a
+         *     `UQ_checklist_items_checklist_sort_key`-
          *     scoped `1062` — two concurrent moves can pick the same between-neighbours
          *     key (F2, 2026-11-15); unrelated unique violations never retry.
          */
@@ -444,11 +448,12 @@ export interface paths {
          *     blank/overlong text or negative `position` → 400 `errors[]` via the DTO
          *     (floats never reach garde — serde rejects them first as `invalid-json`).
          *     The transaction runs under `READ COMMITTED` and retries the whole create
-         *     (≤ `MAX_ATTEMPTS` attempts, linear backoff) on a `1213`/`1205` or a
+         *     inside the shared `with_tx_retry` kernel (≤ `MAX_ATTEMPTS` attempts,
+         *     jittered backoff) on a `1213`/`1205` or a
          *     `UQ_checklist_items_checklist_sort_key`-scoped `1062` — two concurrent
          *     explicit-position inserts can pick the same between-neighbours key (F2,
          *     2026-11-15); unrelated unique violations never retry. The serialized
-         *     append path cannot 1062, but shares the same loop.
+         *     append path cannot 1062, but shares the same kernel.
          */
         post: operations["create_item"];
         delete?: never;
@@ -507,8 +512,9 @@ export interface paths {
          *     The column is pre-read for ownership (foreign/missing id → 404, never
          *     403); absent keys are a no-op 200. The response re-reads the stored row
          *     (never echoes). The transaction runs under `READ COMMITTED` and retries
-         *     the whole PATCH (≤ [`MAX_ATTEMPTS`] attempts, linear backoff) when the
-         *     matcher sees `1213`/`1205` or a `UQ_*_sort_key`-scoped `1062` — the
+         *     the whole PATCH inside the shared `with_tx_retry` kernel (≤ MAX_ATTEMPTS
+         *     attempts, jittered backoff) when the matcher sees `1213`/`1205` or a
+         *     `UQ_*_sort_key`-scoped `1062` — the
          *     `sort_order` CASE rewrite and the `position` between-neighbours write can
          *     both collide with a concurrent transaction committing inside the gap
          *     (F2, 2026-11-15); unrelated unique violations never retry.
@@ -534,8 +540,9 @@ export interface paths {
          *     source is a success (`{moved_count: 0}`), never an error.
          *     Foreign/missing source or target id → 404 (no oracle, never 403);
          *     garbage id → 400 `invalid-path`; bad body → 400 via `ValidJson`. The
-         *     transaction runs under `READ COMMITTED` and retries the whole move (≤
-         *     `MAX_ATTEMPTS` attempts, linear backoff) on a `1213`/`1205` or a
+         *     transaction runs under `READ COMMITTED` and retries the whole move
+         *     inside the shared `with_tx_retry` kernel (≤ MAX_ATTEMPTS attempts,
+         *     jittered backoff) on a `1213`/`1205` or a
          *     `UQ_cards_column_sort_key`-scoped `1062` — the target-side `CASE` key
          *     assignment can collide with a row committed past the locked last key
          *     (F2, 2026-11-15); unrelated unique violations never retry.

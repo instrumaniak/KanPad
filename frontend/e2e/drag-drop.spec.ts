@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 import { monitoringTest, assertNoErrors } from './test-utils';
 
 const TEST_EMAIL = 'e2e-dnd@test.local';
@@ -6,7 +7,7 @@ const TEST_PASSWORD = 'Test1234!';
 
 monitoringTest.describe('Drag and Drop', () => {
   monitoringTest.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -23,7 +24,7 @@ monitoringTest.describe('Drag and Drop', () => {
   });
 
   async function createBoardWithCards(page: import('@playwright/test').Page, boardName: string) {
-    const res = await page.request.post('/api/boards', {
+    const res = await page.request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: boardName },
     });
     const body = await res.json();
@@ -125,16 +126,16 @@ monitoringTest.describe('Drag and Drop', () => {
     const boardUrl = page.url();
     const boardId = parseInt(boardUrl.split('/board/')[1]?.split('/')[0] || '0', 10);
 
-    const columnsRes = await page.request.get(`/api/boards/${boardId}/columns`);
+    const columnsRes = await page.request.get(`${E2E_API}/api/v1/boards/${boardId}/columns`);
     const columnsData = await columnsRes.json();
     const columnIds: number[] = (columnsData.data ?? columnsData).map((c: { id: number }) => c.id);
 
     expect(columnIds.length).toBeGreaterThanOrEqual(2);
 
-    await page.request.post('/api/cards', {
+    await page.request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: 'Card A', column_id: columnIds[0] },
     });
-    await page.request.post('/api/cards', {
+    await page.request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: 'Card B', column_id: columnIds[1] },
     });
 
@@ -162,7 +163,7 @@ monitoringTest.describe('Drag and Drop', () => {
     await expect(secondColumnCards).toHaveCount(2, { timeout: 5000 });
 
     // Verify server state via API before reload
-    const verifyRes = await page.request.get(`/api/boards/${boardId}/columns`);
+    const verifyRes = await page.request.get(`${E2E_API}/api/v1/boards/${boardId}/columns`);
     const verifyData = await verifyRes.json();
     const verifyColumns = verifyData.data ?? verifyData;
     expect(verifyColumns[0].cards).toHaveLength(0);
@@ -179,12 +180,12 @@ monitoringTest.describe('Drag and Drop', () => {
   monitoringTest('drag overlay shows the same labels and description as the source card', async ({ page, monitoring }) => {
     test.setTimeout(60000);
 
-    const loginRes = await page.request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await page.request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const labelsRes = await page.request.get('http://localhost:3000/api/labels', {
+    const labelsRes = await page.request.get(`${E2E_API}/api/v1/labels`, {
       headers: { Cookie: cookies },
     });
     const labelsData = await labelsRes.json();
@@ -195,13 +196,13 @@ monitoringTest.describe('Drag and Drop', () => {
     }
 
     const boardName = `DnD Preview ${Date.now()}`;
-    const boardRes = await page.request.post('http://localhost:3000/api/boards', {
+    const boardRes = await page.request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: boardName },
       headers: { Cookie: cookies },
     });
     const boardId = (await boardRes.json()).data.id;
 
-    const columnRes = await page.request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const columnRes = await page.request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: 'To Do' },
       headers: { Cookie: cookies },
     });
@@ -209,24 +210,21 @@ monitoringTest.describe('Drag and Drop', () => {
 
     const cardTitle = 'Labeled Preview Card';
     const cardDescription = `Preview body ${Date.now()}`;
-    const cardRes = await page.request.post('http://localhost:3000/api/cards', {
+    const cardRes = await page.request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: cardTitle, description: cardDescription, column_id: columnId, position: 0 },
       headers: { Cookie: cookies },
     });
     const cardId = (await cardRes.json()).data.id;
 
-    const assignRes = await page.request.post(`http://localhost:3000/api/cards/${cardId}/labels`, {
+    const assignRes = await page.request.post(`${E2E_API}/api/v1/cards/${cardId}/labels`, {
       data: { labelId: bugLabel.id },
       headers: { Cookie: cookies },
     });
     expect(assignRes.status()).toBe(200);
 
-    await page.goto('/login');
-    await page.getByLabel('Email').fill(TEST_EMAIL);
-    await page.getByLabel('Password', { exact: true }).fill(TEST_PASSWORD);
-    await page.getByRole('button', { name: 'Sign In' }).click();
-    await page.waitForURL('/');
-
+    // page.request shares the browser context's cookie jar, so the fixture
+    // login above already authenticated this page — an authed visit to
+    // /login is bounced to / (T043-era auth guard), so the form never renders.
     await page.goto(`/board/${boardId}`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1500);

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-move-all-cards@test.local';
 const TEST_PASSWORD = 'Test1234!';
@@ -11,7 +12,7 @@ test.describe('Move All Cards', () => {
   let cardTitle: string;
 
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -19,13 +20,13 @@ test.describe('Move All Cards', () => {
     }
 
     // Login via API
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     // Create board
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Move All Cards Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
@@ -33,7 +34,7 @@ test.describe('Move All Cards', () => {
     boardId = boardData.data.id;
 
     // Create column 1
-    const col1Res = await request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const col1Res = await request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: 'Source Column' },
       headers: { Cookie: cookies },
     });
@@ -41,7 +42,7 @@ test.describe('Move All Cards', () => {
 
     // Create column 2
     column2Name = 'Target Column';
-    const col2Res = await request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const col2Res = await request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: column2Name },
       headers: { Cookie: cookies },
     });
@@ -49,7 +50,7 @@ test.describe('Move All Cards', () => {
 
     // Create a card in column 1
     cardTitle = 'Moving Card';
-    const cardRes = await request.post('http://localhost:3000/api/cards', {
+    const cardRes = await request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: cardTitle, column_id: column1Id, position: 0 },
       headers: { Cookie: cookies },
     });
@@ -127,11 +128,11 @@ test.describe('Move All Cards', () => {
     ).toHaveCount(0);
 
     // Verify via API that the card's column_id changed
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
-    const boardRes = await request.get(`http://localhost:3000/api/boards/${boardId}`, {
+    const boardRes = await request.get(`${E2E_API}/api/v1/boards/${boardId}`, {
       headers: { Cookie: cookies },
     });
     const boardData = await boardRes.json();

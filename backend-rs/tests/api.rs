@@ -79,6 +79,8 @@ mod tags;
 mod throttle;
 #[path = "api/tower_http_07.rs"]
 mod tower_http_07;
+#[path = "api/tx_retry.rs"]
+mod tx_retry;
 #[path = "api/unicode_roundtrip.rs"]
 mod unicode_roundtrip;
 #[path = "api/users.rs"]

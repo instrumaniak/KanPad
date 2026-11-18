@@ -145,12 +145,18 @@ fn serve_require_bails_before_listening() {
         "the bind must never happen: {out_text}"
     );
     // Neither the real nor the injected password may leak in either stream.
-    assert!(!err.contains(&parts.1), "real password leaked: {err}");
+    // An empty real password (the MariaDB leg's root) is contained in
+    // every string — the leak check only applies when it is nonempty.
+    if !parts.1.is_empty() {
+        assert!(!err.contains(&parts.1), "real password leaked: {err}");
+    }
     assert!(
         !err.contains("t005-wrong-password"),
         "wrong password echoed: {err}"
     );
-    assert!(!out_text.contains(&parts.1));
+    if !parts.1.is_empty() {
+        assert!(!out_text.contains(&parts.1));
+    }
     assert!(!out_text.contains("t005-wrong-password"));
 }
 
@@ -206,8 +212,10 @@ fn serve_warn_mode_keeps_serving_degraded() {
         err.contains("continuing: DB_STARTUP_CHECK=warn"),
         "the continuation notice on stderr: {err}"
     );
+    // An empty real password (the MariaDB leg's root) is contained in
+    // every string — only the injected wrong password is always checked.
     assert!(
-        !err.contains(&parts.1) && !err.contains("t005-wrong-password"),
+        (parts.1.is_empty() || !err.contains(&parts.1)) && !err.contains("t005-wrong-password"),
         "no password on stderr: {err}"
     );
 }

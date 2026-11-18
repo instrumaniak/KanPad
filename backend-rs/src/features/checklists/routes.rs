@@ -7,7 +7,6 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use sqlx::Connection;
 
 use crate::{
     common::ownership::check_card_owned,
@@ -32,9 +31,8 @@ use super::{
 use crate::common::{
     order_key::{clamp_position, key_between, key_for_index, needs_rebalance},
     rebalance::{RebalanceScope, rebalance_sort_keys},
-    retry::{MAX_ATTEMPTS, is_transient_lock_error},
+    tx_retry::{TxRetryOpts, with_tx_retry},
 };
-use std::time::Duration;
 
 /// Feature router (no `with_state` inside; the caller applies state once).
 /// Mounted under `/api/v1` (+ the deprecated `/api` alias) by `lib.rs`.
@@ -81,6 +79,10 @@ pub async fn create_checklist(
 ) -> Result<impl IntoResponse, AppError> {
     let user_id = auth.user_id.get();
     let card_id = card_id.get();
+    // No FOR UPDATE, nothing re-keyed (fresh-row inserts only): not
+    // retry-wrapped per the T020 audit — a transient lock failure surfaces
+    // as 503 + Retry-After at the boundary rather than burning a retry
+    // budget on fresh rows.
     let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
     check_card_owned(&mut *tx, user_id, card_id).await?;
     let id = insert_checklist(&mut *tx, card_id, &input.title).await?;
@@ -178,14 +180,17 @@ pub async fn update_checklist(
 ) -> Result<Json<ChecklistBody>, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    // Existence + ownership first: a same-title `PATCH` must stay 200 (an
-    // affected-rows check alone would false-404 when nothing changed).
-    fetch_checklist_owned(&mut *tx, user_id, id).await?;
-    if let Some(title) = input.title.as_deref() {
-        rename_checklist(&mut *tx, id, title).await?;
-    }
-    tx.commit().await.map_err(AppError::Db)?;
+    let input = &input;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        // Existence + ownership first: a same-title `PATCH` must stay 200 (an
+        // affected-rows check alone would false-404 when nothing changed).
+        fetch_checklist_owned(&mut *tx, user_id, id).await?;
+        if let Some(title) = input.title.as_deref() {
+            rename_checklist(&mut *tx, id, title).await?;
+        }
+        Ok((tx, ()))
+    })
+    .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_checklist_owned(&state.pool, user_id, id).await?;
     let items = fetch_checklist_items(&state.pool, id).await?;
@@ -215,10 +220,12 @@ pub async fn delete_checklist(
 ) -> Result<StatusCode, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    fetch_checklist_owned(&mut *tx, user_id, id).await?;
-    delete_checklist_row(&mut *tx, id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_checklist_owned(&mut *tx, user_id, id).await?;
+        delete_checklist_row(&mut *tx, id).await?;
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -231,11 +238,12 @@ pub async fn delete_checklist(
 /// blank/overlong text or negative `position` → 400 `errors[]` via the DTO
 /// (floats never reach garde — serde rejects them first as `invalid-json`).
 /// The transaction runs under `READ COMMITTED` and retries the whole create
-/// (≤ `MAX_ATTEMPTS` attempts, linear backoff) on a `1213`/`1205` or a
+/// inside the shared `with_tx_retry` kernel (≤ `MAX_ATTEMPTS` attempts,
+/// jittered backoff) on a `1213`/`1205` or a
 /// `UQ_checklist_items_checklist_sort_key`-scoped `1062` — two concurrent
 /// explicit-position inserts can pick the same between-neighbours key (F2,
 /// 2026-11-15); unrelated unique violations never retry. The serialized
-/// append path cannot 1062, but shares the same loop.
+/// append path cannot 1062, but shares the same kernel.
 #[utoipa::path(
     post,
     path = "/api/v1/checklists/{id}/items",
@@ -256,65 +264,31 @@ pub async fn create_item(
 ) -> Result<impl IntoResponse, AppError> {
     let user_id = auth.user_id.get();
     let checklist_id = id.get();
-    let mut created_id = None;
-    for attempt in 0..MAX_ATTEMPTS {
-        // Same READ COMMITTED + retry scoping as the card paths (F2).
-        let mut connection = state.pool.acquire().await.map_err(AppError::Db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *connection)
-            .await
-            .map_err(AppError::Db)?;
-        let mut tx = connection.begin().await.map_err(AppError::Db)?;
-        let step: Result<i32, AppError> = async {
-            fetch_checklist_owned(&mut *tx, user_id, checklist_id).await?;
-            let sort_key = match input.position {
-                Some(requested) => {
-                    let others = fetch_item_keys_in_checklist(&mut *tx, checklist_id, None).await?;
-                    let target = clamp_position(
-                        requested,
-                        i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?,
-                    ) as usize;
-                    let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
-                    key_for_index(&keys, target)?
-                }
-                None => match fetch_last_sort_key_for_update(&mut *tx, checklist_id).await? {
-                    Some(last) => key_between(Some(&last), None)?,
-                    None => key_between(None, None)?,
-                },
-            };
-            let id = insert_item(&mut *tx, checklist_id, &input.text, &sort_key).await?;
-            if needs_rebalance(&sort_key) {
-                rebalance_sort_keys(&mut tx, RebalanceScope::ChecklistItems { checklist_id })
-                    .await?;
+    let input = &input;
+    let id = with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_checklist_owned(&mut *tx, user_id, checklist_id).await?;
+        let sort_key = match input.position {
+            Some(requested) => {
+                let others = fetch_item_keys_in_checklist(&mut *tx, checklist_id, None).await?;
+                let target = clamp_position(
+                    requested,
+                    i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?,
+                ) as usize;
+                let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+                key_for_index(&keys, target)?
             }
-            Ok(id)
+            None => match fetch_last_sort_key_for_update(&mut *tx, checklist_id).await? {
+                Some(last) => key_between(Some(&last), None)?,
+                None => key_between(None, None)?,
+            },
+        };
+        let id = insert_item(&mut *tx, checklist_id, &input.text, &sort_key).await?;
+        if needs_rebalance(&sort_key) {
+            rebalance_sort_keys(&mut tx, RebalanceScope::ChecklistItems { checklist_id }).await?;
         }
-        .await;
-        match step {
-            Ok(id) => {
-                tx.commit().await.map_err(AppError::Db)?;
-                created_id = Some(id);
-                break;
-            }
-            Err(error) => {
-                let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = MAX_ATTEMPTS,
-                        error = %error,
-                        "retrying a checklist-item create after a transient failure"
-                    );
-                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
-                    continue;
-                }
-                return Err(error);
-            }
-        }
-    }
-    let Some(id) = created_id else {
-        return Err(AppError::Internal(Internal));
-    };
+        Ok((tx, id))
+    })
+    .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_item_owned(&state.pool, user_id, id).await?;
     let location = format!("/api/v1/checklist-items/{id}");
@@ -332,8 +306,9 @@ pub async fn create_item(
 /// with a single between-neighbours sort-key write (clamped to `[0, N-1]`,
 /// never 400). The response re-reads the stored row (never echoes).
 /// Foreign/missing id → 404, never 403. The transaction runs under `READ
-/// COMMITTED` and retries the whole PATCH (≤ `MAX_ATTEMPTS` attempts, linear
-/// backoff) on a `1213`/`1205` or a `UQ_checklist_items_checklist_sort_key`-
+/// COMMITTED` and retries the whole PATCH inside the shared `with_tx_retry`
+/// kernel (≤ `MAX_ATTEMPTS` attempts, jittered backoff) on a `1213`/`1205` or a
+/// `UQ_checklist_items_checklist_sort_key`-
 /// scoped `1062` — two concurrent moves can pick the same between-neighbours
 /// key (F2, 2026-11-15); unrelated unique violations never retry.
 #[utoipa::path(
@@ -356,69 +331,40 @@ pub async fn update_item(
 ) -> Result<Json<ChecklistItemBody>, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    for attempt in 0..MAX_ATTEMPTS {
-        // Same READ COMMITTED + retry scoping as the card paths (F2).
-        let mut connection = state.pool.acquire().await.map_err(AppError::Db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *connection)
-            .await
-            .map_err(AppError::Db)?;
-        let mut tx = connection.begin().await.map_err(AppError::Db)?;
-        let step: Result<(), AppError> = async {
-            // Existence + ownership first: an idempotent no-change `PATCH`
-            // must stay 200 (an affected-rows check alone would false-404
-            // when nothing changed).
-            let owned = fetch_item_owned(&mut *tx, user_id, id).await?;
-            if let Some(requested) = input.position {
-                // Move: clamp to `[0, N-1]` and write ONE between-neighbours
-                // sort key (never a sibling rewrite). Neighbour reads stay
-                // unlocked (D3).
-                let checklist_id = owned.checklist_id.get();
-                let others = fetch_item_keys_in_checklist(&mut *tx, checklist_id, Some(id)).await?;
-                let upper =
-                    i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?;
-                let target = clamp_position(requested, upper) as usize;
-                let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
-                let sort_key = key_for_index(&keys, target)?;
-                point_move_item_sort_key(&mut *tx, id, &sort_key).await?;
-                if needs_rebalance(&sort_key) {
-                    rebalance_sort_keys(&mut tx, RebalanceScope::ChecklistItems { checklist_id })
-                        .await?;
-                }
-            }
-            apply_item_patch(
-                &mut *tx,
-                id,
-                ItemPatch {
-                    text: input.text.as_deref(),
-                    is_completed: input.is_completed,
-                },
-            )
-            .await?;
-            Ok(())
-        }
-        .await;
-        match step {
-            Ok(()) => {
-                tx.commit().await.map_err(AppError::Db)?;
-                break;
-            }
-            Err(error) => {
-                let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = MAX_ATTEMPTS,
-                        error = %error,
-                        "retrying a checklist-item update after a transient failure"
-                    );
-                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
-                    continue;
-                }
-                return Err(error);
+    let input = &input;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        // Existence + ownership first: an idempotent no-change `PATCH`
+        // must stay 200 (an affected-rows check alone would false-404
+        // when nothing changed).
+        let owned = fetch_item_owned(&mut *tx, user_id, id).await?;
+        if let Some(requested) = input.position {
+            // Move: clamp to `[0, N-1]` and write ONE between-neighbours
+            // sort key (never a sibling rewrite). Neighbour reads stay
+            // unlocked (D3).
+            let checklist_id = owned.checklist_id.get();
+            let others = fetch_item_keys_in_checklist(&mut *tx, checklist_id, Some(id)).await?;
+            let upper = i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?;
+            let target = clamp_position(requested, upper) as usize;
+            let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+            let sort_key = key_for_index(&keys, target)?;
+            point_move_item_sort_key(&mut *tx, id, &sort_key).await?;
+            if needs_rebalance(&sort_key) {
+                rebalance_sort_keys(&mut tx, RebalanceScope::ChecklistItems { checklist_id })
+                    .await?;
             }
         }
-    }
+        apply_item_patch(
+            &mut *tx,
+            id,
+            ItemPatch {
+                text: input.text.as_deref(),
+                is_completed: input.is_completed,
+            },
+        )
+        .await?;
+        Ok((tx, ()))
+    })
+    .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_item_owned(&state.pool, user_id, id).await?;
     Ok(Json(ChecklistItemBody {
@@ -447,9 +393,11 @@ pub async fn delete_item(
 ) -> Result<StatusCode, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    fetch_item_owned(&mut *tx, user_id, id).await?;
-    delete_item_row(&mut *tx, id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_item_owned(&mut *tx, user_id, id).await?;
+        delete_item_row(&mut *tx, id).await?;
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

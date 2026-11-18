@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_PASSWORD = 'Test1234!';
 // Fixed email — cleaned up before run via DB
@@ -64,7 +65,7 @@ test.describe('Auth flows', () => {
   test.describe('Login', () => {
     test.beforeAll(async ({ request }) => {
       // Ensure test user exists via API
-      const res = await request.post('http://localhost:3000/api/auth/register', {
+      const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
         data: { email: TEST_EMAIL, password: TEST_PASSWORD },
       });
       // 201 = created, 409 = already exists — both OK

@@ -246,7 +246,7 @@ the old non-unique `(parent, position)` indexes and the `position` columns.
 
 Concurrency (D3): `UNIQUE(parent, sort_key)` turns race losers into `1062`.
 `1213`/`1205` and **constraint-scoped `1062`** on `UQ_*_sort_key` retried
-(≤5 attempts, linear backoff; same-card-race `Restart` preserved; unrelated
+(≤5 attempts, jittered backoff; same-card-race `Restart` preserved; unrelated
 unique violations never retried). Column and checklist-item appends keep the
 serialized `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` contract (no 1062 path
 there); neighbor reads for moves are unlocked (last-write-wins —
@@ -255,6 +255,15 @@ Rebalance: any generated key > 64 chars → the parent's keys are rewritten
 evenly in two phases (park at `tmp-<id>`, then assign) inside the caller's
 tx; a forced-bloat test proves no transient unique violation and evenly
 distributed final keys. Jira rebalances at 128; we catch it at 64.
+
+Retry exhaustion (T020): lock-class errors that survive the bounded retry
+(≤5 attempts) render **503** `application/problem+json` `service-unavailable`
+with **`Retry-After: 2`** (busy — DB contention clears sub-second; `Retry-After`
+is delay-seconds, a floor for clients). Scoped-`1062` exhaustion stays **409**
+(conflict — class 23, not a serialization failure; the unique violation is
+genuine). Non-retried `1213`/`1205` reach the same 503 (boundary classification
+in the `Db` arm). This is wire-visible everywhere a lock-class error can
+surface; the 30 s `TimeoutLayer` path is unchanged (503 + `Retry-After: 30`).
 
 MariaDB floor moves to **11.4 LTS** (10.6 EOL 2026-07-06) — the
 `backend-mariadb` CI leg runs `mariadb:11.4` and executes the

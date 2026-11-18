@@ -17,12 +17,13 @@
  *     HTML/preload shape changed under us and the gate would undercount).
  *
  * Budgets are measure-then-set (T016, 2026-11-17, second scope amendment):
- * post-amendment initial gzip is 257,986 B (node zlib): runtime 429 + vendor
- * 188,057 + entry 69,500 (all app routes static; markdown-renderer and pele
- * stay lazy; card-title inline markdown is a dependency-free parser, so
- * nothing from the markdown stack is eager). Budget is that + ~20.2 %
- * headroom so the gate guards regression, not an absolute target.
- * Per-chunk limit covers the largest initial-load chunk (vendor, 188,057 B
+ * post-amendment initial gzip was 257,986 B (node zlib); T018 re-measured
+ * 2026-11-18 at **258,443 B** (runtime 429 + vendor 188,065 + entry 69,949;
+ * all app routes static; markdown-renderer and pele stay lazy; card-title
+ * inline markdown is a dependency-free parser, so nothing from the markdown
+ * stack is eager). Budget is that + ~19.9 % headroom so the gate guards
+ * regression, not an absolute target.
+ * Per-chunk limit covers the largest initial-load chunk (vendor, 188,065 B
  * gzip) + ~19.7 % headroom. First measurement (fully lazy routes) was
  * 167,385 B; the amendment re-set the numbers — see T016 Notes.
  *
@@ -39,8 +40,8 @@ import { join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-export const INITIAL_BUDGET_GZIP = 310_000; // measured 257,986 + ~20.2% headroom
-export const PER_CHUNK_LIMIT_GZIP = 225_000; // vendor 188,057 + ~19.7% headroom
+export const INITIAL_BUDGET_GZIP = 310_000; // measured 258,443 + ~19.9% headroom
+export const PER_CHUNK_LIMIT_GZIP = 225_000; // vendor 188,065 + ~19.7% headroom
 
 /** Extract the initial-load asset paths (site-root-absolute, e.g. /assets/x.js) from index.html. */
 export function extractInitialAssets(indexHtml) {

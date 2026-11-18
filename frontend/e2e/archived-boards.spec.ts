@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-archived-boards@test.local';
 const TEST_PASSWORD = 'Test1234!';
@@ -9,7 +10,7 @@ test.describe('Archived Boards', () => {
   let board2Name: string;
 
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -17,21 +18,21 @@ test.describe('Archived Boards', () => {
     }
 
     // Login via API
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     // Create 2 boards
     board1Name = `Archived Test Board 1 ${Date.now()}`;
-    const board1Res = await request.post('http://localhost:3000/api/boards', {
+    const board1Res = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: board1Name },
       headers: { Cookie: cookies },
     });
     board1Id = (await board1Res.json()).data.id;
 
     board2Name = `Archived Test Board 2 ${Date.now()}`;
-    await request.post('http://localhost:3000/api/boards', {
+    await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: board2Name },
       headers: { Cookie: cookies },
     });
@@ -52,13 +53,14 @@ test.describe('Archived Boards', () => {
     await expect(page.getByText(board2Name)).toBeVisible();
 
     // Archive board1 via API
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
+    // Archive via the canonical update-board PATCH (the verb route is gone)
     const archiveRes = await request.patch(
-      `http://localhost:3000/api/boards/${board1Id}/archive`,
-      { headers: { Cookie: cookies } },
+      `${E2E_API}/api/v1/boards/${board1Id}`,
+      { headers: { Cookie: cookies }, data: { is_archived: true } },
     );
     expect(archiveRes.status()).toBe(200);
 
@@ -68,7 +70,7 @@ test.describe('Archived Boards', () => {
     await page.waitForTimeout(1000);
 
     // Verify board1 appears in archived list
-    await expect(page.getByText(board1Name)).toBeVisible();
+    await expect(page.getByRole('heading', { name: board1Name })).toBeVisible();
 
     // Board2 should NOT appear in archived list
     await expect(page.getByText(board2Name)).not.toBeVisible();
@@ -80,7 +82,7 @@ test.describe('Archived Boards', () => {
     await page.waitForTimeout(1000);
 
     // Verify board1 is gone from archived list
-    await expect(page.getByText(board1Name)).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: board1Name })).not.toBeVisible();
 
     // Verify board1 is back on home page
     await page.goto('/');
@@ -89,21 +91,21 @@ test.describe('Archived Boards', () => {
     await expect(page.getByText(board1Name)).toBeVisible();
 
     // Create a new board, archive it, then permanently delete
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies2 = loginRes2.headers()['set-cookie'] || '';
 
     const board3Name = `Board To Delete ${Date.now()}`;
-    const board3Res = await request.post('http://localhost:3000/api/boards', {
+    const board3Res = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: board3Name },
       headers: { Cookie: cookies2 },
     });
     const board3Id = (await board3Res.json()).data.id;
 
     const archiveRes2 = await request.patch(
-      `http://localhost:3000/api/boards/${board3Id}/archive`,
-      { headers: { Cookie: cookies2 } },
+      `${E2E_API}/api/v1/boards/${board3Id}`,
+      { headers: { Cookie: cookies2 }, data: { is_archived: true } },
     );
     expect(archiveRes2.status()).toBe(200);
 
@@ -113,7 +115,7 @@ test.describe('Archived Boards', () => {
     await page.waitForTimeout(1000);
 
     // Verify the new board is in archived list
-    await expect(page.getByText(board3Name)).toBeVisible();
+    await expect(page.getByRole('heading', { name: board3Name })).toBeVisible();
 
     // Click Delete button to open the permanent delete dialog
     const deleteButton = page.getByRole('button', { name: 'Delete', exact: true });
@@ -127,14 +129,14 @@ test.describe('Archived Boards', () => {
     await page.waitForTimeout(1000);
 
     // Verify it's gone from archived list
-    await expect(page.getByText(board3Name)).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: board3Name })).not.toBeVisible();
 
     // Verify the board is gone via API
-    const loginRes3 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes3 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies3 = loginRes3.headers()['set-cookie'] || '';
-    const archivedRes = await request.get('http://localhost:3000/api/boards/archived', {
+    const archivedRes = await request.get(`${E2E_API}/api/v1/boards?archived=true`, {
       headers: { Cookie: cookies3 },
     });
     const archivedData = await archivedRes.json();

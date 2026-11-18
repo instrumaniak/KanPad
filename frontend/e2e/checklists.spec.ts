@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-checklists@test.local';
 const TEST_PASSWORD = 'Test1234!';
@@ -9,7 +10,7 @@ test.describe('Checklist Feature', () => {
   let cardId: number;
 
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -17,13 +18,13 @@ test.describe('Checklist Feature', () => {
     }
 
     // Login via API
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     // Create board
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Checklist Test Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
@@ -31,7 +32,7 @@ test.describe('Checklist Feature', () => {
     boardId = boardData.data.id;
 
     // Create column
-    const columnRes = await request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const columnRes = await request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: 'To Do' },
       headers: { Cookie: cookies },
     });
@@ -39,7 +40,7 @@ test.describe('Checklist Feature', () => {
     columnId = columnData.data.id;
 
     // Create card
-    const cardRes = await request.post('http://localhost:3000/api/cards', {
+    const cardRes = await request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: 'Checklist Card', column_id: columnId, position: 0 },
       headers: { Cookie: cookies },
     });
@@ -156,11 +157,11 @@ test.describe('Checklist Feature', () => {
     await expect(persistedCheckboxes.nth(1)).not.toBeChecked();
 
     // Verify persistence via API - use single card endpoint which returns checklists
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
-    const cardRes = await request.get(`http://localhost:3000/api/cards/${cardId}`, {
+    const cardRes = await request.get(`${E2E_API}/api/v1/cards/${cardId}`, {
       headers: { Cookie: cookies },
     });
     const cardData = await cardRes.json();

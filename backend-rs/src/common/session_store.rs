@@ -150,6 +150,9 @@ impl SessionStore for MySqlSessionStore {
     /// The check and the insert share one transaction, so two concurrent
     /// creates cannot both claim the same id.
     async fn create(&self, record: &mut Record) -> Result<()> {
+        // No tx-retry wrapper (T020 audit): the store owns its own
+        // id-collision retry loop (a fresh 128-bit id is drawn until the slot
+        // is free) — it re-draws the id instead of replaying a failed tx.
         let mut tx = self.pool.begin().await.map_err(backend_error)?;
 
         while self.id_exists(&mut tx, &record.id).await? {

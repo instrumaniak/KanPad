@@ -1,4 +1,10 @@
 //! labels handlers: extract -> store -> `Result<Json<_>, AppError>`. No SQL here.
+//!
+//! (T020 audit): no transaction sites in this module — every handler writes
+//! with direct single statements (`INSERT`/`UPDATE`/`DELETE` pass
+//! `&state.pool` straight to the store), never inside `tx.begin()`. The
+//! label/tag M2M links from other modules ride the *caller's* retry kernel.
+//! There is nothing to wrap here.
 
 use axum::{
     Json,

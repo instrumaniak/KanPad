@@ -79,6 +79,9 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dialoguer = "0.12"
 rpassword = "7"
+# Backoff jitter for the tx-retry kernel (T020, decision 6 — already in the
+# tree at 0.10.x, MIT/Apache-2.0).
+rand = "0.10"
 
 [[test]]
 name = "api"

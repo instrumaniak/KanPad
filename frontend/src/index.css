@@ -69,7 +69,10 @@
   --label-orange: #F97316;
   --label-yellow: #EAB308;
   --label-green: #22C55E;
-  --label-blue: #3B82F6;
+  /* Darkened 2026-11-19: #3B82F6 on #fafafa is 3.52:1 — fails the axe
+     color-contrast gate (4.5:1) in the Storybook a11y tests. #2563EB is
+     4.95:1 on #fafafa (and 5.17:1 on #ffffff). */
+  --label-blue: #2563EB;
   --label-purple: #A855F7;
   --label-teal: #14B8A6;
   --label-pink: #EC4899;

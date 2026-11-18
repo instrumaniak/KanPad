@@ -75,8 +75,7 @@ URL on your tailnet with zero config. Great for home labs.
 
 ## Choosing the database
 
-**MariaDB 11.4 LTS (default)** is bundled and matches CI and the production
-host DB. **MySQL 8.4 LTS** is one edit away:
+**MariaDB 11.4 LTS (default)** is bundled and matches CI. *(The bundled 11.4 and CI's MariaDB 11.4 leg are verified; whether the **production host DB** is 11.4.x or 10.6.28 is UNVERIFIED as of 2026-11-18 — T011 records `SELECT VERSION()`; see the TODO in `docs/mariadb-compat.md`.)* **MySQL 8.4 LTS** is one edit away:
 
 1. In `compose.yaml`, comment out the `db:` block labelled `[MariaDB]`.
 2. Uncomment the `[MySQL]` block (instructions are inline).

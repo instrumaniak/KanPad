@@ -1,14 +1,15 @@
 import { expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 import { monitoringTest } from './test-utils';
 
-const API_BASE_URL = 'http://localhost:3000';
+const API_BASE_URL = E2E_API;
 const TEST_EMAIL = 'e2e-viewtoggle@test.local';
 const TEST_PASSWORD = 'Test1234!';
 
 monitoringTest.describe('Board View Toggle E2E', () => {
   monitoringTest.describe.configure({ timeout: 90000 });
   monitoringTest.beforeAll(async ({ request }) => {
-    const res = await request.post(`${API_BASE_URL}/api/auth/register`, {
+    const res = await request.post(`${API_BASE_URL}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -18,19 +19,19 @@ monitoringTest.describe('Board View Toggle E2E', () => {
 
   monitoringTest(
     'toggles kanban/list, sorts, persists across reload, adds and deletes in list',
-    async ({ page, request }) => {
-      const loginRes = await request.post(`${API_BASE_URL}/api/auth/login`, {
+    async ({ page, request, monitoring }) => {
+      const loginRes = await request.post(`${API_BASE_URL}/api/v1/auth/login`, {
         data: { email: TEST_EMAIL, password: TEST_PASSWORD },
       });
       const cookies = loginRes.headers()['set-cookie'] || '';
 
-      const boardRes = await request.post(`${API_BASE_URL}/api/boards`, {
+      const boardRes = await request.post(`${API_BASE_URL}/api/v1/boards`, {
         data: { name: `View Toggle Board ${Date.now()}` },
         headers: { Cookie: cookies },
       });
       const boardId = (await boardRes.json()).data.id;
 
-      const colRes = await request.get(`${API_BASE_URL}/api/boards/${boardId}/columns`, {
+      const colRes = await request.get(`${API_BASE_URL}/api/v1/boards/${boardId}/columns`, {
         headers: { Cookie: cookies },
       });
       const cols = (await colRes.json()).data;
@@ -38,7 +39,7 @@ monitoringTest.describe('Board View Toggle E2E', () => {
       const colB = cols[1].id;
 
       for (const [i, title] of ['Zulu task', 'Alpha task'].entries()) {
-        await request.post(`${API_BASE_URL}/api/cards`, {
+        await request.post(`${API_BASE_URL}/api/v1/cards`, {
           data: { title, column_id: i === 0 ? colA : colB, position: 0 },
           headers: { Cookie: cookies },
         });
@@ -58,8 +59,22 @@ monitoringTest.describe('Board View Toggle E2E', () => {
       // Kanban visible by default
       await expect(page.getByRole('group', { name: 'Board view mode' })).toBeVisible();
 
-      // Toggle to List
+      // Two-origin proof: the browser talks to the API cross-origin (absolute
+      // VITE_API_URL) — never same-origin through the Vite dev proxy
+      const API_ORIGIN = (process.env.E2E_BASE_URL ?? '').trim() || 'http://localhost:3001';
+      expect(
+        monitoring.networkRequests.some((r) => r.url.startsWith(API_ORIGIN)),
+      ).toBe(true);
+
+      // Toggle to List — and wait for the view_mode PATCH to land before
+      // reloading later; the reload asserts the server-side persisted value
+      const viewPatch = page.waitForResponse(
+        (resp) =>
+          new RegExp(`/api/v1/boards/${boardId}([?/]|$)`).test(resp.url()) &&
+          resp.request().method() === 'PATCH',
+      );
       await page.getByRole('button', { name: 'List' }).click();
+      await viewPatch;
       await expect(page.getByRole('table', { name: 'Board cards list' })).toBeVisible({
         timeout: 15000,
       });
@@ -90,7 +105,7 @@ monitoringTest.describe('Board View Toggle E2E', () => {
       );
 
       // Verify persistence via API (not just UI)
-      const verifyRes = await request.get(`${API_BASE_URL}/api/boards/${boardId}`, {
+      const verifyRes = await request.get(`${API_BASE_URL}/api/v1/boards/${boardId}`, {
         headers: { Cookie: cookies },
       });
       expect((await verifyRes.json()).data.view_mode).toBe('list');
@@ -101,7 +116,13 @@ monitoringTest.describe('Board View Toggle E2E', () => {
       await expect(page.getByText('Zulu task')).toBeVisible();
 
       // Add Card in List view with column picker
+      const viewPatchBack = page.waitForResponse(
+        (resp) =>
+          new RegExp(`/api/v1/boards/${boardId}([?/]|$)`).test(resp.url()) &&
+          resp.request().method() === 'PATCH',
+      );
       await page.getByRole('button', { name: 'List' }).click();
+      await viewPatchBack;
       await expect(page.getByRole('table', { name: 'Board cards list' })).toBeVisible();
       await page.getByRole('button', { name: 'Add Card' }).click();
       await page.getByLabel('Card title').fill('List view new card');

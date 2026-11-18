@@ -291,7 +291,11 @@ fn wrong_password_fails_with_1045_and_never_prints_pending() {
         "the OLD bogus output must never appear: {out_text}"
     );
     // Neither the REAL password nor the injected wrong one may leak.
-    assert!(!err.contains(&parts.1), "real password leaked: {err}");
+    // An empty real password (the MariaDB leg's root) is contained in
+    // every string, so the leak check only applies when it is nonempty.
+    if !parts.1.is_empty() {
+        assert!(!err.contains(&parts.1), "real password leaked: {err}");
+    }
     assert!(
         !err.contains("t005-wrong-password"),
         "wrong password echoed: {err}"

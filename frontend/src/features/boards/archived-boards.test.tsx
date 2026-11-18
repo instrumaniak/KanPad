@@ -80,7 +80,7 @@ describe('ArchivedBoards', () => {
     mockUseArchivedBoards.mockReturnValue({
       data: {
         data: [
-          { id: 1, name: 'Archived Board 1', background_color: '#0079BF' },
+          { id: 1, name: 'Archived Board 1', background_color: '#0079BF', is_archived: true },
         ],
         total: 1,
       },

@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-columns@test.local';
 const TEST_PASSWORD = 'Test1234!';
 
 test.describe('Column CRUD', () => {
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {

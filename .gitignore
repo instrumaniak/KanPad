@@ -19,3 +19,7 @@ graphify-out/
 # backend-rs build output (always use CARGO_TARGET_DIR outside the repo;
 # this is a backstop, not the workflow)
 **/target/
+
+# personal agent instructions not to be tracked
+AGENTS-local.md
+

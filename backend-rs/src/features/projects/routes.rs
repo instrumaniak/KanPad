@@ -9,7 +9,10 @@ use axum::{
 };
 
 use crate::{
-    common::pagination::Page,
+    common::{
+        pagination::Page,
+        tx_retry::{TxRetryOpts, with_tx_retry},
+    },
     error::AppError,
     extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
     state::AppState,
@@ -177,12 +180,14 @@ pub async fn delete_project(
     ValidPath(id): ValidPath<crate::common::ids::ProjectId>,
 ) -> Result<impl IntoResponse, AppError> {
     let user_id = auth.user_id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    delete_project_boards(&mut *tx, user_id, id.get()).await?;
-    if !delete_project_row(&mut *tx, user_id, id.get()).await? {
-        tx.rollback().await.map_err(AppError::Db)?;
-        return Err(AppError::NotFound);
-    }
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        delete_project_boards(&mut *tx, user_id, id.get()).await?;
+        if !delete_project_row(&mut *tx, user_id, id.get()).await? {
+            // Not matcher-transient → not retried; 404 at the boundary.
+            return Err(AppError::NotFound);
+        }
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

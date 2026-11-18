@@ -54,4 +54,4 @@ Source of truth for frontend conventions. Referenced from root `AGENTS.md`.
 
 - T41 frontend migration: when a feature's hook (`use-cards`) newly depends on a helper exported from its API module (`sanitizeCardListParams`), the module-level `vi.mock('./<feature>.api')` in the hook tests must also mock that helper (or use `importOriginal`), otherwise Vite fails at runtime with "No ... export is defined on the mock".
 - Frontend node_modules repair: if Vitest bus-errors after an interrupted copy/reinstall, remove `node_modules` (and stray `node_modules.bak`) entirely and `npm install` from a clean state; do not `git add -A` until verifying no ignored dependency trees are staged.
-- Cutover: default backend target now lives in two places (`VITE_API_URL` in `compose.yaml`, Vite proxy fallback in `frontend/vite.config.ts`); keep both flipped together and retain the `VITE_API_URL=http://localhost:3000` override for one-line app rollback.
+- Backend target lives in two places (`VITE_API_URL` in `compose.yaml`, Vite proxy fallback in `frontend/vite.config.ts`); keep both flipped together (`:3001` Rust). The Nest `:3000` rollback is gone with the Nest backend.

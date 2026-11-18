@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-notes@test.local';
 const TEST_PASSWORD = 'Test1234!';
@@ -7,19 +8,19 @@ test.describe('Notes Feature', () => {
   let boardId: number;
 
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
       throw new Error(`Failed to create test user: ${res.status()}`);
     }
 
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Notes Test Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
@@ -37,10 +38,15 @@ test.describe('Notes Feature', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
-    await page.locator('[aria-label="Show notes sidebar"]').click();
-    await page.waitForTimeout(300);
+    // Sidebar may boot expanded or collapsed (persisted state) — handle both
+    const showBtn = page.locator('[aria-label="Show notes sidebar"]');
+    if (await showBtn.isVisible().catch(() => false)) {
+      await showBtn.click();
+      await page.waitForTimeout(300);
+    }
 
-    await page.getByRole('button', { name: 'New Note' }).click();
+    // The board-sidebar create button is icon-only (no accessible name)
+    await page.locator('aside button', { has: page.locator('svg.lucide-plus') }).click();
 
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
     await expect(page.getByPlaceholder('Note title...')).toBeVisible({ timeout: 5000 });
@@ -50,7 +56,7 @@ test.describe('Notes Feature', () => {
     await page.getByPlaceholder('Write your note content in markdown...').fill('# Hello');
 
     const createResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/notes') && resp.request().method() === 'POST',
+      (resp) => resp.url().includes('/api/v1/notes') && resp.request().method() === 'POST',
     );
     await page.getByRole('button', { name: 'Save' }).click();
     const createResp = await createResponse;
@@ -66,16 +72,20 @@ test.describe('Notes Feature', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
-    await page.locator('[aria-label="Show notes sidebar"]').click();
-    await page.waitForTimeout(300);
+    const showBtnReload = page.locator('[aria-label="Show notes sidebar"]');
+    if (await showBtnReload.isVisible().catch(() => false)) {
+      await showBtnReload.click();
+      await page.waitForTimeout(300);
+    }
 
     await expect(noteArticle).toBeVisible({ timeout: 5000 });
 
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
-    const notesRes = await request.get(`http://localhost:3000/api/boards/${boardId}/notes`, {
+    // The Nest route GET /boards/:id/notes is gone — filter notes by board_id
+    const notesRes = await request.get(`${E2E_API}/api/v1/notes?board_id=${boardId}`, {
       headers: { Cookie: cookies },
     });
     expect(notesRes.status()).toBe(200);
@@ -107,7 +117,7 @@ test.describe('Notes Feature', () => {
     await page.getByPlaceholder('Write your note content in markdown...').fill('Plain text content');
 
     const createResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/notes') && resp.request().method() === 'POST',
+      (resp) => resp.url().includes('/api/v1/notes') && resp.request().method() === 'POST',
     );
     await page.getByRole('button', { name: 'Save' }).click();
     const createResp = await createResponse;
@@ -129,11 +139,11 @@ test.describe('Notes Feature', () => {
     await expect(noteArticle).toBeVisible({ timeout: 5000 });
     await expect(noteArticle.getByText('general')).toBeVisible();
 
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
-    const noteRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, {
+    const noteRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, {
       headers: { Cookie: cookies },
     });
     expect(noteRes.status()).toBe(200);
@@ -145,13 +155,13 @@ test.describe('Notes Feature', () => {
   });
 
   test('renders markdown and edits a note', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     const noteTitle = `Markdown Edit ${Date.now()}`;
-    const createRes = await request.post('http://localhost:3000/api/notes', {
+    const createRes = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: noteTitle, content: '# Hello\nThis is **bold** and `code`' },
       headers: { Cookie: cookies },
     });
@@ -186,7 +196,7 @@ test.describe('Notes Feature', () => {
     await page.getByPlaceholder('Write your note content in markdown...').fill('Updated **content**');
 
     const editResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/notes/') && resp.request().method() === 'PATCH',
+      (resp) => resp.url().includes('/api/v1/notes/') && resp.request().method() === 'PATCH',
     );
     await page.getByRole('button', { name: 'Save' }).click();
     const editResp = await editResponse;
@@ -203,11 +213,11 @@ test.describe('Notes Feature', () => {
 
     await expect(page.getByText(updatedTitle)).toBeVisible({ timeout: 5000 });
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const noteRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, {
+    const noteRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, {
       headers: { Cookie: c2 },
     });
     expect(noteRes.status()).toBe(200);
@@ -217,13 +227,13 @@ test.describe('Notes Feature', () => {
   });
 
   test('deletes a note with confirmation', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     const noteTitle = `Delete Test ${Date.now()}`;
-    const createRes = await request.post('http://localhost:3000/api/notes', {
+    const createRes = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: noteTitle, content: 'To be deleted' },
       headers: { Cookie: cookies },
     });
@@ -247,15 +257,12 @@ test.describe('Notes Feature', () => {
     await page.getByRole('button', { name: 'Delete' }).click();
     await expect(page.getByRole('heading', { name: 'Delete note?' })).toBeVisible({ timeout: 5000 });
 
-    await page.getByRole('button', { name: 'Delete' }).click();
-    await expect(page.getByRole('heading', { name: 'Delete note?' })).toBeVisible({ timeout: 5000 });
-
     const deleteResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/notes/') && resp.request().method() === 'DELETE',
+      (resp) => resp.url().includes('/api/v1/notes/') && resp.request().method() === 'DELETE',
     );
     await page.getByRole('button', { name: 'Delete' }).click();
     const deleteResp = await deleteResponse;
-    expect(deleteResp.status()).toBe(200);
+    expect(deleteResp.status()).toBe(204);
 
     await expect(page.getByText(noteTitle).first()).not.toBeVisible({ timeout: 5000 });
 
@@ -265,24 +272,24 @@ test.describe('Notes Feature', () => {
 
     await expect(page.getByText(noteTitle).first()).not.toBeVisible();
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const deletedNoteRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, {
+    const deletedNoteRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, {
       headers: { Cookie: c2 },
     });
     expect(deletedNoteRes.status()).toBe(404);
   });
 
   test('creates a note with tags', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     const tagName = `Tag ${Date.now()}`;
-    const tagRes = await request.post('http://localhost:3000/api/tags', {
+    const tagRes = await request.post(`${E2E_API}/api/v1/tags`, {
       data: { name: tagName, color: 'blue' },
       headers: { Cookie: cookies },
     });
@@ -319,7 +326,7 @@ test.describe('Notes Feature', () => {
     await page.waitForTimeout(300);
 
     const createResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/notes') && resp.request().method() === 'POST',
+      (resp) => resp.url().includes('/api/v1/notes') && resp.request().method() === 'POST',
     );
     await page.getByRole('button', { name: 'Save' }).click();
     const createResp = await createResponse;
@@ -338,11 +345,11 @@ test.describe('Notes Feature', () => {
 
     await expect(page.getByText(noteTitle)).toBeVisible({ timeout: 5000 });
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const noteRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, {
+    const noteRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, {
       headers: { Cookie: c2 },
     });
     expect(noteRes.status()).toBe(200);
@@ -353,12 +360,12 @@ test.describe('Notes Feature', () => {
   });
 
   test('shows empty sidebar when board has no notes', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const emptyBoardRes = await request.post('http://localhost:3000/api/boards', {
+    const emptyBoardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Empty Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
@@ -384,7 +391,7 @@ test.describe('Notes Feature', () => {
 
     await expect(page.getByText('No notes for this board')).toBeVisible({ timeout: 5000 });
 
-    await expect(page.getByRole('button', { name: 'New Note' })).toBeVisible();
+    await expect(page.locator('aside button', { has: page.locator('svg.lucide-plus') })).toBeVisible();
 
     await page.reload();
     await page.waitForLoadState('networkidle');
@@ -448,7 +455,7 @@ test.describe('Notes Feature', () => {
   });
 
   test('search by title filters notes list', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
@@ -456,7 +463,7 @@ test.describe('Notes Feature', () => {
     const titleA = `Search Alpha ${Date.now()}`;
     const titleB = `Search Beta ${Date.now()}`;
 
-    const resA = await request.post('http://localhost:3000/api/notes', {
+    const resA = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: titleA, content: 'First note' },
       headers: { Cookie: cookies },
     });
@@ -464,7 +471,7 @@ test.describe('Notes Feature', () => {
     const noteA = await resA.json();
     const noteIdA = noteA.data.id;
 
-    const resB = await request.post('http://localhost:3000/api/notes', {
+    const resB = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: titleB, content: 'Second note' },
       headers: { Cookie: cookies },
     });
@@ -502,18 +509,18 @@ test.describe('Notes Feature', () => {
     await expect(page.getByRole('article', { name: new RegExp(`Note: ${titleA}`, 'i') })).toBeVisible();
     await expect(page.getByRole('article', { name: new RegExp(`Note: ${titleB}`, 'i') })).toBeVisible();
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const checkA = await request.get(`http://localhost:3000/api/notes/${noteIdA}`, { headers: { Cookie: c2 } });
+    const checkA = await request.get(`${E2E_API}/api/v1/notes/${noteIdA}`, { headers: { Cookie: c2 } });
     expect(checkA.status()).toBe(200);
-    const checkB = await request.get(`http://localhost:3000/api/notes/${noteIdB}`, { headers: { Cookie: c2 } });
+    const checkB = await request.get(`${E2E_API}/api/v1/notes/${noteIdB}`, { headers: { Cookie: c2 } });
     expect(checkB.status()).toBe(200);
   });
 
   test('type filter chips filter notes by type', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
@@ -521,7 +528,7 @@ test.describe('Notes Feature', () => {
     const generalTitle = `General Note ${Date.now()}`;
     const boardTitle = `Board Note TypeFilter ${Date.now()}`;
 
-    const genRes = await request.post('http://localhost:3000/api/notes', {
+    const genRes = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: generalTitle, content: 'General content' },
       headers: { Cookie: cookies },
     });
@@ -529,7 +536,7 @@ test.describe('Notes Feature', () => {
     const genData = await genRes.json();
     const genId = genData.data.id;
 
-    const boardRes = await request.post('http://localhost:3000/api/notes', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: boardTitle, content: 'Board content', board_id: boardId },
       headers: { Cookie: cookies },
     });
@@ -573,24 +580,24 @@ test.describe('Notes Feature', () => {
     await expect(generalArticle).toBeVisible({ timeout: 5000 });
     await expect(boardArticle).toBeVisible({ timeout: 5000 });
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const checkGen = await request.get(`http://localhost:3000/api/notes/${genId}`, { headers: { Cookie: c2 } });
+    const checkGen = await request.get(`${E2E_API}/api/v1/notes/${genId}`, { headers: { Cookie: c2 } });
     expect(checkGen.status()).toBe(200);
-    const checkBoard = await request.get(`http://localhost:3000/api/notes/${boardNoteId}`, { headers: { Cookie: c2 } });
+    const checkBoard = await request.get(`${E2E_API}/api/v1/notes/${boardNoteId}`, { headers: { Cookie: c2 } });
     expect(checkBoard.status()).toBe(200);
   });
 
   test('tag colored badge renders with correct color', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     const tagName = `ColorTag ${Date.now()}`;
-    const tagRes = await request.post('http://localhost:3000/api/tags', {
+    const tagRes = await request.post(`${E2E_API}/api/v1/tags`, {
       data: { name: tagName, color: 'teal' },
       headers: { Cookie: cookies },
     });
@@ -599,8 +606,8 @@ test.describe('Notes Feature', () => {
     const tagId = tagData.data.id;
 
     const noteTitle = `Tag Color ${Date.now()}`;
-    const noteRes = await request.post('http://localhost:3000/api/notes', {
-      data: { title: noteTitle, content: 'Tag color test', tagIds: [tagId] },
+    const noteRes = await request.post(`${E2E_API}/api/v1/notes`, {
+      data: { title: noteTitle, content: 'Tag color test', tag_ids: [tagId] },
       headers: { Cookie: cookies },
     });
     expect(noteRes.status()).toBe(201);
@@ -639,11 +646,11 @@ test.describe('Notes Feature', () => {
     expect(styleAttrReload).not.toBeNull();
     expect(styleAttrReload!.toLowerCase()).toContain('teal');
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const checkRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, { headers: { Cookie: c2 } });
+    const checkRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, { headers: { Cookie: c2 } });
     expect(checkRes.status()).toBe(200);
     const checkData = await checkRes.json();
     expect(checkData.data.tags).toBeDefined();
@@ -653,12 +660,12 @@ test.describe('Notes Feature', () => {
 
   test('tag click filters notes by that tag', async ({ page, request }) => {
     const ts = Date.now();
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const tagRes = await request.post('http://localhost:3000/api/tags', {
+    const tagRes = await request.post(`${E2E_API}/api/v1/tags`, {
       data: { name: `FilterTagClick ${ts}`, color: 'teal' },
       headers: { Cookie: cookies },
     });
@@ -668,21 +675,21 @@ test.describe('Notes Feature', () => {
     const taggedTitle = `Tagged Note Filter ${ts}`;
     const untaggedTitle = `Untagged Note Filter ${ts}`;
 
-    await request.post('http://localhost:3000/api/notes', {
-      data: { title: taggedTitle, content: 'Has tag', tagIds: [tagId] },
+    await request.post(`${E2E_API}/api/v1/notes`, {
+      data: { title: taggedTitle, content: 'Has tag', tag_ids: [tagId] },
       headers: { Cookie: cookies },
     });
 
-    await request.post('http://localhost:3000/api/notes', {
+    await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: untaggedTitle, content: 'No tag' },
       headers: { Cookie: cookies },
     });
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const allRes = await request.get('http://localhost:3000/api/notes', { headers: { Cookie: c2 } });
+    const allRes = await request.get(`${E2E_API}/api/v1/notes`, { headers: { Cookie: c2 } });
     expect(allRes.status()).toBe(200);
     const allNotes: { data: { id: number; title: string; tags?: { id: number }[] }[] } = await allRes.json();
     const taggedInDb = allNotes.data.find((n) => n.title === taggedTitle);
@@ -722,13 +729,13 @@ test.describe('Notes Feature', () => {
   });
 
   test('undo delete keeps the note', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     const noteTitle = `Undo Test ${Date.now()}`;
-    const createRes = await request.post('http://localhost:3000/api/notes', {
+    const createRes = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: noteTitle, content: 'Undo me' },
       headers: { Cookie: cookies },
     });
@@ -745,14 +752,13 @@ test.describe('Notes Feature', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
-    await page.getByText(noteTitle).first().click();
-
-    await expect(page.getByRole('button', { name: 'Edit' })).toBeVisible({ timeout: 5000 });
-
-    await page.getByRole('button', { name: 'Delete' }).click();
-    await expect(page.getByRole('heading', { name: 'Delete note?' })).toBeVisible({ timeout: 5000 });
-
-    await page.getByRole('button', { name: 'Delete' }).click();
+    // The Undo affordance lives in the /notes list card's Actions menu
+    // (5s undo window); the detail page deletes instantly.
+    const noteCard = page.getByRole('article', { name: `Note: ${noteTitle}` });
+    await expect(noteCard).toBeVisible({ timeout: 5000 });
+    await noteCard.hover();
+    await noteCard.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
     await expect(page.getByRole('heading', { name: 'Delete note?' })).toBeVisible({ timeout: 5000 });
 
     await page.getByRole('button', { name: 'Delete' }).click();
@@ -768,24 +774,24 @@ test.describe('Notes Feature', () => {
 
     await expect(page.getByText(noteTitle).first()).toBeVisible({ timeout: 5000 });
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const noteRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, {
+    const noteRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, {
       headers: { Cookie: c2 },
     });
     expect(noteRes.status()).toBe(200);
   });
 
   test('link dropdown associates note with board', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     const ts = Date.now();
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `LinkDropdownBoard ${ts}` },
       headers: { Cookie: cookies },
     });
@@ -793,7 +799,7 @@ test.describe('Notes Feature', () => {
     const linkBoardId = (await boardRes.json()).data.id;
 
     const noteTitle = `Linked Note ${ts}`;
-    const createRes = await request.post('http://localhost:3000/api/notes', {
+    const createRes = await request.post(`${E2E_API}/api/v1/notes`, {
       data: { title: noteTitle, content: 'Will be linked' },
       headers: { Cookie: cookies },
     });
@@ -825,7 +831,7 @@ test.describe('Notes Feature', () => {
     await page.waitForTimeout(300);
 
     const editResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/notes/') && resp.request().method() === 'PATCH',
+      (resp) => resp.url().includes('/api/v1/notes/') && resp.request().method() === 'PATCH',
     );
     await page.getByRole('button', { name: 'Save' }).click();
     await editResponse;
@@ -839,11 +845,11 @@ test.describe('Notes Feature', () => {
 
     await expect(page.getByText(noteTitle).first()).toBeVisible({ timeout: 5000 });
 
-    const loginRes2 = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes2 = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const c2 = loginRes2.headers()['set-cookie'] || '';
-    const noteRes = await request.get(`http://localhost:3000/api/notes/${noteId}`, {
+    const noteRes = await request.get(`${E2E_API}/api/v1/notes/${noteId}`, {
       headers: { Cookie: c2 },
     });
     expect(noteRes.status()).toBe(200);

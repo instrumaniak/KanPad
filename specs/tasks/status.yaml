@@ -77,7 +77,7 @@ tasks:
     critical: false
   T017:
     name: Retarget Playwright to backend-rs + enable in CI
-    status: pending
+    status: done
     depends:
       - T016
     phase: 0

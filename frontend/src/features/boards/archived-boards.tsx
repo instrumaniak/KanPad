@@ -23,7 +23,9 @@ export function ArchivedBoards() {
     board: null,
   });
 
-  const boards = boardsData?.data ?? [];
+  // The API's `archived=true` means “include archived” (active boards included
+  // too — there is no “only archived” mode). This page lists just the archived ones.
+  const boards = (boardsData?.data ?? []).filter((board) => board.is_archived);
 
   const handleRestore = useCallback(
     async (board: Board) => {

@@ -14,10 +14,11 @@
     "test:watch": "vitest --project=unit",
     "test-storybook": "vitest run --project=storybook",
     "test:all": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "sh ./scripts/e2e-local.sh",
     "gen:api": "check() { if [ \"$1\" = \"--check\" ]; then mkdir -p node_modules/.tmp && openapi-typescript ../backend-rs/openapi.json -o node_modules/.tmp/schema.check.d.ts && diff -u src/lib/api/schema.d.ts node_modules/.tmp/schema.check.d.ts && echo 'gen:api --check: schema.d.ts is up to date'; else openapi-typescript ../backend-rs/openapi.json -o src/lib/api/schema.d.ts; fi; }; check",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "build-storybook": "storybook build",
+    "test:e2e:raw": "playwright test"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

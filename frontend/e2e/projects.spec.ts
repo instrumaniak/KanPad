@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-projects@test.local';
 const TEST_PASSWORD = 'Test1234!';
@@ -6,7 +7,7 @@ const TEST_PASSWORD = 'Test1234!';
 test.describe('Projects CRUD', () => {
   test.beforeAll(async ({ request }) => {
     // Ensure test user exists
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -36,13 +37,8 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    // Wait a moment for React Query to settle
-    await page.waitForTimeout(500);
-
-    const isEmptyVisible = await emptyStateButton.isVisible().catch(() => false);
-    const isCreateVisible = await createButton.isVisible().catch(() => false);
-
-    expect(isEmptyVisible || isCreateVisible).toBe(true);
+    // Wait for either CTA instead of racing the empty-state render.
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
   });
 
   test('creates a project via Create Project button', async ({ page }) => {
@@ -52,7 +48,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();
@@ -72,7 +71,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();
@@ -92,7 +94,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();
@@ -115,7 +120,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();
@@ -150,7 +158,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();
@@ -186,7 +197,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();
@@ -218,7 +232,10 @@ test.describe('Projects CRUD', () => {
     const emptyStateButton = page.getByRole('button', { name: 'Create your first project' });
     const createButton = page.getByRole('button', { name: 'Create Project' });
 
-    if (await emptyStateButton.isVisible().catch(() => false)) {
+    // Either CTA may render depending on whether the list is empty —
+    // auto-wait for whichever is present (empty state needs a beat to settle).
+    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    if (await emptyStateButton.isVisible()) {
       await emptyStateButton.click();
     } else {
       await createButton.click();

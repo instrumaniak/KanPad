@@ -26,3 +26,7 @@ dist-ssr
 *storybook.log
 storybook-static/
 *.tsbuildinfo
+
+# Playwright e2e artifacts (CI uploads these on failure)
+playwright-report/
+test-results/

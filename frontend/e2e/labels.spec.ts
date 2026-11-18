@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 import { LABEL_COLOR_CLASS_MAP } from '../src/features/labels/label-colors';
 
 const TEST_EMAIL = 'e2e-labels@test.local';
@@ -6,7 +7,7 @@ const TEST_PASSWORD = 'Test1234!';
 
 test.describe('Labels E2E', () => {
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -16,13 +17,13 @@ test.describe('Labels E2E', () => {
 
   test('default labels are available after registration', async ({ request }) => {
     // Login via API to get cookies
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     // Verify default labels exist
-    const labelsRes = await request.get('http://localhost:3000/api/labels', {
+    const labelsRes = await request.get(`${E2E_API}/api/v1/labels`, {
       headers: { Cookie: cookies },
     });
     expect(labelsRes.status()).toBe(200);
@@ -37,13 +38,13 @@ test.describe('Labels E2E', () => {
 
   test('assigns a label to a card and persists', async ({ page, request }) => {
     // Login via API
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     // Get default labels
-    const labelsRes = await request.get('http://localhost:3000/api/labels', {
+    const labelsRes = await request.get(`${E2E_API}/api/v1/labels`, {
       headers: { Cookie: cookies },
     });
     const labelsData = await labelsRes.json();
@@ -52,7 +53,7 @@ test.describe('Labels E2E', () => {
     expect(bugLabel.color).toBeDefined();
 
     // Create a board
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Label Test Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
@@ -60,7 +61,7 @@ test.describe('Labels E2E', () => {
     const boardId = boardData.data.id;
 
     // Create a column
-    const columnRes = await request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const columnRes = await request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: 'To Do' },
       headers: { Cookie: cookies },
     });
@@ -68,7 +69,7 @@ test.describe('Labels E2E', () => {
     const columnId = columnData.data.id;
 
     // Create a card
-    const cardRes = await request.post('http://localhost:3000/api/cards', {
+    const cardRes = await request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: 'Test Card for Labels', column_id: columnId, position: 0 },
       headers: { Cookie: cookies },
     });
@@ -151,14 +152,14 @@ test.describe('Labels E2E', () => {
 
   test('creates a custom label via API and assigns it to a card', async ({ page, request }) => {
     // Login via API
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
     // Create a custom label
     const customLabelName = `Custom Label ${Date.now()}`;
-    const createLabelRes = await request.post('http://localhost:3000/api/labels', {
+    const createLabelRes = await request.post(`${E2E_API}/api/v1/labels`, {
       data: { name: customLabelName, color: 'purple' },
       headers: { Cookie: cookies },
     });
@@ -169,26 +170,26 @@ test.describe('Labels E2E', () => {
     expect(labelData.data.color).toBe('purple');
 
     // Create a board, column, card
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Custom Label Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
     const boardId = (await boardRes.json()).data.id;
 
-    const columnRes = await request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const columnRes = await request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: 'In Progress' },
       headers: { Cookie: cookies },
     });
     const columnId = (await columnRes.json()).data.id;
 
-    const cardRes = await request.post('http://localhost:3000/api/cards', {
+    const cardRes = await request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: 'Custom Label Card', column_id: columnId, position: 0 },
       headers: { Cookie: cookies },
     });
     const cardId = (await cardRes.json()).data.id;
 
     // Assign the custom label to the card via API
-    const assignRes = await request.post(`http://localhost:3000/api/cards/${cardId}/labels`, {
+    const assignRes = await request.post(`${E2E_API}/api/v1/cards/${cardId}/labels`, {
       data: { labelId: customLabelId },
       headers: { Cookie: cookies },
     });
@@ -228,12 +229,12 @@ test.describe('Labels E2E', () => {
   });
 
   test('card label colors switch when toggling theme', async ({ page, request }) => {
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const labelsRes = await request.get('http://localhost:3000/api/labels', {
+    const labelsRes = await request.get(`${E2E_API}/api/v1/labels`, {
       headers: { Cookie: cookies },
     });
     const labelsData = await labelsRes.json();
@@ -243,25 +244,25 @@ test.describe('Labels E2E', () => {
       throw new Error('Expected Bug label to exist');
     }
 
-    const boardRes = await request.post('http://localhost:3000/api/boards', {
+    const boardRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: `Theme Label Board ${Date.now()}` },
       headers: { Cookie: cookies },
     });
     const boardId = (await boardRes.json()).data.id;
 
-    const columnRes = await request.post(`http://localhost:3000/api/boards/${boardId}/columns`, {
+    const columnRes = await request.post(`${E2E_API}/api/v1/boards/${boardId}/columns`, {
       data: { name: 'To Do' },
       headers: { Cookie: cookies },
     });
     const columnId = (await columnRes.json()).data.id;
 
-    const cardRes = await request.post('http://localhost:3000/api/cards', {
+    const cardRes = await request.post(`${E2E_API}/api/v1/cards`, {
       data: { title: 'Theme Toggle Card', column_id: columnId, position: 0 },
       headers: { Cookie: cookies },
     });
     const cardId = (await cardRes.json()).data.id;
 
-    const assignRes = await request.post(`http://localhost:3000/api/cards/${cardId}/labels`, {
+    const assignRes = await request.post(`${E2E_API}/api/v1/cards/${cardId}/labels`, {
       data: { labelId: bugLabel.id },
       headers: { Cookie: cookies },
     });

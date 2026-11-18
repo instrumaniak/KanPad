@@ -146,7 +146,7 @@ export function AppLayout() {
           <MobileBottomSheet
             open={mobileSidebarOpen}
             onOpenChange={setMobileSidebarOpen}
-            title="Projects"
+            title="Notes"
           >
             <BoardNotesSidebar
               boardId={Number(boardId)}

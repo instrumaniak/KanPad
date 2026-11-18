@@ -136,7 +136,7 @@ canonical document, the canonical document wins:_
 **Frontend E2E patterns**
 - Test setup (creating boards, columns, cards) uses **API calls**, not UI interactions; the UI is only the behaviour under test
 - Never `waitForTimeout()` — use `waitForLoadState('networkidle')`, element assertions, or `page.waitForSelector()`
-- **Target state**: the E2E API is `backend-rs` on `:3001` (and `E2E_BASE_URL` pins it). ⚠️ *Not yet done*: `frontend/playwright.config.ts` still starts the deleted Nest backend (`cd ../backend && npm run start:dev`, `:3000`) and the specs still call `http://localhost:3000/api/...`. The retarget is task **T017** — CI therefore installs Chromium but does not run the suite
+- **Target state** (T017, 2026-11-18): the E2E API is `backend-rs` on `:3001`; fixtures call `http://localhost:3001` (overridable via `E2E_BASE_URL`). `frontend/playwright.config.ts` boots Vite (`npm run dev`, absolute `VITE_API_URL=http://localhost:3001`) + the Rust API (`cargo run -- serve`; or `E2E_BASE_URL` to pin an already-running API). The suite runs in CI (`docker-e2e` job) and locally via `npm run test:e2e` (provisions + migrates the throwaway `kanpad_e2e` schema).
 
 **Coverage & CI gates**
 - Backend line coverage floor **85%** (`cargo llvm-cov --workspace --all-targets --fail-under-lines 85`)

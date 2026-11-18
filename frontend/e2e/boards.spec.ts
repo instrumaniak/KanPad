@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { E2E_API } from './api-base';
 
 const TEST_EMAIL = 'e2e-boards@test.local';
 const TEST_PASSWORD = 'Test1234!';
 
 test.describe('Boards CRUD', () => {
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -37,10 +38,10 @@ test.describe('Boards CRUD', () => {
     // Navigate to root which shows boards
     await page.goto('/');
 
-    const emptyStateButton = page.getByRole('button', { name: 'Create your first board' });
-    const createButton = page.getByRole('button', { name: 'Create Board' });
-
-    await expect(emptyStateButton.or(createButton)).toBeVisible();
+    // Logged-in users always get the header's Create Board button (the
+    // empty state adds a second, aria-labeled "Create your first board" CTA —
+    // keep this strict, no .or()).
+    await expect(page.getByRole('button', { name: 'Create Board', exact: true })).toBeVisible();
   });
 
   test('creates a board via Create Board button', async ({ page }) => {
@@ -105,7 +106,7 @@ test.describe('Boards CRUD', () => {
 test.describe('Board Archiving', () => {
   const boardNameToArchive = `Board to Archive ${Date.now()}`;
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3000/api/auth/register', {
+    const res = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     if (res.status() !== 201 && res.status() !== 409) {
@@ -113,12 +114,12 @@ test.describe('Board Archiving', () => {
     }
 
     // Create a board to archive
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const createRes = await request.post('http://localhost:3000/api/boards', {
+    const createRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: boardNameToArchive },
       headers: { Cookie: cookies },
     });
@@ -195,12 +196,12 @@ test.describe('Board Archiving', () => {
   test('permanently deletes an archived board', async ({ page, request }) => {
     // Create and archive a specific board for this test
     const boardName = `Board to Permanent Delete ${Date.now()}`;
-    const loginRes = await request.post('http://localhost:3000/api/auth/login', {
+    const loginRes = await request.post(`${E2E_API}/api/v1/auth/login`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
     const cookies = loginRes.headers()['set-cookie'] || '';
 
-    const createRes = await request.post('http://localhost:3000/api/boards', {
+    const createRes = await request.post(`${E2E_API}/api/v1/boards`, {
       data: { name: boardName },
       headers: { Cookie: cookies },
     });
@@ -208,8 +209,9 @@ test.describe('Board Archiving', () => {
     const boardId = boardData.data.id;
 
     // Archive the board
-    await request.patch(`http://localhost:3000/api/boards/${boardId}/archive`, {
+    await request.patch(`${E2E_API}/api/v1/boards/${boardId}`, {
       headers: { Cookie: cookies },
+      data: { is_archived: true },
     });
 
     await page.goto('/login');
@@ -221,7 +223,10 @@ test.describe('Board Archiving', () => {
     await page.goto('/archived-boards');
     await page.waitForTimeout(500);
 
-    const boardNameLocator = page.getByText(boardName);
+    // The name also appears in the permanent-delete confirmation dialog
+    // (and in the post-delete toast), so scope to the card's heading element
+    // (h3) — unique per board, gone when the card unmounts.
+    const boardNameLocator = page.getByRole('heading', { name: boardName });
     await expect(boardNameLocator).toBeVisible();
     const boardCard = boardNameLocator.locator('..');
 

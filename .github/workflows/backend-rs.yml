@@ -13,7 +13,7 @@
 # migrate info (pending=0) -> SHOW CREATE TABLE assert (T02 gate) ->
 # sqlx prepare --check (canonical form) -> test + coverage floor (T62) ->
 # openapi snapshot -> gen:api --check -> tsc -> docker build (SQLX_OFFLINE=true)
-# -> vitest / playwright pinned to :3001.
+# -> vitest + playwright e2e vs :3001 (docker build + docker-e2e job).
 #
 # .sqlx/ commit rule (enforced by the prepare --check step): any `query!`
 # change must run `cargo sqlx prepare --workspace --all -- --all-targets` and
@@ -282,8 +282,10 @@ jobs:
           echo 'OK: no format!-built SQL in store.rs'
 
       # -- 3. migrate run + migrate info (pending=0) -----------------------
-      # sqlx-cli pinned exactly as T02 specifies (NOT the backend-rs binary:
-      # its `migrate` subcommand is still the T03 stub until wired later).
+      # sqlx-cli pinned exactly as T02 specifies — the canonical cache gate
+      # stays with the CLI. (The backend-rs binary's own `migrate` subcommand
+      # is real now too and is what the docker-e2e job uses for the throwaway
+      # kanpad_e2e schema — but the CI migration/prepare gate stays here.)
       - name: Cache sqlx-cli
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -647,9 +649,9 @@ jobs:
         working-directory: frontend
         run: npm run budget
 
-  # --------------------------------------- docker build + :3001 e2e (pinned)
+  # --------------------------------------- docker build + :3001 e2e
   docker-e2e:
-    name: docker build + vitest + playwright pinned to :3001
+    name: docker build + vitest + playwright e2e
     runs-on: ubuntu-latest
     needs: [backend, web]
     services:
@@ -738,7 +740,6 @@ jobs:
             if curl -fsS http://localhost:3001/health >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          echo "E2E_BASE_URL=http://localhost:3001" >> "$GITHUB_ENV"
           curl -fsS http://localhost:3001/health | grep -q '"status":"ok"'
           echo 'OK: GET /health -> {status: ok}'
           curl -fsS http://localhost:3001/api-docs/openapi.json > /tmp/openapi.3001.json
@@ -747,6 +748,13 @@ jobs:
           docker exec kanpad-rust-ci test ! -e /app/public
           echo 'OK: no /app/public in API-only image'
           docker stop kanpad-rust-ci && docker rm kanpad-rust-ci
+
+      # Backstop: if the smoke step above fails mid-step, its container would
+      # leak and hold :3001 — the e2e API below would then collide. `rm -f`
+      # tolerates a missing container.
+      - name: Stop smoke API container (always)
+        if: always()
+        run: docker rm -f kanpad-rust-ci || true
 
       - name: Setup node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -763,14 +771,87 @@ jobs:
         working-directory: frontend
         run: npm run test
 
-      # Playwright is PINNED here, wired fully in T41/T50: browsers install
-      # (cached) + the :3001 smoke above prove the target; the spec files
-      # still boot Nest :3000 via webServer (playwright.config.ts), so
-      # `playwright test` itself must NOT run until T41/T50 retarget it.
-      - name: playwright pinned (browsers installed; full run in T41/T50)
-        working-directory: frontend
+      # T017: real two-origin Playwright e2e against :3001 (spec:
+      # specs/tasks/T017-retarget-playwright-to-backend-rs-enable-in-c-i.md).
+      # The API under test is the BUILT image (kanpad-rust-e2e) on a throwaway
+      # `kanpad_e2e` schema with throttling effectively unlimited (10000/min)
+      # — every request comes from 127.0.0.1 and the default auth bucket is
+      # 5/min, which would 429 the suite. `E2E_BASE_URL=http://localhost:3001` tells Playwright to skip
+      # its API webServer (this job manages the container) — the mirror of the
+      # `e2e_base_url()` pin in the Rust harness. The SPA webServer starts Vite
+      # with VITE_API_URL=http://localhost:3001 (absolute, the T007-hardened
+      # cross-origin path — never the dev proxy).
+      - name: Create kanpad_e2e (utf8mb4 / utf8mb4_unicode_ci)
         run: |
           set -euo pipefail
-          npx playwright install chromium --only-shell
-          npx playwright --version
-          echo 'PIN: e2e target is http://localhost:3001 (full `playwright test` wired in T41/T50)'
+          command -v mysql >/dev/null || { echo 'FAIL: mysql client not on runner image'; exit 1; }
+          mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -e \
+            "CREATE DATABASE IF NOT EXISTS kanpad_e2e CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+      # The image's CMD is ["/usr/local/bin/backend-rs", "serve"]; args replace
+      # CMD, so call the binary path explicitly. APP_ENV=test (never prod).
+      - name: Migrate kanpad_e2e (image's own binary; no sqlx-cli)
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -e APP_ENV=test \
+            -e SESSION_SECRET='ci-test-secret-that-is-longer-than-32-bytes' \
+            -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_e2e?charset=utf8mb4&collation=utf8mb4_unicode_ci' \
+            kanpad-rust:ci /usr/local/bin/backend-rs migrate run
+
+      - name: Start e2e API (:3001) and wait for /health
+        run: |
+          set -euo pipefail
+          docker run -d --name kanpad-rust-e2e --network host \
+            -e PORT=3001 \
+            -e APP_ENV=test \
+            -e SESSION_SECRET='ci-test-secret-that-is-longer-than-32-bytes' \
+            -e DATABASE_URL='mysql://root:ci_root_pw@127.0.0.1:3306/kanpad_e2e?charset=utf8mb4&collation=utf8mb4_unicode_ci' \
+            -e THROTTLE_AUTH_PER_MIN=10000 \
+            -e THROTTLE_GLOBAL_PER_MIN=10000 \
+            kanpad-rust:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3001/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3001/health | grep -q '"status":"ok"'
+          echo 'OK: e2e API -> {status: ok}'
+
+      - name: playwright install chromium
+        working-directory: frontend
+        # --with-deps: the bare ubuntu-latest image lacks the system libraries
+        # the headless shell needs; the storybook workflow uses the same shape.
+        run: npx playwright install --with-deps chromium --only-shell
+
+      - name: playwright test (two-origin e2e; API pinned via E2E_BASE_URL)
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:3001
+        run: npm run test:e2e:raw
+
+          # HTML report exists only because CI's reporter adds the html entry
+          # (see playwright.config.ts). Traces land in test-results/ (trace:
+          # on-first-retry). Uploaded on failure, so a red run is debuggable.
+          # WARNING — what this artifact contains: `trace.zip` files capture the
+          # FULL network log (request/response bodies + headers): the login
+          # fixtures' POST bodies (e.g. `Test1234!`) and `Set-Cookie`/`Cookie`
+          # session headers for the throwaway kanpad_e2e API. Acceptable ONLY
+          # because the suite runs against an ephemeral, fake-credential,
+          # 127.0.0.1 target with 7-day retention. NEVER point this job at a
+          # shared/staging backend with this upload enabled.
+      - name: Upload playwright report + traces on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Backstop: if the e2e job fails BEFORE the artifact step, or succeeds,
+      # the container is still removed. `rm -f` tolerates a missing container.
+      - name: Stop e2e API container
+        if: always()
+        run: docker rm -f kanpad-rust-e2e || true

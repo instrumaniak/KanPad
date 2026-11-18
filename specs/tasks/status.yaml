@@ -91,7 +91,7 @@ tasks:
     critical: false
   T019:
     name: Docs/README/proxy sync
-    status: pending
+    status: done
     depends:
       - T012
     phase: 0

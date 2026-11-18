@@ -44,7 +44,8 @@ _Deployment_:
 
 - [x] cPanel hosting
 - [x] Docker image for the API
-- [ ] Templates for common self-hosting setup (portainer, dokploy)
+- [x] Templates for common self-hosting setup (portainer, dokploy) — see
+      `docs/self-hosting.md`
 
 ## Backend setup
 
@@ -121,22 +122,22 @@ Run tests:
 # unit tests
 $ npm run test
 
-# e2e tests
+# e2e tests (against the Rust backend on :3001 — wraps scripts/e2e-local.sh,
+# which needs a reachable MySQL/MariaDB; see frontend/playwright.config.ts)
 $ npm run test:e2e
 
 ```
 
-> The e2e suite is being retargeted from the old Node backend to the Rust one
-> on `:3001` — until that lands, `npm run test:e2e` still expects the retired
-> backend on `:3000`.
-
 ## Deployment
 
-**Self-host (Docker)** — one container per concern, same-origin, production-shaped:
-`docker compose up --build` → http://localhost:5173 (TLS required for remote access);
-see **`docs/self-hosting.md`**.
+Two first-class deploy paths — pick either (D-1; the topology table and ops
+contract are in `specs/arch-hardening-specs/40-operations.md`):
 
-KanPad can also run as two independent origins:
+**Path A — Docker appliance (same-origin).** One container per concern;
+`docker compose up --build` → http://localhost:5173 (TLS required for remote
+access). Full guide: **`docs/self-hosting.md`** (Dokploy/Portainer covered).
+
+**Path B — Two independent origins (e.g. LiteSpeed/cPanel, or any static host + API).**
 
 - **SPA** — the static frontend build (`frontend/dist/`), served by any static
   host.
@@ -155,12 +156,9 @@ $ cd backend-rs && cargo build --release
 ```
 
 Runtime configuration is passed as environment variables — never baked into the
-build. `backend-rs/.env.example` lists the full key set.
-
-_Detailed deployment instructions (Docker, cPanel/shared hosting, self-hosting
-templates) will be filled in here. In the meantime see `docs/deployment.md` for
-the production topology, the reverse-proxy contract and the post-deploy smoke
-list._
+build. `backend-rs/.env.example` lists the full key set. Step-by-step runbook
+(upload, the reverse proxy in front of the API — incl. the cPanel/Node-wrapper
+contract, post-deploy smoke list): **`docs/deployment.md`**.
 
 ## Acknowledgement
 

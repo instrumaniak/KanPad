@@ -15,10 +15,19 @@ MySQL, `backend-rs/Dockerfile`, env files.
   Test: request with `Host: <api-host>` → backend sees same Host.
 - `X-Forwarded-For`: proxy must overwrite (not append) per spec; verify spoofing
   is impossible (client cannot inject a trusted XFF that survives).
+  *(SUPERSEDED 2026-11-18, T019: T007 landed the opposite contract — the wrapper
+  **appends**, never overwrites; the API walks XFF **right-to-left**, skipping
+  `TRUSTED_PROXIES` entries and taking the first non-trusted entry. Spoofing is
+  prevented by that walk, not by overwriting; see `docs/deployment.md`
+  §"Proxy contract".)*
 - `X-Forwarded-Proto`: must reflect real TLS status behind cPanel/Apache
   (TLS termination). If always "http", cookie `Secure` flag (driven by APP_ENV,
   not XFP) still OK, but HSTS/redirects may suffer.
 - Proxy binds only to localhost; backend port 3001 not publicly reachable.
+  *(SUPERSEDED 2026-11-18, T019: the cPanel/Passenger wrapper binds `0.0.0.0:$PORT`
+  by design (Passenger/LiteSpeed reaches it from the host), and the Rust child runs
+  on an **ephemeral loopback port**; nothing else is reachable. See
+  `scripts/app-proxy.js` and `docs/deployment.md` §"Proxy contract".)*
 - Process restart behavior (Passenger) doesn't leak env or leave zombie processes.
 - Graceful shutdown: SIGTERM → drain → pool close within timeout.
 
@@ -74,8 +83,12 @@ MySQL, `backend-rs/Dockerfile`, env files.
   (banner grabbed). Ports 3000/3001/8080 filtered; only 80/443/3306 open.
   **Mitigated:** remote access removed by owner (verify closed with nmap).
   SEC-014 still covers least-privilege DB user + bind-to-localhost.
-- Prod DB is MariaDB 11.4.x (runbook assumed 10.6.x) — portability targets
-  differ (F-02, Info).
+- Prod DB _was reported_ as MariaDB 11.4.x (runbook assumed 10.6.x) — portability targets
+  differ (F-02, Info). *(UNVERIFIED as of 2026-11-18, T019: prod flavor is
+  documented inconsistently — 10.6.28 in `docs/mariadb-compat.md:3` vs 11.4.x
+  reported here. T011's drill records `SELECT VERSION()`; this line and that one must be
+  corrected to the recorded value once T011 lands — see
+  `specs/arch-hardening-specs/40-operations.md` §6.)*
 - Frontend sends no security headers (R-01).
 - testssl.sh: no OCSP stapling (R-08), BREACH potential (R-07), SNI mandatory
   (R-09). OCSP stapling optional.

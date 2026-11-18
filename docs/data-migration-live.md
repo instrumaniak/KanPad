@@ -1,5 +1,13 @@
 # Data migration runbook: NestJS/TypeORM → Rust (backend-rs)
 
+> **RETIRED 2026-11-18 (T019) — rollback paths only:** the Nest backend was deleted
+> (`4051be68`). The *migration procedure* below remains the historical record of the
+> one-way cutover that already happened; the *rollback* instructions that point at
+> Nest (`VITE_API_URL=http://localhost:3000`, the `kanpad-nest:final` image) are
+> **void**. Rollback is **backup-restore only** (T011; drill record lands in
+> `docs/operations-backup.md` when T011 completes). See `docs/cutover.md` and
+> `specs/arch-hardening-specs/40-operations.md` §3.
+
 **Who this is for:** a human operator moving the production KanPad database from the
 old NestJS backend to the new Rust backend, in one controlled window.
 
@@ -109,7 +117,7 @@ mysqldump --single-transaction --quick --routines --triggers \
 > `--set-gtid-purged` differ between MySQL and MariaDB versions and are only
 > needed for binlog/replication-based rollbacks — ours is a file restore, so
 > plain `--single-transaction … --triggers` is the portable, valid form on the
-> MariaDB 10.6 prod host.
+> MariaDB 10.6 prod host. *(flavor UNVERIFIED as of 2026-11-18 — T011 records `SELECT VERSION()`; see `docs/mariadb-compat.md`.)*
 
 Copy `.gz` off the server (another box / object storage). **Keep it until the Rust
 rollback window is over.** If anything goes wrong in production later, *restore from
@@ -719,17 +727,21 @@ Stop the test server when done (`Ctrl+C`).
 4. Start the Rust backend against it and build the frontend pointed at it (`VITE_API_URL` unset defaults to the Rust `:3001` proxy after T51; see `docs/cutover.md`).
 5. Confirm `served-by: rust` + log into the app in the browser.
 6. Unfreeze writers. **Users will be logged out once** — that's the intended behavior (session cookies were abandoned).
-7. Keep the Nest image + the pre-cutover `.gz` backup until the rollback window closes.
+7. Keep the Nest image + the pre-cutover `.gz` backup until the rollback window closes. *(RETIRED 2026-11-18 — Nest is deleted (`4051be68`); the `.gz` backup principle stands, the Nest image no longer exists. Rollback is backup-restore only, → T011.)*
 
 ### Option B — One-line app rollback
 
-Point the frontend at the Nest backend again:
+> **RETIRED 2026-11-18 (T019):** Nest `:3000` no longer exists; this rollback cannot
+> be executed. App rollback = redeploy the previous known-good artifact (previous
+> `dist/` + previous `backend-rs` binary). DB rollback = Option C (backup-restore), → T011.
+
+~~Point the frontend at the Nest backend again:~~ *(retired)*
 
 ```bash
 VITE_API_URL=http://localhost:3000
 ```
 
-Nothing about the databases changed; Nest still runs on the untouched prod DB.
+Nothing about the databases changed; Nest still runs on the untouched prod DB. *(retired)*
 
 ### Option C — Database rollback
 
@@ -743,7 +755,7 @@ against production.** A restore drill belongs in `docs/cutover.md`'s log.
 ```bash
 $MYSQL -e "DROP DATABASE kanpad_nest_restore;
            DROP DATABASE kanpad_rs_ref;"     # kanpad_rs_ref = the step 5(d) reference DB
-# keep: the .gz pre-cutover backup, off-host; the Nest image until rollback window closes
+# keep: the .gz pre-cutover backup, off-host; ~~the Nest image until rollback window closes~~ (retired 2026-11-18 — Nest deleted; backup-restore only, → T011)
 ```
 
 ---
@@ -905,4 +917,4 @@ runbook's current shape.
 
 ## Appendix — production flavour (T006)
 
-Production runs **MariaDB 10.6.28** (not MySQL 8). The Rust backend must run on both MySQL 8.0.19+ and MariaDB 10.6+; see `specs/api-rewrite-rs-specs/30-db-schema.md` ("Supported servers") for the portable-SQL rules. Post-deploy gate: `POST /api/auth/login` -> 200 + `Set-Cookie: __Host-kanpad.sid=...` (the login smoke), plus one row in `sessions` per login.
+Production _was documented_ as **MariaDB 10.6.28** (not MySQL 8). *(UNVERIFIED as of 2026-11-18, T019 — prod flavor is documented inconsistently (11.4.x in `specs/security/06-…`); T011's drill records `SELECT VERSION()`; see the TODO in `docs/mariadb-compat.md`.)* The Rust backend must run on both MySQL 8.0.19+ and MariaDB 10.6+; see `specs/api-rewrite-rs-specs/30-db-schema.md` ("Supported servers") for the portable-SQL rules. Post-deploy gate: `POST /api/auth/login` -> 200 + `Set-Cookie: __Host-kanpad.sid=...` (the login smoke), plus one row in `sessions` per login.

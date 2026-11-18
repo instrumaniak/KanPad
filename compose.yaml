@@ -73,8 +73,10 @@ services:
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     # no published ports
 
-  # [MariaDB] — default bundled database (LTS 11.4; matches KanPad CI and the
-  # production host DB). Canonical healthcheck shipped in the image itself.
+  # [MariaDB] — default bundled database (LTS 11.4; matches KanPad CI).
+  # UNVERIFIED (2026-11-18, T019): whether the prod host DB is 11.4.x or
+  # 10.6.28 is disputed; T011's drill records SELECT VERSION() — see
+  # docs/mariadb-compat.md. Canonical healthcheck shipped in the image itself.
   db:
     image: mariadb:11.4@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
     restart: unless-stopped

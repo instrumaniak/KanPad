@@ -104,7 +104,7 @@ doctrine: restore is the only DB rollback).
 ## 6. Prod DB flavor check (C3, blocks nothing but honesty)
 
 `docs/mariadb-compat.md:3` says MariaDB **10.6.28**;
-`specs/security/06-infrastructure-deployment.md:77` says **11.4.x** live. One is stale.
+`specs/security/06-infrastructure-deployment.md` says **11.4.x** (reported, unverified). One is stale.
 T011's drill (which connects to the real DB) must **record `SELECT VERSION()`** and
 both docs get corrected (T019 owns doc sync). CI already tests both engines — the
 docs must name what production actually runs.
@@ -124,7 +124,10 @@ this check.
   `release/` copies are build artifacts or deleted; `docs/deployment.md` references
   only the tracked one. The T007 proxy contract (Host unchanged, XFF append,
   X-Forwarded-Proto, `TRUSTED_PROXIES`) is the acceptance checklist for whichever copy
-  survives.
+  survives. **Executed 2026-11-18 (T019):** tracked `scripts/app-proxy.js` confirmed
+  canonical + documented with a pointer comment; the three `release/` copies deleted
+  (user decision); XFF right-to-left walk + operator verification documented in
+  `docs/deployment.md` §"Proxy contract".
 - **README rewrite:** Rust stack, both paths, correct build commands
   (`cargo build --release`, `npm run build`), remove all `cd backend`/Nest/migrate.js
   instructions, link `docs/deployment.md` + this file. Also fix stale cutover

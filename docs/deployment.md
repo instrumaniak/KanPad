@@ -28,7 +28,8 @@ host returns the SPA's `index.html`.
 ## Environment
 
 - `frontend/.env.example` documents `VITE_API_URL=https://api-kanpad-rs.raziur.com`
-  (plus a commented dev default `# VITE_API_URL=http://localhost:3001`).
+  (commented out) — the active default is `VITE_API_URL=http://localhost:3001`
+  for local development.
 - The real `frontend/.env` is git-ignored; production values must be set in CI
   or on the build machine before `npm run build`.
 
@@ -122,8 +123,25 @@ tree containing it was uploaded):
 - The Node wrapper (`scripts/app-proxy.js`) must forward `Host` unchanged,
   append to `X-Forwarded-For`, and preserve `X-Forwarded-Proto` (falling back
   to `https`).
+- The API keys rate limiting per client by walking the `X-Forwarded-For` list
+  **right-to-left**, skipping entries in `TRUSTED_PROXIES` (exact IP or IPv4
+  CIDR) and non-IP-parseable entries, and taking the first remaining entry —
+  a custom `ClientIpExtractor` in `backend-rs/src/lib.rs` (T30); when nothing
+  parses or the peer is untrusted, the peer itself keys the bucket. With a
+  single trusted hop this resolves to the real client even when a spoofed
+  entry was prepended; an untrusted peer ignores `X-Forwarded-For` entirely.
+- Operator verification (post-deploy): the executable check is the two-clients
+  throttle probe in the smoke list below (each client gets its own login bucket).
+  Be aware of the two pass-through failure modes: clients sending no XFF fall
+  onto the shared `127.0.0.1` bucket (everyone cross-throttles — the probe
+  detects this), and clients able to set XFF get a spoofable bucket key
+  (throttle bypass — not detectable by the probe; this is why append mode is
+  required). No echo endpoint ships with the API; to see the raw header path
+  run a header-dump stub locally (nothing in-tree prints request headers) or
+  observe the throttle behavior.
 - If LiteSpeed runs on a non-loopback interface, add that IP to
-  `TRUSTED_PROXIES`.
+  `TRUSTED_PROXIES`. (Never widen `TRUSTED_PROXIES` beyond the exact hop IPs —
+  a wider CIDR re-admits XFF spoofing.)
 
 ## Post-deploy smoke (T007)
 

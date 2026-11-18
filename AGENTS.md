@@ -84,7 +84,7 @@ Keep the summary line strictly between **20 and 50 characters** with no ending p
 
 ## Where lessons live
 
-- Append-only, dated, tagged: `docs/lessons/{data-migration,rust-backend,frontend,backend-node,ci-quality}.md`.
+- Append-only, dated, tagged: `docs/lessons/{data-migration,rust-backend,frontend,backend-node,ci-quality,frontend-visual-testing}.md`.
 - Task-scoped post-mortems: `specs/tasks/Txxx-*.md` (## Lessons section).
 - Rust rewrite post-mortems: `specs/api-rewrite-rs-specs/`.
 - When a lesson becomes a standing rule, promote it to the relevant section above and delete the long story.

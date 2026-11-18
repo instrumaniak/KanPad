@@ -266,3 +266,11 @@ tasks:
     depends: ~
     phase: 0
     critical: true
+  T044:
+    name: Board column height containment visual
+    status: pending
+    depends:
+      - T021
+      - T022
+    phase: 1
+    critical: false

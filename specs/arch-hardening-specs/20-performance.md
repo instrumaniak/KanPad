@@ -113,43 +113,54 @@ COMMITTED` + stable lock order + `is_transient_lock_error` (1213|1205|scoped
 `create_card` and `update_card`'s move worker (`cards/routes.rs:112,325`),
 checklist-item create/update (`checklists/routes.rs:260,359`), column update
 (`columns/routes.rs:192`), and bulk `move_cards` (`columns/routes.rs:348`).
-`move_card` remains the reference implementation. Sites that are still
-single-shot and fall into the generic-500 arm (`error.rs`): `delete_card`,
-`delete_checklist`/`delete_item`, `create_column`/`delete_column`,
-notes/boards/labels/tags transactions, `common/rebalance.rs` (position
-rewrites), and anything else the `FOR UPDATE` re-enumeration finds (32
-`FOR UPDATE` sites across 7 files — audit, don't assume). Exhausted 500s at
+The `update_card` move worker remains the reference implementation. Sites that
+are still single-shot and fall into the generic-500 arm (`error.rs`):
+`delete_card`, `delete_checklist`/`delete_item`, `create_column`/`delete_column`,
+notes/boards/labels/tags transactions, `common/rebalance.rs` (position rewrites),
+and anything else the `FOR UPDATE` re-enumeration finds (32 raw `FOR UPDATE`
+grep literals ≈ **11 real lock sites in 4 files** — audit, don't assume).
+`create_column` is the only un-retried path that re-keys rows (serialized
+`LIMIT 1 FOR UPDATE` append plus a full-board rebalance). Exhausted 500s at
 these single-shot sites remain client-visible.
 
 **Post-T010 scope note (D-5):** T010 replaces integer positions with fractional
 `sort_key`s — single-row writes, no gap open/close, no whole-column locks — and extends
-the matcher to `1213 | 1205 | 1062`. T020 therefore runs **after** T010 and:
-- extracts the inline retry into a shared kernel helper,
+the matcher to `1213 | 1205 | constraint-scoped 1062`. T020 therefore runs **after** T010 and:
+- extracts the inline retry into a shared kernel helper (`common/tx_retry.rs`,
+  built on `common/retry.rs`),
 - applies it to whatever single-shot transactions remain post-T010, as found
   by a fresh `FOR UPDATE` enumeration (create/delete/move conditional updates,
   `1062` unique-key races on `(parent, sort_key)`, notes/boards/labels/tags,
-  `common/rebalance.rs`) — **not** `move_cards`, which already has it,
+  `common/rebalance.rs`; `create_column` is the named highest-value target) —
+  the six existing inline sites (incl. `move_cards`) **migrate onto the helper
+  behavior-preserving**; the extraction is the point of the task,
 - does **not** re-add gap-lock logic T010 deleted.
 
 **Target design:**
 - Kernel helper (e.g. `src/common/tx_retry.rs`): `async fn with_tx_retry<F, T>(pool,
   opts, f) -> Result<T, AppError>` where `f` receives a `Tx`, retries on
-  `is_transient_lock_error` (1213|1205|1062 post-T010) up to N=5 with linear backoff,
+  `is_transient_lock_error` (1213|1205|constraint-scoped 1062) up to N=5 with linear backoff,
   explicit rollback between attempts, optional `READ COMMITTED` set before `BEGIN`
-  (keep the move_card semantics; make it an option so non-positioning txs can skip it).
-- A matching arm in `error.rs` so an *exhausted* retry returns **503 + Retry-After**
-  (busy) rather than generic 500 — client-visible honesty.
+  (keep the move worker's semantics; make it an option so non-positioning txs can skip it).
+- A matching arm in `error.rs` so an *exhausted* retry returns **503 + Retry-After: 2**
+  (busy) rather than generic 500 — client-visible honesty. Boundary classification
+  in the `Db` arm (`1213`/`1205` → 503; no new `AppError` variant); scoped-`1062`
+  exhaustion stays 409 (see T020 Design decisions 1–2).
 - Apply to: `delete_card` and the remaining single-shot sites found by the
   fresh `FOR UPDATE` enumeration (checklist delete sites, `create_column`/
   `delete_column`, notes/boards/labels/tags, `common/rebalance.rs`) — each
   either gets the helper or gets a comment why it doesn't (single-row, no
-  race). Do not re-touch the six sites that already retry.
+  race). The six existing inline retry sites (incl. `move_cards`) migrate onto
+  the helper behavior-preserving — do not change their semantics while doing so.
 
 **Edge cases:** retries must not wrap non-idempotent *effects outside the tx* (all
 effects are in-tx here — assert by review); same-card race must keep the `Restart`
 short-circuit (don't retry a logical conflict as a lock conflict); backoff must not hold
-a pool connection beyond the 30 s request timeout (5 × backoff ≪ 30 s — compute worst
-case); Argon2 hashing must stay *outside* any retried tx (already true — keep it).
+a pool connection and each attempt should check the remaining request budget — note that
+1213/scoped-1062 fail fast, while a real blocked 1205 rides the 30 s `TimeoutLayer`
+(~50 s default `innodb_lock_wait_timeout`), so the exhaustion→503 path covers fast
+transients, and the worst case must be computed from the attempt model, not "5 × backoff";
+Argon2 hashing must stay *outside* any retried tx (already true — keep it).
 
 **Test plan:** the existing 500-move sequential-exact-order + concurrent invariant fuzz
 (`cards_move`) must stay green; add an injected-lock-error test (failpoint or a test

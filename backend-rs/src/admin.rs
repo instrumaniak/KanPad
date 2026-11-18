@@ -168,6 +168,11 @@ pub async fn run_create_admin(
         );
     }
 
+    // No tx-retry wrapper (T020 audit): this is an admin CLI, not a request
+    // path. The `1062` email race is deliberately mapped to exit 1 (below),
+    // so retrying would blur the exit-code contract; a transient lock failure
+    // surfaces as exit 3 (`AdminExit::Db`) — the T020 boundary 503 mapping
+    // does not apply here either.
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(err) => {

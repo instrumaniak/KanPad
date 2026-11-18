@@ -246,7 +246,7 @@ the old non-unique `(parent, position)` indexes and the `position` columns.
 
 Concurrency (D3): `UNIQUE(parent, sort_key)` turns race losers into `1062`.
 `1213`/`1205` and **constraint-scoped `1062`** on `UQ_*_sort_key` retried
-(≤5 attempts, linear backoff; same-card-race `Restart` preserved; unrelated
+(≤5 attempts, jittered backoff; same-card-race `Restart` preserved; unrelated
 unique violations never retried). Column and checklist-item appends keep the
 serialized `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` contract (no 1062 path
 there); neighbor reads for moves are unlocked (last-write-wins —

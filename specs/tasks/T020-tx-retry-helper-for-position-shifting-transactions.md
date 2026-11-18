@@ -1,6 +1,6 @@
 # T020: Tx-retry helper for position-shifting transactions
 
-> **STATUS: pending — amended 2026-11-18 (review pass).** The `position-shifting`
+> **STATUS: landed 2026-11-18 (implementation record in §Notes) — amended 2026-11-18 (review pass).** The `position-shifting`
 > name predates T010 and is stale: fractional `sort_key`s (T010, merged
 > `c62de576` 2026-11-15) eliminated position shifting. The filename and
 > `status.yaml` slug are retained for traceability; the behavior target is the
@@ -45,9 +45,10 @@ undocumented exhausted-retry → 503 mechanics are all corrected below.
 
 1. Extract a **shared kernel helper** (`src/common/tx_retry.rs`), built on the
    existing `src/common/retry.rs` (`MAX_ATTEMPTS = 5`, `is_transient_lock_error`
-   — never a duplicated matcher): bounded attempts, linear base backoff
-   (jitter optional — see Design decision 6), explicit rollback between
-   attempts, optional `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`
+   — never a duplicated matcher): bounded attempts, jittered backoff
+   (decision 6), rollback-before-retry on every non-success path (explicit on
+   the `Restart` path; drop-queued on the error path — see Design decision 3),
+   optional `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`
    before `BEGIN`, retrying on `is_transient_lock_error`
    (**1213 | 1205 | constraint-scoped 1062 on `UQ_*_sort_key`** — never
    workspace-wide 1062).
@@ -148,13 +149,16 @@ TDD throughout. Paste red proofs into the PR.
    real never-releasing `FOR UPDATE` lock — `innodb_lock_wait_timeout` defaults
    to 50 s, so exhaustion via a real lock would take ~250 s and never reach
    the 30 s `TimeoutLayer` deadline anyway; see Constraints. Paste red proof.
-4. Implement `tx_retry.rs` on top of `retry.rs` (Design decisions):
-   acquire per attempt; optional `SET TRANSACTION ... READ COMMITTED` before
-   `BEGIN` (default: on, matching post-T010 paths; per-call opt-out);
-   explicit `ROLLBACK` before the retry decision (1213 unwinds the whole tx;
-   1205 rolls back only the current statement — always roll back explicitly);
-   linear base backoff `10·(attempt+1)` ms with jitter preferred (or fixed
-   linear + recorded justification); backoff sleeps **without** holding a
+4. Implement `tx_retry.rs` on top of `retry.rs` (Design decisions; **as
+   landed** — see §Notes): acquire per attempt; optional `SET TRANSACTION ...
+   READ COMMITTED` before `BEGIN` (default: on, matching post-T010 paths;
+   per-call opt-out via `TxRetryOpts::skip_read_committed()`, unit-tested);
+   rollback-before-retry — explicit ROLLBACK on the `Restart` path;
+   drop-queued ROLLBACK on the error path (the body consumes the tx, sqlx's
+   `Transaction::drop` queues `start_rollback` before the matcher decision —
+   supersedes the pre-review "explicit ROLLBACK always" text; see Design
+   decision 3); jittered backoff `rand(5, 20·retry)` ms (see §Notes; the
+   fixed-linear option was not taken); backoff sleeps **without** holding a
    pool connection; `warn!` per attempt, `error!` on exhaustion.
 5. Swap the six inline loops to the helper (behavior-preserving). Existing
    `cards_move.rs` (incl. T61 503/409 injection tests) and `sort_key_ordering.rs`
@@ -243,29 +247,29 @@ TDD throughout. Paste red proofs into the PR.
 
 ## Acceptance Criteria
 
-- [ ] `with_tx_retry` exists in `common/tx_retry.rs` on top of `retry.rs`
+- [x] `with_tx_retry` exists in `common/tx_retry.rs` on top of `retry.rs`
       with unit tests (bounded attempts = 5, backoff bounds/jitter, matcher
       reachable for 1213|1205|scoped-1062, rollback called between attempts
       — assertable via injector invocation count, commit-failure not
       re-executed, backoff sleeps hold no pool connection).
-- [ ] Injected-`1213` recovery test against a single-shot site
+- [x] Injected-`1213` recovery test against a single-shot site
       (`delete_card` or `create_column`) — red today, proof pasted.
-- [ ] Always-inject `1213` and `1205` → exhausted → **503 + `Retry-After: 2`
+- [x] Always-inject `1213` and `1205` → exhausted → **503 + `Retry-After: 2`
       (`service-unavailable`)**; red today, proof pasted; no driver/SQL text
       in the body.
-- [ ] `create_column`, `delete_card`, and the audited delete/scalars txs use
+- [x] `create_column`, `delete_card`, and the audited delete/scalars txs use
       the helper; the six inline sites migrated behavior-preserving
       (`cards_move.rs` + `sort_key_ordering.rs` suites green unchanged);
       **every** remaining `tx.begin()` site audited with a one-line comment;
       bulk `move_cards` on the helper.
-- [ ] Scoped-1062 exhaustion renders 409 (unchanged, tested); Db 1213/1205
+- [x] Scoped-1062 exhaustion renders 409 (unchanged, tested); Db 1213/1205
       renders 503 + `Retry-After: 2` (new tests).
-- [ ] Full suite green on MySQL 8.4 + MariaDB 11.4; `sqlx prepare --check` 0;
+- [x] Full suite green on MySQL 8.4 + MariaDB 11.4; `sqlx prepare --check` 0;
       fmt/clippy 0; frontend `gen:api --check`, `tsc --noEmit`, `vitest`
-      green; coverage floor green.
-- [ ] Persistence assertion per touched endpoint (re-read via a different API
+      green; coverage floor green (89.62% lines on the final tree, 2026-11-18).
+- [x] Persistence assertion per touched endpoint (re-read via a different API
       call or sqlx `SELECT`); lesson appended to `docs/lessons/rust-backend.md`.
-- [ ] `20-performance.md`, `CONTRACT-CHANGES.md`, and `status.yaml` name
+- [x] `20-performance.md`, `CONTRACT-CHANGES.md`, and `status.yaml` name
       reconciled in the same PR (scope notes corrected; exhaustion behavior
       documented).
 
@@ -274,11 +278,12 @@ TDD throughout. Paste red proofs into the PR.
 (2026-11-18 — amendment pass applying the review; see review disposition in the
 thread. Decisions 1–8 above are locked or recorded for follow-up.)
 
-- Open items for the implementation: 1205 `innodb_lock_wait_timeout` option
-  (save/restore `SET SESSION`, or stay documented-on-TimeoutLayer); jitter
-  choice (decision 6); `status.yaml` `status:` field says `in_progress` while
-  no code exists — flip at implementation start; T011 (the drill recording
-  `SELECT VERSION()`) remains untracked in `status.yaml`.
+- Open item resolutions (2026-11-18): 1205 `innodb_lock_wait_timeout` —
+  **documented-on-TimeoutLayer** (no `SET SESSION`; see §Notes decision 6);
+  jitter — **chosen** (`rand(5, 20·retry)` ms; decision 6);
+  `status.yaml` `in_progress` stays (Files table: keep `status: in_progress`
+  untouched; the stale `name:` was de-staled by the 2026-11-18 amendment);
+  T011 remains untracked in `status.yaml` — flagged for the taskpad owner.
 - Pre-flight evidence (2026-11-18): T010 `c62de576` on this branch;
   `common/retry.rs:24,29` (`MAX_ATTEMPTS = 5`, scoped matcher); six inline
   sites at the cited lines (verified by grep); `git grep "for attempt"`
@@ -286,8 +291,132 @@ thread. Decisions 1–8 above are locked or recorded for follow-up.)
   (6 retried / 18 single-shot); raw `FOR UPDATE` grep = 32 literals,
   11 real lock sites in 4 files.
 
-(Filled in further during/after implementation.)
+### Implementation record (2026-11-18, wave 1)
+
+**Kernel shape (locked).** `with_tx_retry` + `with_tx_retry_restartable` in
+`src/common/tx_retry.rs`, on top of `common/retry.rs` only (the matcher is
+never duplicated; `is_transient_lock_error` wraps the new
+`is_lock_class_{number,sqlx_error,error}` predicates; the boundary reuses
+`is_lock_class_sqlx_error` for the 503 mapping — one matcher home).
+Implementation open item on `innodb_lock_wait_timeout`: **stayed
+documented-on-TimeoutLayer** (no `SET SESSION` save/restore — changing
+connection session state would leak across pool users).
+
+**Red proofs (pasted from the pre-implementation run, 6 failing / 1 passing):**
+
+- `injected_1213_on_single_shot_delete_recovers` — `left: 500 / right: 204`
+- `injected_1213_on_single_shot_create_column_recovers` — `left: 500 / right: 201`
+- `always_firing_1213_on_single_shot_delete_renders_503` — `left: 500 / right: 503`
+- `always_firing_1205_on_single_shot_delete_renders_503` — `left: 500 / right: 503`
+- `always_firing_1213_on_create_column_renders_503` — `left: 500 / right: 503`
+- `always_firing_scoped_1062_on_create_column_stays_409` — `left: 1, right: 5` (fires)
+- `always_firing_unrelated_1062_is_not_retried` — green lock-in (409, fires == 1)
+
+All six now pass (green) with the work, plus the ten unit tests in
+`tx_retry.rs` (backoff bounds/jitter, `max_connections = 1` sleep-holds-no-
+connection invariant on a per-test DB, scoped-1062 retried to budget,
+unrelated-1062 single shot, recovery-commits-once, Restart-through-rollback,
+Done-commits, restartable-Done-commits, and the `skip_read_committed`
+opt-out at the server default isolation).
+
+**Design decisions — as landed.**
+
+1. *Boundary classification*: `Db` arm maps lock-class inner errors
+   (`1213`/`1205`, via `is_lock_class_sqlx_error` — driver `number()` when
+   downcastable, `40001` SQLSTATE fallback) to **503 + `Retry-After: 2`**
+   (`BUSY_RETRY_AFTER = "2"`). No new `AppError` variant; same
+   `service-unavailable` slug as pool/timeout arms.
+2. *Scoped-1062 stays 409* — unchanged mapping; no `Retry-After` on 409
+   (tested).
+3. *Commit never re-executed* — the commit happens inside the kernel; a
+   failed commit maps to the Db arm (503 if lock-class, else 500). The
+   error-path tx is consumed by the body closure, so the kernel's rollback
+   is genuinely explicit on the Done/commit path (unreachable) and the
+   Restart path (explicit), and **drop-queued rollback on the error path**
+   (sqlx `Transaction::drop` → `start_rollback` before control reaches the
+   retry decision; the queued rollback executes before the next statement on
+   that connection). Attempt-boundedness is asserted by the injector fire
+   counter (== `MAX_ATTEMPTS`) and by the survivor-row assertions (exhausted
+   delete leaves the card; exhausted create_column leaves the board at 3).
+4. *`Retry-After: 2`* — floor for clients.
+5. *Always-fire injectors* — `tests/api/tx_retry.rs` (`FaultMode::Counted` /
+   `FaultMode::Always`), MyISAM fault/probe tables; recovery tests =
+   `Counted(2)` then 204/201 with the row re-read; exhaustion tests =
+   always-fire, 503 + `Retry-After: 2`, no driver/SQL text in the body,
+   `fire_count == 5`.
+6. *Jitter chosen*: `sleep ∈ rand(5, 20·retry) ms` per retry (1-based) —
+   the preferred AWS/SRE option; `rand 0.10` was already in the tree
+   (transitively) and is MIT/Apache-2.0, so declaring it direct adds no new
+   licence class. Worst-case budget ≤ 200 ms ≪ 30 s `TimeoutLayer`.
+7. *`create_column` required* — done, and it is the only site with a
+   full guaranteed red (all others were already retried or single-shot).
+8. *Invariants*: connection acquired per attempt, sleep holds no pool
+   connection (proven by the max_connections=1 unit test), re-derive inside
+   the closure, Argon2 outside (register hashes before the helper), Restart
+   passes through unretried — implemented as `with_tx_retry_restartable`;
+   the move worker's same-card race rolls back in the kernel and restarts
+   via the bounded worker loop (`MAX_ATTEMPTS` restarts, no backoff), never
+   via the lock-retry matcher (`logical conflict ≠ lock conflict`).
+   Exhaustion of the worker loop renders `AppError::Internal` exactly as
+   before T020.
+
+**Audited `tx.begin()` ledger (24 sites):** 19 retry-wrapped (create_card,
+update_card scalars path, update_card move worker, delete_card,
+create_column, rename_column, delete_column, move_cards, create_item,
+update_item, delete_checklist, update_checklist, delete_item,
+patch_note, delete_note, patch_board, delete_board, delete_project,
+register) + 5 one-line-comment carve-outs (`create_board`, `create_checklist`,
+`create_note` — insert-only; `admin.rs` — CLI exit-code contract, 1062→exit 1
+by design; `common/session_store.rs` — own id-collision loop). `labels`/`tags`
+carry audit notes in their module docs (no tx sites); `common/rebalance.rs`
+carries the note that the retry policy belongs to the enclosing tx.
+
+**commit-failure-not-re-executed disposition.** No deterministic commit-failure
+injector exists in this harness (SIGNAL triggers cannot fire on COMMIT, and a
+real never-releasing lock would ride the 50 s `innodb_lock_wait_timeout` into
+the `TimeoutLayer`, not this path). The property is discharged by construction
+(the commit is a single statement after the last matcher decision) plus the
+unit test `done_outcome_returns_value_and_commits` (success path exercised
+once, commit happens, row persists) plus review. If a deterministic seam is
+wanted later, that is a follow-up (the `Transaction` cannot be handed back on
+the error path without a double-async-block contract).
+
+**Doc fixes in this change:** `specs/arch-hardening-specs/20-performance.md`
+(as-landed rewrite of the T020 section), `CONTRACT-CHANGES.md` (exhaustion
+paragraph already present from the 2026-11-18 amendment — verified accurate,
+no append required), `specs/tasks/status.yaml` (name already de-staled by
+the amendment — "transient-lock transactions"; `in_progress` untouched),
+`docs/lessons/rust-backend.md` (T020 lesson, dated).
+
+**Persistence assertions** (per AGENTS.md) in `tests/api/tx_retry.rs`:
+delete-card recovery (row gone via SQL re-read), create-column recovery
+(column re-read == 4), delete 503 exhaustion (card survives), create_column
+503 exhaustion (board still 3 columns), scoped-1062 409 (board still 3
+columns), unrelated-1062 (board still 3 columns), 1205 delete exhaustion
+(card survives), and the multi-write rollback test above (title + tag links
+untouched).
+
+**MariaDB 11.4** — verified 2026-11-18 after the post-review fixes: full
+suite green (lib 140 + api 161, including the rollback-after-writes proof).
+The earlier empty-root-password run had 3 environment-artifact failures in
+the CLI/boot suites, which CI's `backend-mariadb` leg deliberately excludes
+— they pass with a password-configured 11.4 container. MySQL 8.4: green
+with the CI collation pin (lib + api).
+
+**Rollback-after-writes proof.** `exhaustion_rolls_back_in_tx_writes`
+(`tests/api/tx_retry.rs`) fails a `PATCH /notes/{id}{title, tag_ids}` at its
+LAST statement (the tag re-link INSERT, `1213`), after the in-tx UPDATE
+(notes) and DELETE (`note_tags`) executed; exhaustion → 503, and both the
+old title and the original tag set survive — the strongest available proof
+of rollback-on-error-path for a multi-write tx. The single-write exhaustion
+tests prove the survivors/count invariants; the Restart unit test proves
+rollback on the race path.
 
 ## Lessons
 
-(pending)
+See `docs/lessons/rust-backend.md` §T020 (dated 2026-11-18): why a stable
+closure retry kernel cannot borrow the connection (by-value `Transaction`),
+drop-queued rollback on the error path, the `Transaction<'_, MySql>` owning
+its pool connection, always-fire injectors doubling as the attempt counter,
+boundary classification over a new `AppError` variant, and trigger DDL being
+unpreparable.

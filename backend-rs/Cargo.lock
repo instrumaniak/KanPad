@@ -227,6 +227,7 @@ dependencies = [
  "envy",
  "garde",
  "log",
+ "rand 0.10.3",
  "rmp-serde",
  "rpassword",
  "secrecy",

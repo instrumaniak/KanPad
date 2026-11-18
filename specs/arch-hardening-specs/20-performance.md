@@ -99,73 +99,84 @@ over a lean React app.
 **Test plan:** red-proof both directions (see above) + budget gate red-proof (temporarily
 import mermaid eagerly → CI fails); `vite build` output pasted in evidence; visual smoke.
 
-## Transaction retry helper (R4) → T020 — T010 gate **satisfied** (T010 done; D-5)
+## Transaction retry helper (R4) → T020 — **LANDED 2026-11-18** (T010 gate satisfied; D-5)
 
-> Amendment 2026-11-16 (pass 2): the current-state list is rewritten — the
-> pass-1 amendment had verified only the card paths. As of today the retry
-> envelope covers **six** write sites, including `move_cards`; the helper
-> extraction below is still un-started. This section is the post-T010 target,
-> not a description of untried current code.
+> Amendment 2026-11-16 (pass 2) rewrote the current-state list; the work
+> landed 2026-11-18 (wave 1). The task's `position-shifting` name predates
+> T010's fractional keys and is stale (kept for traceability). The
+> pre-implementation text below the landed-state block is kept for design
+> rationale — where it contradicts this block, this block wins.
 
-**Current state:** the hardened path (`SET TRANSACTION ISOLATION LEVEL READ
-COMMITTED` + stable lock order + `is_transient_lock_error` (1213|1205|scoped
-1062) + linear backoff) now exists inline in **six** sites post-T010:
-`create_card` and `update_card`'s move worker (`cards/routes.rs:112,325`),
-checklist-item create/update (`checklists/routes.rs:260,359`), column update
-(`columns/routes.rs:192`), and bulk `move_cards` (`columns/routes.rs:348`).
-The `update_card` move worker remains the reference implementation. Sites that
-are still single-shot and fall into the generic-500 arm (`error.rs`):
-`delete_card`, `delete_checklist`/`delete_item`, `create_column`/`delete_column`,
-notes/boards/labels/tags transactions, `common/rebalance.rs` (position rewrites),
-and anything else the `FOR UPDATE` re-enumeration finds (32 raw `FOR UPDATE`
-grep literals ≈ **11 real lock sites in 4 files** — audit, don't assume).
-`create_column` is the only un-retried path that re-keys rows (serialized
-`LIMIT 1 FOR UPDATE` append plus a full-board rebalance). Exhausted 500s at
-these single-shot sites remain client-visible.
+**What landed (2026-11-18):** a shared `with_tx_retry` kernel in
+`backend-rs/src/common/tx_retry.rs`, built on `common/retry.rs` (the scoped
+`1213 | 1205 | UQ_*_sort_key`-1062 matcher — never duplicated; the matcher is
+what the boundary also consults). The six inline retry loops (`create_card`,
+`update_card`'s move worker, checklist-item create/update, column update,
+bulk `move_cards`) migrated onto it behavior-preserving. The previously
+single-shot write transactions now use it: **`create_column`** (the only un-retried position-rewriting tx —
+serialized `LIMIT 1 FOR UPDATE` append + full-board rebalance), `delete_card`,
+scalars-only `update_card`, `delete_column`, `update_checklist`,
+`delete_checklist`, `delete_item`, `patch_note`/`delete_note`,
+`patch_board`/`delete_board`, `delete_project`, and `register`. Insert-only transactions (`create_board`,
+`create_checklist`, `create_note`) are audited and carry one-line comments
+why they are not retry-wrapped; `admin.rs`, `common/session_store.rs`, and
+`common/rebalance.rs` each carry their audit note (CLI exit-code contract;
+own id-collision loop; helper belongs to the enclosing tx). `labels`/`tags`
+have no transaction sites.
 
-**Post-T010 scope note (D-5):** T010 replaces integer positions with fractional
-`sort_key`s — single-row writes, no gap open/close, no whole-column locks — and extends
-the matcher to `1213 | 1205 | constraint-scoped 1062`. T020 therefore runs **after** T010 and:
-- extracts the inline retry into a shared kernel helper (`common/tx_retry.rs`,
+Locked decisions honoured: exhaustion → **503 + `Retry-After: 2`** at the
+`Db` boundary (`BUSY_RETRY_AFTER = "2"`); scoped `1062` stays **409**;
+commit is never re-executed; `READ COMMITTED` is set before `BEGIN` per
+attempt (pool connections never leak `SET SESSION`); backoff is jittered
+(`rand(5, 20·retry)` ms — decision 6); the backoff sleep holds no pool
+connection; Argon2 stays outside the retried closure; the same-card race
+`Restart` passes through **unretried** (bounded worker loop in the move
+path). See `specs/tasks/T020-tx-retry-helper-for-position-shifting-transactions.md`
+§Notes for the as-landed disposition of every implementation-step open item.
+
+**Post-T010 scope note (D-5):** T010 replaced integer positions with fractional
+`sort_key`s — single-row writes, no gap open/close, no whole-column locks — and
+extends the matcher to `1213 | 1205 | constraint-scoped 1062`. T020 ran **after** T010 and
+- extracted the inline retry into the shared kernel helper (`common/tx_retry.rs`,
   built on `common/retry.rs`),
-- applies it to whatever single-shot transactions remain post-T010, as found
-  by a fresh `FOR UPDATE` enumeration (create/delete/move conditional updates,
-  `1062` unique-key races on `(parent, sort_key)`, notes/boards/labels/tags,
-  `common/rebalance.rs`; `create_column` is the named highest-value target) —
-  the six existing inline sites (incl. `move_cards`) **migrate onto the helper
-  behavior-preserving**; the extraction is the point of the task,
-- does **not** re-add gap-lock logic T010 deleted.
+- applied it to the remaining single-shot transactions (create/delete/move/
+  scalars rewrites incl. `common/rebalance.rs`-bearing paths via their enclosing
+  tx — NOT to `common/rebalance.rs` itself, whose call sites are the retried
+  closures),
+- did **not** re-add gap-lock logic T010 deleted.
 
-**Target design:**
-- Kernel helper (e.g. `src/common/tx_retry.rs`): `async fn with_tx_retry<F, T>(pool,
-  opts, f) -> Result<T, AppError>` where `f` receives a `Tx`, retries on
-  `is_transient_lock_error` (1213|1205|constraint-scoped 1062) up to N=5 with linear backoff,
-  explicit rollback between attempts, optional `READ COMMITTED` set before `BEGIN`
-  (keep the move worker's semantics; make it an option so non-positioning txs can skip it).
-- A matching arm in `error.rs` so an *exhausted* retry returns **503 + Retry-After: 2**
+**Target design (as landed):**
+- Kernel helper (`src/common/tx_retry.rs`): `with_tx_retry` (wraps the common
+  case) + `with_tx_retry_restartable` (the move worker's same-card-race
+  `Restart` short-circuit passes through unretried). Both are built on
+  `common/retry.rs`'s matcher + `MAX_ATTEMPTS = 5`; explicit rollback on every
+  non-success path; optional `READ COMMITTED` before `BEGIN` (default on;
+  per-call opt-out recorded at call sites if ever needed).
+- A boundary arm in `error.rs` so an *exhausted* retry returns **503 + Retry-After: 2**
   (busy) rather than generic 500 — client-visible honesty. Boundary classification
   in the `Db` arm (`1213`/`1205` → 503; no new `AppError` variant); scoped-`1062`
   exhaustion stays 409 (see T020 Design decisions 1–2).
-- Apply to: `delete_card` and the remaining single-shot sites found by the
-  fresh `FOR UPDATE` enumeration (checklist delete sites, `create_column`/
-  `delete_column`, notes/boards/labels/tags, `common/rebalance.rs`) — each
-  either gets the helper or gets a comment why it doesn't (single-row, no
-  race). The six existing inline retry sites (incl. `move_cards`) migrate onto
-  the helper behavior-preserving — do not change their semantics while doing so.
+- The six existing inline retry sites (incl. `move_cards`) migrated onto the
+  helper behavior-preserving; `cards_move.rs` + `sort_key_ordering.rs` stay green.
 
-**Edge cases:** retries must not wrap non-idempotent *effects outside the tx* (all
-effects are in-tx here — assert by review); same-card race must keep the `Restart`
-short-circuit (don't retry a logical conflict as a lock conflict); backoff must not hold
-a pool connection and each attempt should check the remaining request budget — note that
-1213/scoped-1062 fail fast, while a real blocked 1205 rides the 30 s `TimeoutLayer`
-(~50 s default `innodb_lock_wait_timeout`), so the exhaustion→503 path covers fast
-transients, and the worst case must be computed from the attempt model, not "5 × backoff";
-Argon2 hashing must stay *outside* any retried tx (already true — keep it).
+**Edge cases (all honoured as landed):** retries wrap only in-tx effects; the
+same-card race keeps the `Restart` short-circuit (a logical conflict never
+burns the lock-retry budget — it passes through `with_tx_retry_restartable`
+unretried and the move worker bounds its own restarts); backoff holds no
+pool connection and never approaches the 30 s `TimeoutLayer` (jittered
+≤ 5+20+40+60+80 ms ≈ ≤ 200 ms worst case; a real blocked `1205` still rides
+the timeout layer, by design); Argon2 stays outside any retried tx (unchanged).
 
-**Test plan:** the existing 500-move sequential-exact-order + concurrent invariant fuzz
-(`cards_move`) must stay green; add an injected-lock-error test (failpoint or a test
-that holds `FOR UPDATE` from a second connection) proving retry recovers; exhausted-retry
-→ 503 assertion; persistence assertion per touched endpoint (AGENTS.md).
+**Test plan (delivered):** `backend-rs/tests/api/tx_retry.rs` — always-fire
+SIGNAL-injector exhaustion for `1213`/`1205` (→ 503 + `Retry-After: 2` +
+bounded-attempt count via the MyISAM fire counter), recovery across an
+injected burst (→ 204/201 + row persisted), scoped-`1062` exhaustion stays
+409 (fires == 5) and unrelated-`1062` never retries (fires == 1), rollback
+proven by the survivor row; unit tests pin the backoff bounds, the
+max-connections=1 sleep-holds-no-connection invariant, and the kernel's
+attempt budget. `cards_move.rs` (incl. the T61 tests) and `sort_key_ordering.rs`
+stay green unchanged. Persistence assertions per touched endpoint are in
+`tx_retry.rs` (re-read via SQL).
 
 ## Board rendering (P3, P4) → T021
 

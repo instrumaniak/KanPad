@@ -11,4 +11,6 @@ pub mod retry;
 /// The session store, owned in-tree (`54` Part C §C4).
 pub mod session_store;
 pub mod time;
+/// Shared transaction-retry kernel built on `retry` (T020).
+pub mod tx_retry;
 pub mod validation;

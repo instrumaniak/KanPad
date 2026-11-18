@@ -7,7 +7,6 @@ use axum::{
     response::IntoResponse,
     routing::{get, patch, post},
 };
-use sqlx::Connection;
 
 use crate::{
     common::{
@@ -38,9 +37,8 @@ use super::{
 use crate::common::{
     order_key::{clamp_position, key_between, key_for_index, keys_between, needs_rebalance},
     rebalance::{RebalanceScope, rebalance_sort_keys},
-    retry::{MAX_ATTEMPTS, is_transient_lock_error},
+    tx_retry::{TxRetryOpts, with_tx_retry},
 };
-use std::time::Duration;
 
 /// Load a board's card summaries grouped by column id (three set-based
 /// selects + pure assembly — no N+1, no TEXT). Single owner for the
@@ -107,10 +105,13 @@ pub async fn list_columns(
 /// `POST /api/v1/boards/{boardId}/columns{name?} → 201 {data} + Location`.
 /// The sort key is `key_between(last_key, None)` from a serialized
 /// `ORDER BY sort_key DESC LIMIT 1 FOR UPDATE` read in the create tx (the
-/// serialized append contract — no `1062` retry needed; an over-64-char key
-/// fires the same in-tx two-phase rebalance as the other append paths); an
-/// absent name defaults to `New Column` (a present blank still 400s via the
-/// DTO). Foreign/missing board id rolls back to 404 (no oracle, never 403).
+/// serialized append contract — no `1062` path there); an over-64-char key
+/// fires the same in-tx two-phase rebalance as the other append paths. This
+/// tx is the ONLY un-retried position-rewriting path pre-T020; transient
+/// lock failures now retry inside the shared kernel (`READ COMMITTED` +
+/// bounded attempts; exhaustion → 503 + `Retry-After: 2`). An absent name
+/// defaults to `New Column` (a present blank still 400s via the DTO).
+/// Foreign/missing board id rolls back to 404 (no oracle, never 403).
 #[utoipa::path(
     post,
     path = "/api/v1/boards/{boardId}/columns",
@@ -131,18 +132,21 @@ pub async fn create_column(
 ) -> Result<impl IntoResponse, AppError> {
     let user_id = auth.user_id.get();
     let board_id = board_id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    check_board_owned(&mut *tx, user_id, board_id).await?;
-    let sort_key = match fetch_last_sort_key_for_update(&mut *tx, board_id).await? {
-        Some(last) => key_between(Some(&last), None)?,
-        None => key_between(None, None)?,
-    };
-    let name = input.name.as_deref().unwrap_or(DEFAULT_COLUMN_NAME);
-    let id = insert_column(&mut *tx, board_id, name, &sort_key).await?;
-    if needs_rebalance(&sort_key) {
-        rebalance_sort_keys(&mut tx, RebalanceScope::Columns { board_id }).await?;
-    }
-    tx.commit().await.map_err(AppError::Db)?;
+    let input = &input;
+    let id = with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        check_board_owned(&mut *tx, user_id, board_id).await?;
+        let sort_key = match fetch_last_sort_key_for_update(&mut *tx, board_id).await? {
+            Some(last) => key_between(Some(&last), None)?,
+            None => key_between(None, None)?,
+        };
+        let name = input.name.as_deref().unwrap_or(DEFAULT_COLUMN_NAME);
+        let id = insert_column(&mut *tx, board_id, name, &sort_key).await?;
+        if needs_rebalance(&sort_key) {
+            rebalance_sort_keys(&mut tx, RebalanceScope::Columns { board_id }).await?;
+        }
+        Ok((tx, id))
+    })
+    .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
     let summaries = load_summaries(&state.pool, board_id).await?;
@@ -164,8 +168,9 @@ pub async fn create_column(
 /// The column is pre-read for ownership (foreign/missing id → 404, never
 /// 403); absent keys are a no-op 200. The response re-reads the stored row
 /// (never echoes). The transaction runs under `READ COMMITTED` and retries
-/// the whole PATCH (≤ [`MAX_ATTEMPTS`] attempts, linear backoff) when the
-/// matcher sees `1213`/`1205` or a `UQ_*_sort_key`-scoped `1062` — the
+/// the whole PATCH inside the shared `with_tx_retry` kernel (≤ MAX_ATTEMPTS
+/// attempts, jittered backoff) when the matcher sees `1213`/`1205` or a
+/// `UQ_*_sort_key`-scoped `1062` — the
 /// `sort_order` CASE rewrite and the `position` between-neighbours write can
 /// both collide with a concurrent transaction committing inside the gap
 /// (F2, 2026-11-15); unrelated unique violations never retry.
@@ -189,74 +194,43 @@ pub async fn rename_column_handler(
 ) -> Result<Json<ColumnBody>, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    for attempt in 0..MAX_ATTEMPTS {
-        // Same READ COMMITTED + retry scoping as the card paths (F2).
-        let mut connection = state.pool.acquire().await.map_err(AppError::Db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *connection)
-            .await
-            .map_err(AppError::Db)?;
-        let mut tx = connection.begin().await.map_err(AppError::Db)?;
-        let step: Result<(), AppError> = async {
-            let owned = fetch_column_owned(&mut *tx, user_id, id).await?;
-            if let Some(name) = input.name.as_deref() {
-                rename_column(&mut *tx, id, name).await?;
-            }
-            if let Some(order) = input.sort_order.as_deref() {
-                // Whitelisted direction (garde already rejected anything
-                // else, so the fallthrough is unreachable-but-total, never
-                // `format!`).
-                let desc = match order {
-                    "asc" => false,
-                    "desc" => true,
-                    _ => return Err(AppError::Internal(Internal)),
-                };
-                let ordered = fetch_card_ids_for_sort(&mut *tx, id, desc).await?;
-                let keys = keys_between(None, None, ordered.len())?;
-                let assignments: Vec<(i32, String)> = ordered.into_iter().zip(keys).collect();
-                rewrite_card_sort_keys(&mut tx, id, &assignments).await?;
-            }
-            if let Some(requested) = input.position {
-                // Move: clamp to `[0, N-1]` and write ONE between-neighbours
-                // sort key. Neighbour reads stay unlocked (D3).
-                let board_id = owned.board_id.get();
-                let others = fetch_column_keys_in_board(&mut *tx, board_id, Some(id)).await?;
-                let upper =
-                    i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?;
-                let target = clamp_position(requested, upper) as usize;
-                let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
-                let sort_key = key_for_index(&keys, target)?;
-                point_move_column_sort_key(&mut *tx, id, &sort_key).await?;
-                if needs_rebalance(&sort_key) {
-                    rebalance_sort_keys(&mut tx, RebalanceScope::Columns { board_id }).await?;
-                }
-            }
-            Ok(())
+    let input = &input;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        let owned = fetch_column_owned(&mut *tx, user_id, id).await?;
+        if let Some(name) = input.name.as_deref() {
+            rename_column(&mut *tx, id, name).await?;
         }
-        .await;
-        match step {
-            Ok(()) => {
-                tx.commit().await.map_err(AppError::Db)?;
-                break;
-            }
-            Err(error) => {
-                // 1213 already rolled the whole tx back; 1205 rolls back the
-                // current statement only — always ROLLBACK before deciding.
-                let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = MAX_ATTEMPTS,
-                        error = %error,
-                        "retrying a column update after a transient failure"
-                    );
-                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
-                    continue;
-                }
-                return Err(error);
+        if let Some(order) = input.sort_order.as_deref() {
+            // Whitelisted direction (garde already rejected anything
+            // else, so the fallthrough is unreachable-but-total, never
+            // `format!`).
+            let desc = match order {
+                "asc" => false,
+                "desc" => true,
+                _ => return Err(AppError::Internal(Internal)),
+            };
+            let ordered = fetch_card_ids_for_sort(&mut *tx, id, desc).await?;
+            let keys = keys_between(None, None, ordered.len())?;
+            let assignments: Vec<(i32, String)> = ordered.into_iter().zip(keys).collect();
+            rewrite_card_sort_keys(&mut tx, id, &assignments).await?;
+        }
+        if let Some(requested) = input.position {
+            // Move: clamp to `[0, N-1]` and write ONE between-neighbours
+            // sort key. Neighbour reads stay unlocked (D3).
+            let board_id = owned.board_id.get();
+            let others = fetch_column_keys_in_board(&mut *tx, board_id, Some(id)).await?;
+            let upper = i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?;
+            let target = clamp_position(requested, upper) as usize;
+            let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+            let sort_key = key_for_index(&keys, target)?;
+            point_move_column_sort_key(&mut *tx, id, &sort_key).await?;
+            if needs_rebalance(&sort_key) {
+                rebalance_sort_keys(&mut tx, RebalanceScope::Columns { board_id }).await?;
             }
         }
-    }
+        Ok((tx, ()))
+    })
+    .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
     let summaries = load_summaries(&state.pool, row.board_id.get()).await?;
@@ -287,10 +261,12 @@ pub async fn delete_column(
 ) -> Result<StatusCode, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    fetch_column_owned(&mut *tx, user_id, id).await?;
-    delete_column_row(&mut *tx, id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_column_owned(&mut *tx, user_id, id).await?;
+        delete_column_row(&mut *tx, id).await?;
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -311,8 +287,9 @@ fn move_state_error(field: &'static str, message: &'static str) -> AppError {
 /// source is a success (`{moved_count: 0}`), never an error.
 /// Foreign/missing source or target id → 404 (no oracle, never 403);
 /// garbage id → 400 `invalid-path`; bad body → 400 via `ValidJson`. The
-/// transaction runs under `READ COMMITTED` and retries the whole move (≤
-/// `MAX_ATTEMPTS` attempts, linear backoff) on a `1213`/`1205` or a
+/// transaction runs under `READ COMMITTED` and retries the whole move
+/// inside the shared `with_tx_retry` kernel (≤ MAX_ATTEMPTS attempts,
+/// jittered backoff) on a `1213`/`1205` or a
 /// `UQ_cards_column_sort_key`-scoped `1062` — the target-side `CASE` key
 /// assignment can collide with a row committed past the locked last key
 /// (F2, 2026-11-15); unrelated unique violations never retry.
@@ -344,66 +321,36 @@ pub async fn move_cards(
             "Cards already in this column",
         ));
     }
-    let mut moved_count = 0i64;
-    for attempt in 0..MAX_ATTEMPTS {
-        let mut connection = state.pool.acquire().await.map_err(AppError::Db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *connection)
-            .await
-            .map_err(AppError::Db)?;
-        let mut tx = connection.begin().await.map_err(AppError::Db)?;
-        let step: Result<i64, AppError> = async {
-            let source = fetch_column_owned(&mut *tx, user_id, source_id).await?;
-            let target = fetch_column_owned(&mut *tx, user_id, target_id).await?;
-            if source.board_id.get() != target.board_id.get() {
-                return Err(move_state_error(
-                    "target_column_id",
-                    "Cannot move cards between different boards",
-                ));
-            }
-            // Locking selects run in ascending column-id order (stable lock
-            // order, never a reload+save loop downstream).
-            let (source_ids, target_last) = if source_id < target_id {
-                let ids = fetch_source_card_ids_for_update(&mut *tx, source_id).await?;
-                let last = fetch_last_card_sort_key_for_update(&mut *tx, target_id).await?;
-                (ids, last)
-            } else {
-                let last = fetch_last_card_sort_key_for_update(&mut *tx, target_id).await?;
-                let ids = fetch_source_card_ids_for_update(&mut *tx, source_id).await?;
-                (ids, last)
-            };
-            let moved_count =
-                i64::try_from(source_ids.len()).map_err(|_| AppError::Internal(Internal))?;
-            if !source_ids.is_empty() {
-                let keys = keys_between(target_last.as_deref(), None, source_ids.len())?;
-                let assignments: Vec<(i32, String)> = source_ids.into_iter().zip(keys).collect();
-                move_cards_into(&mut *tx, source_id, target_id, &assignments).await?;
-            }
-            Ok(moved_count)
+    let moved_count = with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        let source = fetch_column_owned(&mut *tx, user_id, source_id).await?;
+        let target = fetch_column_owned(&mut *tx, user_id, target_id).await?;
+        if source.board_id.get() != target.board_id.get() {
+            return Err(move_state_error(
+                "target_column_id",
+                "Cannot move cards between different boards",
+            ));
         }
-        .await;
-        match step {
-            Ok(count) => {
-                tx.commit().await.map_err(AppError::Db)?;
-                moved_count = count;
-                break;
-            }
-            Err(error) => {
-                let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = MAX_ATTEMPTS,
-                        error = %error,
-                        "retrying a bulk card move after a transient failure"
-                    );
-                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
-                    continue;
-                }
-                return Err(error);
-            }
+        // Locking selects run in ascending column-id order (stable lock
+        // order, never a reload+save loop downstream).
+        let (source_ids, target_last) = if source_id < target_id {
+            let ids = fetch_source_card_ids_for_update(&mut *tx, source_id).await?;
+            let last = fetch_last_card_sort_key_for_update(&mut *tx, target_id).await?;
+            (ids, last)
+        } else {
+            let last = fetch_last_card_sort_key_for_update(&mut *tx, target_id).await?;
+            let ids = fetch_source_card_ids_for_update(&mut *tx, source_id).await?;
+            (ids, last)
+        };
+        let moved_count =
+            i64::try_from(source_ids.len()).map_err(|_| AppError::Internal(Internal))?;
+        if !source_ids.is_empty() {
+            let keys = keys_between(target_last.as_deref(), None, source_ids.len())?;
+            let assignments: Vec<(i32, String)> = source_ids.into_iter().zip(keys).collect();
+            move_cards_into(&mut *tx, source_id, target_id, &assignments).await?;
         }
-    }
+        Ok((tx, moved_count))
+    })
+    .await?;
     Ok(Json(MoveCardsBody {
         data: MoveCardsData { moved_count },
     }))

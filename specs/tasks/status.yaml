@@ -98,7 +98,7 @@ tasks:
     critical: false
   T020:
     name: Tx-retry helper for transient-lock transactions
-    status: in_progress
+    status: done
     depends:
       - T010
     phase: 1

@@ -12,6 +12,7 @@ use crate::{
     common::{
         ownership::{check_board_owned, check_card_owned, check_project_owned, check_tags_owned},
         pagination::Page,
+        tx_retry::{TxRetryOpts, with_tx_retry},
     },
     error::AppError,
     extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
@@ -81,6 +82,10 @@ pub async fn create_note(
     let user_id = auth.user_id.get();
     check_single_link(input.board_id, input.project_id, input.card_id)?;
     let tag_ids = dedup_tag_ids(input.tag_ids.as_deref().unwrap_or_default());
+    // No FOR UPDATE, nothing re-keyed (fresh-row inserts only): not
+    // retry-wrapped per the T020 audit — a transient lock failure surfaces
+    // as 503 + Retry-After at the boundary rather than burning a retry
+    // budget on fresh rows.
     let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
     if let Some(board_id) = input.board_id {
         check_board_owned(&mut *tx, user_id, board_id).await?;
@@ -221,48 +226,52 @@ pub async fn patch_note(
     let user_id = auth.user_id.get();
     let id = id.get();
     let tag_ids = input.tag_ids.as_deref().map(dedup_tag_ids);
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    let owned = fetch_note_owned(&mut *tx, user_id, id).await?;
-    // Merged link set (existing row + patch): at most one may stand.
-    let board_id = input
-        .board_id
-        .unwrap_or_else(|| owned.board_id.map(|link| link.get()));
-    let project_id = input
-        .project_id
-        .unwrap_or_else(|| owned.project_id.map(|link| link.get()));
-    let card_id = input
-        .card_id
-        .unwrap_or_else(|| owned.card_id.map(|link| link.get()));
-    check_single_link(board_id, project_id, card_id)?;
-    if let Some(Some(board_id)) = input.board_id {
-        check_board_owned(&mut *tx, user_id, board_id).await?;
-    }
-    if let Some(Some(project_id)) = input.project_id {
-        check_project_owned(&mut *tx, user_id, project_id).await?;
-    }
-    if let Some(Some(card_id)) = input.card_id {
-        check_card_owned(&mut *tx, user_id, card_id).await?;
-    }
-    if let Some(tag_ids) = tag_ids.as_deref() {
-        check_tags_owned(&mut *tx, user_id, tag_ids).await?;
-    }
-    apply_note_patch(
-        &mut *tx,
-        id,
-        NotePatch {
-            title: input.title.as_deref(),
-            content: input.content.as_deref(),
-            board_id: input.board_id,
-            project_id: input.project_id,
-            card_id: input.card_id,
-        },
-    )
+    let input = &input;
+    let tag_ids = &tag_ids;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        let owned = fetch_note_owned(&mut *tx, user_id, id).await?;
+        // Merged link set (existing row + patch): at most one may stand.
+        let board_id = input
+            .board_id
+            .unwrap_or_else(|| owned.board_id.map(|link| link.get()));
+        let project_id = input
+            .project_id
+            .unwrap_or_else(|| owned.project_id.map(|link| link.get()));
+        let card_id = input
+            .card_id
+            .unwrap_or_else(|| owned.card_id.map(|link| link.get()));
+        check_single_link(board_id, project_id, card_id)?;
+        if let Some(Some(board_id)) = input.board_id {
+            check_board_owned(&mut *tx, user_id, board_id).await?;
+        }
+        if let Some(Some(project_id)) = input.project_id {
+            check_project_owned(&mut *tx, user_id, project_id).await?;
+        }
+        if let Some(Some(card_id)) = input.card_id {
+            check_card_owned(&mut *tx, user_id, card_id).await?;
+        }
+        if let Some(tag_ids) = tag_ids.as_deref() {
+            check_tags_owned(&mut *tx, user_id, tag_ids).await?;
+        }
+        apply_note_patch(
+            &mut *tx,
+            id,
+            NotePatch {
+                title: input.title.as_deref(),
+                content: input.content.as_deref(),
+                board_id: input.board_id,
+                project_id: input.project_id,
+                card_id: input.card_id,
+            },
+        )
+        .await?;
+        if let Some(tag_ids) = tag_ids.as_deref() {
+            clear_note_tags(&mut *tx, id).await?;
+            link_note_tags(&mut *tx, id, tag_ids).await?;
+        }
+        Ok((tx, ()))
+    })
     .await?;
-    if let Some(tag_ids) = tag_ids.as_deref() {
-        clear_note_tags(&mut *tx, id).await?;
-        link_note_tags(&mut *tx, id, tag_ids).await?;
-    }
-    tx.commit().await.map_err(AppError::Db)?;
     // DB re-read: the response reflects the stored rows, never echoes.
     let row = fetch_note_owned(&state.pool, user_id, id).await?;
     Ok(Json(load_detail(&state.pool, row).await?))
@@ -289,9 +298,11 @@ pub async fn delete_note(
 ) -> Result<StatusCode, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    fetch_note_owned(&mut *tx, user_id, id).await?;
-    delete_note_row(&mut *tx, id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_note_owned(&mut *tx, user_id, id).await?;
+        delete_note_row(&mut *tx, id).await?;
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

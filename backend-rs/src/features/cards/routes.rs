@@ -8,10 +8,6 @@ use axum::{
     routing::{get, post, put},
 };
 
-use std::time::Duration;
-
-use sqlx::Connection;
-
 use crate::{
     common::{
         card_summary::CardSummary,
@@ -37,7 +33,8 @@ use super::{
 use crate::common::{
     order_key::{clamp_position, key_between, key_for_index, needs_rebalance},
     rebalance::{RebalanceScope, rebalance_sort_keys},
-    retry::{MAX_ATTEMPTS, is_transient_lock_error},
+    retry::MAX_ATTEMPTS,
+    tx_retry::{TxOutcome, TxRetryOpts, with_tx_retry, with_tx_retry_restartable},
 };
 
 /// Feature router (no `with_state` inside; the caller applies state once).
@@ -108,82 +105,47 @@ pub async fn create_card(
         .as_deref()
         .map(|raw| parse_due_date(raw).ok_or(AppError::Internal(Internal)))
         .transpose()?;
-    let mut id = None;
-    for attempt in 0..MAX_ATTEMPTS {
-        // Same READ COMMITTED scoping as the move path (the statement runs
-        // the retry matcher).
-        let mut connection = state.pool.acquire().await.map_err(AppError::Db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *connection)
-            .await
-            .map_err(AppError::Db)?;
-        let mut tx = connection.begin().await.map_err(AppError::Db)?;
-        let step: Result<i32, AppError> = async {
-            check_column_owned(&mut *tx, user_id, input.column_id).await?;
-            let sort_key = match input.position {
-                Some(requested) => {
-                    let others = fetch_card_keys_in_column(&mut *tx, input.column_id, None).await?;
-                    let target = clamp_position(
-                        requested,
-                        i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?,
-                    ) as usize;
-                    let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
-                    key_for_index(&keys, target)?
-                }
-                None => match fetch_last_sort_key_for_update(&mut *tx, input.column_id).await? {
-                    Some(last) => key_between(Some(&last), None)?,
-                    None => key_between(None, None)?,
+    // Transient lock failures (`1213`/`1205`/scoped `1062`) retry inside the
+    // shared kernel; exhaustion surfaces at the boundary as 503 + Retry-After.
+    let input = &input;
+    let id = with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        check_column_owned(&mut *tx, user_id, input.column_id).await?;
+        let sort_key = match input.position {
+            Some(requested) => {
+                let others = fetch_card_keys_in_column(&mut *tx, input.column_id, None).await?;
+                let target = clamp_position(
+                    requested,
+                    i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?,
+                ) as usize;
+                let keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+                key_for_index(&keys, target)?
+            }
+            None => match fetch_last_sort_key_for_update(&mut *tx, input.column_id).await? {
+                Some(last) => key_between(Some(&last), None)?,
+                None => key_between(None, None)?,
+            },
+        };
+        let id = insert_card(
+            &mut *tx,
+            input.column_id,
+            &input.title,
+            &sort_key,
+            input.description.as_deref(),
+            due_date,
+        )
+        .await?;
+        if needs_rebalance(&sort_key) {
+            rebalance_sort_keys(
+                &mut tx,
+                RebalanceScope::Cards {
+                    column_id: input.column_id,
                 },
-            };
-            let id = insert_card(
-                &mut *tx,
-                input.column_id,
-                &input.title,
-                &sort_key,
-                input.description.as_deref(),
-                due_date,
             )
             .await?;
-            if needs_rebalance(&sort_key) {
-                rebalance_sort_keys(
-                    &mut tx,
-                    RebalanceScope::Cards {
-                        column_id: input.column_id,
-                    },
-                )
-                .await?;
-            }
-            Ok(id)
         }
-        .await;
-        match step {
-            Ok(created) => {
-                tx.commit().await.map_err(AppError::Db)?;
-                id = Some(created);
-                break;
-            }
-            Err(error) => {
-                // 1213 already rolled the WHOLE transaction back, but 1205
-                // rolls back only the CURRENT STATEMENT — always ROLLBACK
-                // explicitly before deciding to retry.
-                let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = MAX_ATTEMPTS,
-                        error = %error,
-                        "retrying a card create after a transient failure"
-                    );
-                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
-                    continue;
-                }
-                return Err(error);
-            }
-        }
-    }
-    let Some(id) = id else {
-        return Err(AppError::Internal(Internal));
-    };
+        Ok((tx, id))
+    })
+    .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_card_owned(&state.pool, user_id, id).await?;
     let body = load_detail(&state.pool, row).await?;
@@ -282,22 +244,16 @@ pub async fn update_card(
         )
         .await?;
     } else {
-        let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-        fetch_card_owned(&mut *tx, user_id, id).await?;
-        apply_card_patch(&mut *tx, id, patch).await?;
-        tx.commit().await.map_err(AppError::Db)?;
+        with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+            fetch_card_owned(&mut *tx, user_id, id).await?;
+            apply_card_patch(&mut *tx, id, patch).await?;
+            Ok((tx, ()))
+        })
+        .await?;
     }
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_card_owned(&state.pool, user_id, id).await?;
     Ok(Json(load_detail(&state.pool, row).await?))
-}
-
-/// How one move attempt finished inside its open transaction.
-enum MoveStep {
-    /// The transaction is ready to commit.
-    Ready,
-    /// The card changed columns under us; restart with fresh values.
-    Restart,
 }
 
 /// Move/reorder worker for [`update_card`]: single-row writes + point update
@@ -307,10 +263,14 @@ enum MoveStep {
 /// for cross-column appends (the end of the target). Scalar `patch` applies
 /// in the same tx after the move. The tx runs at `READ COMMITTED` (set
 /// before `BEGIN` — MySQL rejects the statement inside a transaction with
-/// error 1568), and transient lock failures (`1213` deadlock / `1205`
+/// error 1568) and transient lock failures (`1213` deadlock / `1205`
 /// lock-wait timeout / scoped `1062` on a `UQ_*_sort_key` unique index) are
-/// retried up to [`MAX_ATTEMPTS`] with a small linear backoff, explicitly
-/// rolling the whole tx back first.
+/// retried up to [`MAX_ATTEMPTS`] inside the shared `with_tx_retry` kernel —
+/// exhaustion surfaces at the boundary as 503 + `Retry-After: 2`. A
+/// same-card race returns `Restart`, which the kernel passes through
+/// UNRETRIED (after rollback); the bounded worker loop restarts the tx with
+/// fresh reads instead of burning the lock-retry budget on a logical
+/// conflict.
 async fn move_card(
     pool: &sqlx::MySqlPool,
     user_id: i32,
@@ -322,20 +282,8 @@ async fn move_card(
     // A same-card race (the card changed columns between our read and our
     // locks) restarts the whole tx; bounded — exhaustion is unreachable in
     // practice (it needs a concurrent move of the SAME card on every try).
-    for attempt in 0..MAX_ATTEMPTS {
-        // `SET TRANSACTION ISOLATION LEVEL` is rejected INSIDE a transaction
-        // (MySQL error 1568) and the `SET SESSION` variant would leak onto
-        // every later transaction on this pooled connection — so acquire the
-        // connection, scope the level to the NEXT transaction only, then
-        // `begin()`. `READ COMMITTED` greatly reduces gap-lock deadlocks; it
-        // does NOT eliminate them (MySQL §17.7.5), hence the retry below.
-        let mut connection = pool.acquire().await.map_err(AppError::Db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *connection)
-            .await
-            .map_err(AppError::Db)?;
-        let mut tx = connection.begin().await.map_err(AppError::Db)?;
-        let step: Result<MoveStep, AppError> = async {
+    for _attempt in 0..MAX_ATTEMPTS {
+        match with_tx_retry_restartable(pool, TxRetryOpts::default(), |mut tx| async move {
             let owned = fetch_card_owned(&mut *tx, user_id, id).await?;
             let source = owned.column_id.get();
             let target = target_column.unwrap_or(source);
@@ -346,9 +294,10 @@ async fn move_card(
                 fetch_card_spot_for_update(&mut *tx, user_id, id).await?;
             if fresh_column != source {
                 // Same-card race: the card left `source` after our read, so
-                // our lock covers the wrong column — roll back and retry with
-                // fresh values rather than writing against an unlocked column.
-                return Ok(MoveStep::Restart);
+                // our lock covers the wrong column — roll back and restart
+                // with fresh values rather than writing against an unlocked
+                // column.
+                return Ok((tx, TxOutcome::Restart));
             }
             // Sibling keys of the TARGET (excluding the moving card). Neighbor
             // reads stay unlocked (D3: last-write-wins for concurrent same-gap
@@ -372,36 +321,16 @@ async fn move_card(
                 rebalance_sort_keys(&mut tx, RebalanceScope::Cards { column_id: target }).await?;
             }
             apply_card_patch(&mut *tx, id, patch).await?;
-            Ok(MoveStep::Ready)
-        }
-        .await;
-
-        match step {
-            Ok(MoveStep::Ready) => {
-                tx.commit().await.map_err(AppError::Db)?;
-                return Ok(());
-            }
-            Ok(MoveStep::Restart) => {
-                tx.rollback().await.map_err(AppError::Db)?;
+            Ok((tx, TxOutcome::Done(())))
+        })
+        .await?
+        {
+            TxOutcome::Done(()) => return Ok(()),
+            TxOutcome::Restart => {
+                // The kernel already rolled the tx back. A logical conflict
+                // is not a lock conflict — no backoff, no lock-retry budget;
+                // just restart with fresh values.
                 continue;
-            }
-            Err(error) => {
-                // 1213 already rolled the WHOLE transaction back, but 1205
-                // rolls back only the CURRENT STATEMENT — the transaction
-                // would survive half-applied — so always ROLLBACK explicitly
-                // before deciding to retry.
-                let _ = tx.rollback().await;
-                if is_transient_lock_error(&error) && attempt + 1 < MAX_ATTEMPTS {
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = MAX_ATTEMPTS,
-                        error = %error,
-                        "retrying a card move after a transient lock error"
-                    );
-                    tokio::time::sleep(Duration::from_millis(10 * u64::from(attempt + 1))).await;
-                    continue;
-                }
-                return Err(error);
             }
         }
     }
@@ -558,10 +487,12 @@ pub async fn delete_card(
 ) -> Result<StatusCode, AppError> {
     let user_id = auth.user_id.get();
     let id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    fetch_card_owned(&mut *tx, user_id, id).await?;
-    delete_card_row(&mut *tx, id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_card_owned(&mut *tx, user_id, id).await?;
+        delete_card_row(&mut *tx, id).await?;
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

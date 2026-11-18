@@ -9,7 +9,11 @@ use axum::{
 };
 
 use crate::{
-    common::{ownership::check_project_owned, pagination::Page},
+    common::{
+        ownership::check_project_owned,
+        pagination::Page,
+        tx_retry::{TxRetryOpts, with_tx_retry},
+    },
     error::AppError,
     extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
     state::AppState,
@@ -66,6 +70,10 @@ pub async fn create_board(
     ValidJson(input): ValidJson<CreateBoardInput>,
 ) -> Result<impl IntoResponse, AppError> {
     let user_id = auth.user_id.get();
+    // No FOR UPDATE, nothing re-keyed (fresh-row inserts only): not
+    // retry-wrapped per the T020 audit — a transient lock failure surfaces
+    // as 503 + Retry-After at the boundary rather than burning a retry
+    // budget on fresh rows.
     let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
     if let Some(project_id) = input.project_id {
         check_project_owned(&mut *tx, user_id, project_id).await?;
@@ -201,25 +209,28 @@ pub async fn patch_board(
 ) -> Result<Json<BoardDetailBody>, AppError> {
     let user_id = auth.user_id.get();
     let board_id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    fetch_board(&mut *tx, user_id, board_id).await?;
-    if let Some(Some(project_id)) = input.project_id {
-        check_project_owned(&mut *tx, user_id, project_id).await?;
-    }
-    apply_board_patch(
-        &mut *tx,
-        user_id,
-        board_id,
-        BoardPatch {
-            name: input.name.as_deref(),
-            background_color: input.background_color.as_deref(),
-            project_id: input.project_id,
-            view_mode: input.view_mode.as_deref(),
-            is_archived: input.is_archived,
-        },
-    )
+    let input = &input;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        fetch_board(&mut *tx, user_id, board_id).await?;
+        if let Some(Some(project_id)) = input.project_id {
+            check_project_owned(&mut *tx, user_id, project_id).await?;
+        }
+        apply_board_patch(
+            &mut *tx,
+            user_id,
+            board_id,
+            BoardPatch {
+                name: input.name.as_deref(),
+                background_color: input.background_color.as_deref(),
+                project_id: input.project_id,
+                view_mode: input.view_mode.as_deref(),
+                is_archived: input.is_archived,
+            },
+        )
+        .await?;
+        Ok((tx, ()))
+    })
     .await?;
-    tx.commit().await.map_err(AppError::Db)?;
     // DB re-read: the response reflects the stored rows, never echoes.
     let row = fetch_board(&state.pool, user_id, board_id).await?;
     let columns = fetch_board_columns(&state.pool, board_id).await?;
@@ -253,12 +264,16 @@ pub async fn delete_board(
 ) -> Result<StatusCode, AppError> {
     let user_id = auth.user_id.get();
     let board_id = id.get();
-    let mut tx = state.pool.begin().await.map_err(AppError::Db)?;
-    let row = fetch_board(&mut *tx, user_id, board_id).await?;
-    if !row.is_archived {
-        return Err(AppError::Conflict);
-    }
-    delete_board_row(&mut *tx, user_id, board_id).await?;
-    tx.commit().await.map_err(AppError::Db)?;
+    with_tx_retry(&state.pool, TxRetryOpts::default(), |mut tx| async move {
+        let row = fetch_board(&mut *tx, user_id, board_id).await?;
+        if !row.is_archived {
+            // Wrong-state → 409 at the boundary (never 403: the board IS
+            // owned). Not matcher-transient, so the kernel never retries it.
+            return Err(AppError::Conflict);
+        }
+        delete_board_row(&mut *tx, user_id, board_id).await?;
+        Ok((tx, ()))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

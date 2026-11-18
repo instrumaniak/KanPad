@@ -1,5 +1,11 @@
 //! Two-phase rebalance of a parent's `sort_key`s (T010, D2).
 //!
+//! `rebalance_sort_keys` is a library called INSIDE the enclosing
+//! transaction; the retry policy therefore belongs to the enclosing
+//! `with_tx_retry` (see `common/tx_retry.rs`), never to this module. Phase 0
+//! takes `FOR UPDATE` on the parent's rows and holds the locks to the
+//! enclosing commit — this code has no `tx.begin()` of its own.
+//!
 //! A freshly generated key longer than [`crate::common::order_key::REBALANCE_THRESHOLD`]
 //! means the neighbouring keys have bloated; every row of the parent is then
 //! re-keyed to evenly distributed even keys. The rewrite is **two-phase**

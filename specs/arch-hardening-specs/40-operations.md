@@ -71,20 +71,35 @@ doctrine: restore is the only DB rollback).
 
 ## 5. Secrets & config hygiene (T018, C3)
 
-- `chmod 600` on every `.env` (`backend-rs/.env`, `release/.env`, frontend `.env`);
-  add a check to the deploy runbook (`stat -c %a`).
-- **`release/.env` shares the live `SESSION_SECRET` with `backend-rs/.env`** — if that
-  `release/` tree was ever uploaded (it contains `public/`), **rotate**:
-  `SESSION_SECRET` new value → all sessions invalidate → users re-login (acceptable;
-  announce). Rotation runbook: generate (`openssl rand -hex 32`), update env, restart,
-  verify login works, old cookie rejected.
-- `frontend/package.json`: undeclared `@radix-ui/react-tabs`/`-tooltip` imports added
-  as explicit deps; build-only packages (`shadcn`, `tailwindcss`,
-  `@tailwindcss/vite`, `tw-animate-css`) → `devDependencies` (also C2).
+**Status 2026-11-18 (T018): secrets half executed; C2 package half executed.**
+
+- `chmod 600` on every on-disk env file — **five**, not three: repo-root `.env`
+  (read by `compose.yaml` for `SESSION_SECRET`/`DB_PASSWORD` interpolation),
+  `backend-rs/.env`, `backend-rs/.env.test`, `frontend/.env`, `release/.env`.
+  Check: `stat -c %a` == 600. Deploy-time checklist + rotation runbook:
+  `docs/deployment.md` § "Deploy-time secret checklist".
+- **Shared `SESSION_SECRET` (`release/.env` == `backend-rs/.env`) — RESOLVED
+  2026-11-18:** `release/` had been uploaded to a remote host before, so the
+  secret was treated as exposed and **rotated, with distinct per-instance values**
+  (dev vs release-testing are decoupled by construction). Announce → regenerate →
+  write-only → re-chmod 600 (sed recreates files) → restart → old cookie 401 →
+  fresh login 200. The remote host copy is the user's own action (update + restart
+  or decommission) — an old-secret instance left serving = rotation theater.
+- `frontend/package.json`: undeclared direct imports declared as real deps
+  (`@radix-ui/react-tabs`/`-tooltip` runtime; `micromark-util-chunked` /
+  `micromark-util-classify-character` / `micromark-util-resolve-all` runtime;
+  `micromark-util-types`, `mdast-util-from-markdown`, `unified` + `@types/mdast`
+  dev-only type-level deps; `@radix-ui/react-checkbox` declared — its component is
+  imported by the checklists feature, not dead code). Build-only packages
+  (`shadcn`, `tailwindcss`, `@tailwindcss/vite`, `tw-animate-css`) →
+  `devDependencies` (also C2). Built `dist/` needs no `node_modules`.
 - Compose MySQL never published on `0.0.0.0` (T012) — F-01 history: prod MySQL was
   once internet-reachable (`specs/security/06-…:73-76`).
 - `.env.example` stays the documented contract (no real values); CI already greps
-  Dockerfiles for `DATABASE_URL` — keep.
+  Dockerfiles for `DATABASE_URL` — keep. Rotation never touches `.env.example`.
+- **Standing rule (lesson):** any staging/upload tree must be built by a packaging
+  step that **excludes `.env*`** — uploaded artifacts must not carry secrets.
+  Tracking follow-up (packaging guard) rather than relying on filename habits.
 
 ## 6. Prod DB flavor check (C3, blocks nothing but honesty)
 

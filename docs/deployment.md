@@ -32,6 +32,62 @@ host returns the SPA's `index.html`.
 - The real `frontend/.env` is git-ignored; production values must be set in CI
   or on the build machine before `npm run build`.
 
+## Deploy-time secret checklist (T018)
+
+Run on **every host that holds env files**, before and after each deploy.
+All five canonical on-disk env files (adjust the list to the host):
+
+```sh
+# GNU/Linux hosts (`stat -c`); use a BSD/macOS equivalent elsewhere.
+for f in .env backend-rs/.env backend-rs/.env.test frontend/.env release/.env; do
+  [ -e "$f" ] || continue   # existence-aware, not completeness-aware — keep this list current per host!
+  [ "$(stat -c %a "$f")" = 600 ] && echo "ok   $f" || { echo "MISSING 600 — run: chmod 600 $f"; }
+done
+```
+
+- [ ] Every on-disk env file is mode **600** (root `.env` is read by
+      `compose.yaml` for `SESSION_SECRET`/`DB_PASSWORD` interpolation — it is an
+      env file like any other).
+- [ ] No `.env` / `.env.test` inside any uploaded or docroot tree — the release
+      staging tree excluded from uploads is a **packaging** property, not a
+      filename convention (guard follow-up: exclude `.env*` from release
+      artifacts; see `specs/tasks/T018-secrets-hygiene-dependency-declarations.md`,
+      Open call #4).
+- [ ] `release/` (local staging tree) is chmod **700** on the build machine and is
+      never uploaded with its `.env`.
+- [ ] No `.env`, `*.zip`, `*.tar*` inside the static docroot.
+- [ ] Any staging/remote copy of an env file counts as a secret too — update it on
+      rotation or destroy it.
+
+### SESSION_SECRET rotation runbook (T018)
+
+If a copy of an env file holding `SESSION_SECRET` is suspected exposed (e.g. a
+tree containing it was uploaded):
+
+1. **Announce re-login first** — sessions everywhere using that secret die.
+   (KanPad deployments where self is the only user: a plain notice suffices.)
+2. Generate a fresh secret with `openssl rand -hex 32`. **Never echo, print, or
+   log it** — write-only pipelines only (e.g. `openssl rand -hex 32 > "$(mktemp)"`,
+   substitute from that file inside an editor, then securely remove the temp file:
+   `shred -u` or `rm -f` + it lived on this machine only).
+3. Write it in-place **from the temp file** (editor, or `sed -i` whose command line
+   never carries the value — e.g. a small helper script that reads stdin). Prefer
+   **distinct secrets per instance** (e.g. dev vs release-testing) to decouple cookie
+   domains.
+4. `sed -i` recreates the file — **re-`chmod 600`** afterwards; verify with
+   `stat -c %a`.
+5. Restart affected services.
+6. Verify: a protected endpoint (e.g. `GET /api/v1/auth/me`) with a **pre-rotation
+   cookie returns 401**; a fresh login returns 200. **Re-run this check on every
+   instance that received the new file** — especially the remote/staging host, which
+   is the one that matters.
+7. Update or decommission every copy (including remote/staging hosts) — a stale
+   copy keeps the old secret alive. The old secret must never be reused. Securely
+   remove any temp file that held the new secret (step 2) and re-`chmod 600` after
+   any in-place edit (`sed -i` recreates the file).
+8. `SESSION_SECRET` rotation does **not** re-key anything else; DB passwords are a
+   separate decision (see T018 Notes, Open call #5).
+
 ## Post-deploy smoke list
 
 - `GET https://api-kanpad-rs.raziur.com/health` → `{"status":"ok"}`.

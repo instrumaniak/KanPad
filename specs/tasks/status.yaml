@@ -84,7 +84,7 @@ tasks:
     critical: false
   T018:
     name: Secrets hygiene + dependency declarations
-    status: pending
+    status: done
     depends:
       - T016
     phase: 0

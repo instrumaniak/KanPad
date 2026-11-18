@@ -274,3 +274,18 @@ tasks:
       - T022
     phase: 1
     critical: false
+  T045:
+    name: backend-rust chrono migration
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
+phases:
+  0: Architecture
+  1: Observability
+  2: Collaboration
+critical_path:
+  - T021
+  - T022
+  - T044
+  

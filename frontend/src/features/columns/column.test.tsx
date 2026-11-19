@@ -25,7 +25,7 @@ vi.mock('./column-droppable', () => ({
     columnId: number;
     children: (props: { isOver: boolean; setNodeRef: (node: HTMLElement | null) => void }) => React.ReactNode;
   }) => (
-    <div data-testid="droppable-zone" data-column-id={columnId}>
+    <div data-testid="column-droppable" data-column-id={columnId}>
       {children({ isOver: false, setNodeRef: vi.fn() })}
     </div>
   ),
@@ -115,6 +115,28 @@ describe('Column', () => {
     render(<Column column={baseColumn} />);
     const input = screen.getByTestId('add-card-input');
     expect(input).toHaveAttribute('data-column-id', '1');
+  });
+
+  it('renders add card input inside the droppable drop zone, after the scroller', () => {
+    render(<Column column={baseColumn} />);
+    const zone = screen.getByTestId('column-droppable');
+    const input = screen.getByTestId('add-card-input');
+    expect(zone.contains(input)).toBe(true);
+    // DOM order (keyboard focus order) stays: scroller first, footer last.
+    expect(zone.firstElementChild).not.toBe(input.parentElement);
+    expect(zone.lastElementChild?.contains(input)).toBe(true);
+  });
+
+  it('keeps the card scroller content-sized (no flex-1) so the footer rides the content bottom', () => {
+    // jsdom has no layout — the mechanism the browser geometry e2e relies on is
+    // that the scroller must NOT flex-grow: it takes content height (shrinking
+    // when the column overflows) so "+ Add a card" sits at the bottom of the
+    // *visible content*, not pinned to the column's full height.
+    render(<Column column={baseColumn} />);
+    const zone = screen.getByTestId('column-droppable');
+    const scroller = zone.firstElementChild as HTMLElement;
+    expect(scroller).not.toBeNull();
+    expect(scroller.className.split(/\s+/)).not.toContain('flex-1');
   });
 
   it('passes nextColumnId when next column exists', () => {

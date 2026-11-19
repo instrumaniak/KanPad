@@ -33,21 +33,29 @@ export function Column({ column, allColumns = [], onDeleted }: ColumnProps) {
     >
       <ColumnHeader column={column} allColumns={allColumns} onDeleted={onDeleted} />
 
+      {/* Layout contract (button placement): the scroller is content-sized —
+          NO flex-1 — so it only takes as much height as the cards need and
+          "+ Add a card" rides right below the content. On overflow the scroller
+          alone shrinks (min-h-0), pinning the footer to the bottom of the
+          column's *visible* height. The footer lives INSIDE the droppable so
+          the drop zone keeps the full column body below the header (empty
+          columns would otherwise collapse their drop target to a stub). */}
       <ColumnDroppable columnId={column.id}>
         {({ isOver }) => (
-          <div
-            className={`flex-1 overflow-y-auto p-2 transition-colors ${
-              isOver ? 'bg-teal-500/10' : ''
-            }`}
-          >
-            <ColumnCardList cards={column.cards} newCardId={newCardId} />
-          </div>
+          <>
+            <div
+              className={`flex min-h-0 overflow-y-auto p-2 transition-colors kanpad-column-scroll ${
+                isOver ? 'bg-teal-500/10' : ''
+              }`}
+            >
+              <ColumnCardList cards={column.cards} newCardId={newCardId} />
+            </div>
+            <div className="p-2">
+              <AddCardInput columnId={column.id} nextColumnId={nextColumnId} onCardCreated={handleCardCreated} />
+            </div>
+          </>
         )}
       </ColumnDroppable>
-
-      <div className="p-2">
-        <AddCardInput columnId={column.id} nextColumnId={nextColumnId} onCardCreated={handleCardCreated} />
-      </div>
     </div>
   );
 }

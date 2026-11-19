@@ -2,6 +2,13 @@
 
 > **STATUS: pending.** Wave 1. Closes **S3** (MEDIUM). **Depends on T020, T021, T022**
 > — measure *after* the fixes, not before.
+>
+> **T021 baseline (measured 2026-11-19, to be consumed by this task):**
+> 500-card board → **13 DOM rows mounted** (board view and list view;
+> `aria-rowcount=501` incl. header row), time-to-interactive ≈ 1.2 s on a real Chromium
+> against a throwaway tmpfs MariaDB (`kanpad_e2e`); initial gzip 267,673 B
+> (cap 310,000 B); 862 unit tests; keyboard-drag across a 120-card column
+> stepwise-green (24 ArrowDowns, focus preserved, persisted via API + reload).
 
 ## Goal
 

@@ -4,7 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/error-state';
 import { useBoard, useUpdateBoard, type BoardViewMode } from '../use-boards';
-import { useColumns, useCreateColumn } from '../../columns/use-columns';
+import { useColumns, useCreateColumn, type Column as ColumnData } from '../../columns/use-columns';
 import { Column } from '../../columns/column';
 import { AddColumnButton } from '../../columns/add-column-button';
 import { useToastHelpers } from '@/lib/toast-helpers';
@@ -27,6 +27,10 @@ function errorStatus(err: unknown): number | undefined {
   const status = (err as { status?: unknown }).status;
   return typeof status === 'number' ? status : undefined;
 }
+
+// Module-level immutable empty array — an inline `columns ?? []` would mint a
+// fresh reference per render and defeat identity checks downstream (T021).
+const EMPTY_COLUMNS: ColumnData[] = [];
 
 export function BoardView() {
   const { boardId } = useParams<{ boardId: string }>();
@@ -110,14 +114,23 @@ export function BoardView() {
   const hasActiveFilters = filters.labels.length > 0 || filters.dueDate !== null || filters.checklist !== 'All';
   // 5-2: compose filterColumnsByFilters here (single derivation point).
   const filteredColumns = useMemo(() => {
-    let result = columns ?? [];
+    let result = columns ?? EMPTY_COLUMNS;
     if (isSearching) result = filterColumnsByTitle(result, activeQuery);
     if (hasActiveFilters) result = filterColumnsByFilters(result, filters);
     return result;
   }, [columns, activeQuery, isSearching, hasActiveFilters, filters]);
 
-  const visibleCount = filteredColumns.flatMap((c) => c.cards ?? []).length;
-  const totalCount = (columns ?? []).flatMap((c) => c.cards ?? []).length;
+  // Memoized counts — a double flatMap per render defeated identity stability on
+  // every dragOver cache write (T021 / P4).
+  const columnsForCounts = columns ?? EMPTY_COLUMNS;
+  const visibleCount = useMemo(
+    () => filteredColumns.reduce((n, c) => n + (c.cards ?? []).length, 0),
+    [filteredColumns],
+  );
+  const totalCount = useMemo(
+    () => columnsForCounts.reduce((n, c) => n + (c.cards ?? []).length, 0),
+    [columnsForCounts],
+  );
   const isFilteredEmpty =
     !boardLoading && !columnsLoading && !!board && hasActiveFilters && filteredColumns.every((c) => (c.cards ?? []).length === 0);
   const isSearchEmpty =
@@ -221,8 +234,8 @@ export function BoardView() {
   }
 
   return (
-    <div className="flex flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-4 sm:gap-4 sm:px-6">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-2 sm:gap-4 sm:px-6">
         <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
@@ -257,12 +270,12 @@ export function BoardView() {
         }}
         onClearAll={() => setFilters(DEFAULT_FILTER_STATE)}
       />
-      <p aria-live="polite" className="sr-only">
+      <p aria-live="polite" aria-atomic="true" className="sr-only">
         {isSearching || hasActiveFilters ? `${visibleCount} of ${totalCount} cards` : ''}
       </p>
 
       <div className={cn(
-        "transition-opacity animate-in fade-in motion-safe:animate-in motion-safe:fade-in",
+        "flex min-h-0 flex-1 flex-col transition-opacity animate-in fade-in motion-safe:animate-in motion-safe:fade-in",
         prefersReducedMotion && "duration-0"
       )}>
         {isEmpty ? (
@@ -288,12 +301,12 @@ export function BoardView() {
           </div>
         ) : view === 'board' ? (
           isMobile ? (
-            <div className="flex flex-1 overflow-hidden">
-              <div className="flex-1 overflow-x-auto touch-pan-x" ref={boardScrollRef}>
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <div className="flex h-full min-h-0 flex-1 overflow-x-auto touch-pan-x" ref={boardScrollRef}>
                 <DragDropContext boardId={id}>
                   <div className="flex h-full min-w-max gap-4 p-4 pb-4">
                     {filteredColumns.map((column) => (
-                      <Column key={column.id} column={column} allColumns={columns ?? []} />
+                      <Column key={column.id} column={column} allColumns={columns ?? EMPTY_COLUMNS} />
                     ))}
                     <AddColumnButton onClick={handleAddColumn} />
                   </div>
@@ -301,12 +314,12 @@ export function BoardView() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-1 overflow-hidden">
-              <div className="flex-1 overflow-x-auto" ref={boardScrollRef}>
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <div className="flex h-full min-h-0 flex-1 overflow-x-auto" ref={boardScrollRef}>
                 <DragDropContext boardId={id}>
                   <div className="flex h-full gap-6 p-6 pb-6">
                     {filteredColumns.map((column) => (
-                      <Column key={column.id} column={column} allColumns={columns ?? []} />
+                      <Column key={column.id} column={column} allColumns={columns ?? EMPTY_COLUMNS} />
                     ))}
                     <AddColumnButton onClick={handleAddColumn} />
                   </div>
@@ -315,7 +328,7 @@ export function BoardView() {
             </div>
           )
         ) : (
-          <div ref={listScrollRef} className="flex flex-1 flex-col overflow-hidden">
+          <div ref={listScrollRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <BoardListView boardId={id} columns={filteredColumns} />
           </div>
         )}

@@ -81,8 +81,9 @@ monitoringTest.describe('Board View Toggle E2E', () => {
       await expect(page.getByText('Zulu task')).toBeVisible();
       await expect(page.getByText('Alpha task')).toBeVisible();
 
-      // Sort by Title asc -> Alpha first
-      await page.getByRole('button', { name: /title/i }).click();
+      // Sort by Title asc -> Alpha first (exact name: the rename affordance's
+      // aria-label "Edit title of card: ..." also contains "title")
+      await page.getByRole('button', { name: 'Title', exact: true }).click();
       const rows = page.getByTestId('board-list-row');
       await expect(rows.first()).toContainText('Alpha task');
 

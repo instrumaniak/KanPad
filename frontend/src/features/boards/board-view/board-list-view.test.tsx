@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BoardListView } from './board-list-view';
 
@@ -71,6 +71,19 @@ const col2 = {
 describe('BoardListView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // jsdom reports zero-size scroll containers — give the scroll element a
+    // real viewport so the virtualizer mounts a bounded window.
+    Object.defineProperty(Element.prototype, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, value: 320 });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 100 });
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, value: 320 });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(Element.prototype, 'clientHeight', { configurable: true, value: 0 });
+    Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, value: 0 });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 0 });
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, value: 0 });
   });
 
   it('renders flat rows with column badge, labels, due and progress', () => {
@@ -85,10 +98,10 @@ describe('BoardListView', () => {
 
   it('sorts by title asc/desc', () => {
     render(<BoardListView boardId={1} columns={[col1, col2] as never} />);
-    fireEvent.click(screen.getByRole('button', { name: /title/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Title', exact: true }));
     let rows = screen.getAllByTestId('board-list-row');
     expect(rows[0]).toHaveTextContent('Alpha');
-    fireEvent.click(screen.getByRole('button', { name: /title/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Title', exact: true }));
     rows = screen.getAllByTestId('board-list-row');
     expect(rows[0]).toHaveTextContent('Beta');
   });
@@ -238,5 +251,92 @@ describe('BoardListView', () => {
     render(<BoardListView boardId={1} columns={[] as never} />);
     fireEvent.click(screen.getByRole('button', { name: /add card/i }));
     expect(screen.getByText(/no columns yet/i)).toBeInTheDocument();
+  });
+
+  describe('virtualization', () => {
+    const bigColumn = (count: number) => ({
+      ...col1,
+      id: 1000 + count,
+      cards: Array.from({ length: count }, (_, i) => ({
+        ...col1.cards[0],
+        id: i + 1,
+        title: `Bulk ${i + 1}`,
+        position: i,
+        checklist_progress: null,
+        labels: [],
+        due_date: null,
+      })),
+    });
+
+    it('renders only a bounded window of rows for a 300-card list, keeping full-list aria bookkeeping', () => {
+      render(<BoardListView boardId={1} columns={[bigColumn(300)] as never} />);
+      // aria-rowcount counts the full table: N data rows + 1 (sr-only header row)
+      expect(screen.getByRole('table')).toHaveAttribute('aria-rowcount', '301');
+      const rows = screen.getAllByTestId('board-list-row');
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThanOrEqual(16);
+      // aria-rowindex reflects the FULL list position, not the window (1 = header, data starts at 2)
+      expect(rows[0]).toHaveAttribute('aria-rowindex', '2');
+    });
+
+    it('renders the editing+focused row exactly once when both pins coincide', () => {
+      // Regression: startTitleEdit pins the row as both editing and focused —
+      // the rangeExtractor union must not duplicate it. Scroll far down so the
+      // pinned index is outside the base window (only then would the union
+      // duplicate).
+      const { container } = render(<BoardListView boardId={1} columns={[bigColumn(300)] as never} />);
+      fireEvent.click(screen.getAllByText('Bulk 2')[0]);
+      expect(screen.getByLabelText('Edit card title')).toBeInTheDocument();
+
+      const scroller = container.querySelector('[data-testid="board-list-scroll"]') as HTMLElement;
+      scroller.scrollTop = 96 * 250;
+      fireEvent.scroll(scroller);
+      expect(container.querySelectorAll('[data-index="1"]')).toHaveLength(1);
+    });
+
+    it('unpins a focused row once focus moves outside it (row virtualizes away)', () => {
+      const { container } = render(<BoardListView boardId={1} columns={[bigColumn(300)] as never} />);
+      const target = screen.getAllByLabelText(/open card details: Bulk 2/i)[0];
+      fireEvent.focusIn(target);
+
+      // Blur to an element OUTSIDE the row — the pin must release.
+      const outside = document.createElement('button');
+      outside.textContent = 'outside';
+      container.appendChild(outside);
+      fireEvent.blur(target, { relatedTarget: outside });
+
+      const scroller = container.querySelector('[data-testid="board-list-scroll"]') as HTMLElement;
+      scroller.scrollTop = 96 * 250;
+      fireEvent.scroll(scroller);
+      expect(container.querySelector('[data-index="1"]')).toBeNull();
+      container.removeChild(outside);
+    });
+
+    it('keeps a focused row mounted when the list scrolls it out of the virtual window', () => {
+      const { container } = render(<BoardListView boardId={1} columns={[bigColumn(300)] as never} />);
+      // Focus the "Open card details" button of a row near the top
+      const focusTarget = screen.getAllByLabelText(/open card details: Bulk 2/i)[0];
+      fireEvent.focusIn(focusTarget);
+      // Scroll far down so the focused row would leave the window
+      const scroller = container.querySelector('[data-testid="board-list-scroll"]') as HTMLElement;
+      scroller.scrollTop = 96 * 250;
+      fireEvent.scroll(scroller);
+      expect(container.querySelector('[data-testid="board-list-row"][data-index="1"]')).not.toBeNull();
+    });
+
+    it('keeps the interacted row mounted when the list scrolls it out of the virtual window', () => {
+      // jsdom note: relocating a node via insertBefore resets document.activeElement
+      // to null (jsdom-only artifact — browsers keep focus across relocations), which
+      // ends the inline edit via the input's onBlur→commit path. The pin's guarantee
+      // that still holds — and is asserted here — is that the row component tree
+      // stays mounted instead of being virtualized away.
+      const { container } = render(<BoardListView boardId={1} columns={[bigColumn(300)] as never} />);
+      fireEvent.click(screen.getAllByText('Bulk 2')[0]);
+      expect(screen.getByLabelText('Edit card title')).toBeInTheDocument();
+      const scroller = container.querySelector('[data-testid="board-list-scroll"]') as HTMLElement;
+      scroller.scrollTop = 96 * 250;
+      fireEvent.scroll(scroller);
+      expect(container.querySelector('[data-testid="board-list-row"][data-index="1"]')).not.toBeNull();
+    });
   });
 });

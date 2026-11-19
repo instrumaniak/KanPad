@@ -19,6 +19,8 @@ export function ColumnDroppable({ columnId, children }: ColumnDroppableProps) {
   return (
     <div
       ref={setNodeRef}
+      data-testid="column-droppable"
+      className="flex min-h-0 flex-1 flex-col"
       style={{
         outline: isOver ? '2px solid rgba(20, 184, 166, 0.5)' : 'none',
         outlineOffset: '-2px',

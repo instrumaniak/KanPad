@@ -31,6 +31,11 @@ interface CardProps {
 
 export function Card({ card, index, isNew }: CardProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  // Gate CardDetailPanel's FIRST mount — every card used to mount the panel
+  // (and its hooks/fetches) eagerly, O(N) per board. Until a card's panel is
+  // opened once, the panel (and its query machinery) stays unmounted; once
+  // opened it stays mounted so the exit animation is preserved (T021).
+  const [hasOpenedOnce, setHasOpenedOnce] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
@@ -41,6 +46,11 @@ export function Card({ card, index, isNew }: CardProps) {
   const createCardMutation = useCreateCard();
   const { toast } = useToast();
   const { showSuccess, showError } = useToastHelpers();
+
+  const openPanel = () => {
+    setHasOpenedOnce(true);
+    setIsPanelOpen(true);
+  };
 
   const handleClick = (e: React.MouseEvent) => {
     if (Date.now() < suppressUntilRef.current) {
@@ -58,7 +68,7 @@ export function Card({ card, index, isNew }: CardProps) {
       pointerDownPos.current = null;
     }
     e.stopPropagation();
-    setIsPanelOpen(true);
+    openPanel();
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -68,7 +78,7 @@ export function Card({ card, index, isNew }: CardProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
-      setIsPanelOpen(true);
+      openPanel();
     }
   };
 
@@ -156,7 +166,9 @@ export function Card({ card, index, isNew }: CardProps) {
           </ContextMenu>
         )}
       </CardDraggable>
-      <CardDetailPanel card={card} open={isPanelOpen} onOpenChange={setIsPanelOpen} />
+      {hasOpenedOnce && (
+        <CardDetailPanel card={card} open={isPanelOpen} onOpenChange={setIsPanelOpen} />
+      )}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent onClick={(e) => e.stopPropagation()}>
           <AlertDialogHeader>

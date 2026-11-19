@@ -105,7 +105,7 @@ tasks:
     critical: true
   T021:
     name: "Board render perf: virtualization + dragOver throttle"
-    status: pending
+    status: done
     depends: ~
     phase: 1
     critical: false

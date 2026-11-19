@@ -280,6 +280,12 @@ tasks:
     depends: ~
     phase: 1
     critical: false
+  T046:
+    name: Performance harness & tooling
+    status: in_progress
+    depends: ~
+    phase: 1
+    critical: false
 phases:
   0: Architecture
   1: Observability
@@ -288,4 +294,3 @@ critical_path:
   - T021
   - T022
   - T044
-  

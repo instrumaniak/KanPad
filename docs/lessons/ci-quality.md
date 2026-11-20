@@ -133,3 +133,9 @@ T017 wired the frontend Playwright suite into CI for real. What it exposed/confi
 - **When an unfixable-today advisory lands, bind the ignore to a task, never blanket-allow.** The `deny.toml` entry names the advisory id, why it is acceptable NOW (maintenance-status signal, not memory safety; deterministic functionality), and the exact task that must delete it (T045, chrono→`time` migration; spec in `specs/tasks/T045-backend-rust-chrono-migration.md`). The file's header treats a stale ignore as a silent hole in the gate.
 - **Same-day independent failure, same PR territory:** the frontend axe failure (`markdown-preview > Default`) was real and introduced by 936513b3 — `.text-label-blue` (`--label-blue: #3B82F6` light theme) is 3.52:1 on `#fafafa` vs the 4.5:1 gate. Fixed by darkening the light-theme token to `#2563EB` (4.95:1); dark theme `#60A5FA` untouched; full Storybook axe suite re-run green (54/54).
 - **Two red gates on one push look alike in `gh run list` — do not conflate them.** Classify each failing step independently (advisory feed vs code change) before choosing the remedy; the backend fix was a bound ignore, the frontend fix was a one-token change.
+
+## 2026-11-20 — workflow gate lessons (T046)
+
+- Perf specs run as dedicated `@perf` step workers=1 retries=0; default run informational.
+- Registry schema check (required fields) runs in CI.
+- docker-e2e duration delta must be recorded in task Notes.

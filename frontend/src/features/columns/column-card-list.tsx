@@ -3,6 +3,7 @@ import { useDndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/react-virtual';
 import type { Card } from '../cards/use-cards';
+import { PerfProfiler } from '@/lib/perf-profiler';
 import { Card as CardComponent } from '../cards/card';
 
 // Upper bound of a typical card face height (p-3 padding + title line + up to
@@ -79,7 +80,8 @@ export function ColumnCardList({ cards, newCardId }: ColumnCardListProps) {
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
-    <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-2 kanpad-column-scroll" data-testid="column-card-list-scroll">
+    <PerfProfiler id="ColumnCardList">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-2 kanpad-column-scroll" data-testid="column-card-list-scroll">
       <SortableContext
         items={sortableIds}
         strategy={verticalListSortingStrategy}
@@ -118,5 +120,6 @@ export function ColumnCardList({ cards, newCardId }: ColumnCardListProps) {
         </div>
       </SortableContext>
     </div>
+    </PerfProfiler>
   );
 }

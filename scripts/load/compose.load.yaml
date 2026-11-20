@@ -1,0 +1,9 @@
+# Local override for load runs: raises throttle limits. Never edit compose.yaml
+# (it is the production appliance). Usage:
+#   docker compose -f compose.yaml -f scripts/load/compose.load.yaml up
+version: '3.8'
+services:
+  rust:
+    environment:
+      THROTTLE_GLOBAL_PER_MIN: '100000'
+      THROTTLE_AUTH_PER_MIN: '100000'

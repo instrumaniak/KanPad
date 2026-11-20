@@ -125,16 +125,16 @@ monitoringTest.describe('Virtualized lists (T021)', () => {
     const columnId = await firstColumnId(page, boardId);
     await seedCards(page, columnId, SMOKE_BOARD_CARDS, 'Smoke card');
 
-    const startedAt = Date.now();
     await page.goto(`/board/${boardId}`);
     await page.waitForLoadState('networkidle');
-    const ttInteractiveMs = Date.now() - startedAt;
 
     const firstColumn = page.locator('[data-column-id]').first();
     const rowCount = await firstColumn.locator('[data-testid="virtual-card-row"]').count();
     expect(rowCount).toBeGreaterThan(0);
     expect(rowCount).toBeLessThanOrEqual(30);
-    console.log(`[T021] 500-card board: mounted rows=${rowCount}, time-to-interactive=${ttInteractiveMs}ms`);
+    // navToNetworkIdleMs is asserted in e2e/perf-load-heap.spec.ts (T046 F2) —
+    // the old ad-hoc ttInteractiveMs log was promoted into that budget.
+    console.log(`[T021] 500-card board: mounted rows=${rowCount}`);
 
     // List view: same bounded behavior + full-list aria bookkeeping
     await page.getByRole('button', { name: 'List view' }).click();

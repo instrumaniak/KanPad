@@ -161,3 +161,18 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - Flexbox mechanics behind it: positive free space goes only to `flex-grow` items (so slack parks *below* the footer inside the droppable — still a drop target); negative free space is absorbed by the `min-h-0` scroller while header/footer keep their automatic min-content size. No `margin-top:auto`, no absolute positioning, no JS measurement.
 - Verify layout claims with **geometry, not screenshots**: jsdom sees none of it. The red-proof e2e (`e2e/column-add-card-placement.spec.ts`) measured the pre-fix gap at 198 px vs the required ≤ 60; post-fix assertions: short column `btnTop − lastRowBottom ≤ 60` and `colBottom − btnBottom > 100`, overflowing column `≤ 20` + internal `scrollHeight > clientHeight` + bounded virtual rows, droppable bottom within 2 px of column bottom in every column, and the T044 containment guard (`main.scrollHeight === main.clientHeight`).
 - **Plan-mode-safe probe pattern (reusable):** validate candidate fixes by *runtime-only* DOM patching in `page.evaluate` (`classList.remove('flex-1')`, `appendChild` move) against the live app — measurements + screenshots for both candidates before touching source; React never re-renders during the probe so the patch holds. Scratch scripts/screenshots live in `/tmp/opencode/`, repo untouched.
+
+## 2026-11-20 — Playwright perf harness playbook (T046)
+
+- Tier B perf specs tagged `@perf` run in default suite AND dedicated CI step
+  `--workers=1 --retries=0` (authoritative). Default run informational only.
+- Paced pointer input: single-step `mouse.move` interleaved with awaited rAF;
+  burst `{steps:20}` would let sampler record only idle frames.
+- LoAF probe samples only frames >50ms (long frames) → label worst-case/long-frame
+  input-latency probe; rAF fallback is all-frame probe. Guard `firstUIEventTimestamp==0`;
+  fall back to `paintTime` when `presentationTime` is null.
+- CDP 4x CPU throttle via `newCDPSession`, try/finally restore.
+- Warm-up 1 discarded + 3 measured → median. `PERF_BUDGET_SCALE` env var.
+- Heap guard: `HeapProfiler.collectGarbage` twice before each sample + settle delay;
+  fixed board set so React Query cache growth plateaus.
+- navToNetworkIdleMs is dev-mode tripwire, NOT NFR-enforcing.

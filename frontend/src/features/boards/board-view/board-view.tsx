@@ -20,6 +20,7 @@ import { DEFAULT_FILTER_STATE, type FilterState, filterColumnsByFilters } from '
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
+import { PerfProfiler } from '@/lib/perf-profiler';
 
 // Loose status read on unknown errors — avoids depending on ApiError class identity across module boundaries (same rationale as T014's handler).
 function errorStatus(err: unknown): number | undefined {
@@ -234,7 +235,8 @@ export function BoardView() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
+    <PerfProfiler id="BoardView">
+      <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-2 sm:gap-4 sm:px-6">
         <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
           <ArrowLeft className="h-5 w-5" />
@@ -334,5 +336,6 @@ export function BoardView() {
         )}
       </div>
     </div>
+    </PerfProfiler>
   );
 }

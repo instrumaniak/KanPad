@@ -107,3 +107,7 @@ TDD (red-first against the current scrape tests).
 ## Lessons
 
 (pending)
+
+## T046 coordination (2026-11-20)
+
+- `/metrics` smoke deferred: T024 still pending (empty-histogram fix must land first). Recorded as skipped, not silently dropped. Once T024 lands, add in-process scrape assertion.

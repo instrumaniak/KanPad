@@ -87,8 +87,18 @@ rand = "0.10"
 name = "api"
 path = "tests/api.rs"
 
+[[bench]]
+name = "order_key"
+harness = false
+
+[[bench]]
+name = "order_key_callgrind"
+harness = false
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+criterion = { version = "0.8", features = ["html_reports"] }
+gungraun = "0.20"
 
 # ---------------------------------------------------------------------------
 # Lints (Rust 1.74+ `[lints]` table — the crate-wide lint policy, in the
@@ -130,4 +140,16 @@ strip = "symbols"
 # `panic = "abort"` is deliberately NOT set: axum/tower catch a panic per
 # task and turn it into a 500 problem+json response. Aborting would kill
 # the process instead of serving the error.
+
+# ---------------------------------------------------------------------------
+# Bench profile — the profile `cargo bench` builds bench binaries with.
+# Inherits release (same optimization as the image) but keeps the symbol
+# table: gungraun's default `--toggle-collect='*::__gungraun_wrapper_mod::*'`
+# (DEFAULT_TOGGLE in gungraun-runner) matches the `#[inline(never)]` wrapper
+# functions the gungraun-macros emit — with `strip = "symbols"` (from
+# release) the bench binary is stripped and the toggle never fires, so
+# callgrind records 0 Ir and the gate is vacuous (T046 B1).
+# ---------------------------------------------------------------------------
+[profile.bench]
+strip = false
 

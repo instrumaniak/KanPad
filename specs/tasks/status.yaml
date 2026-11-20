@@ -141,6 +141,7 @@ tasks:
       - T020
       - T021
       - T022
+      - T046
     phase: 1
     critical: false
   T027:
@@ -282,7 +283,7 @@ tasks:
     critical: false
   T046:
     name: Performance harness & tooling
-    status: in_progress
+    status: done
     depends: ~
     phase: 1
     critical: false

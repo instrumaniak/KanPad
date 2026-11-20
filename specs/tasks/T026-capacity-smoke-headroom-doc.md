@@ -110,3 +110,9 @@ fixes belong to their own tasks).
 ## Lessons
 
 (pending)
+
+## T046 hand-off (2026-11-20)
+
+- k6 scaffolding ready under `scripts/load/` (seed.mjs, board-smoke.js, compose.load.yaml, README.md).
+- `board-smoke.js` ownership: T046 created it; T026 owns tuning.
+- Request: add `T046` to T026 `depends` edge in `specs/tasks/status.yaml` (today T026 depends on [T020, T021, T022] only).

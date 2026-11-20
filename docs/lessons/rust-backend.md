@@ -55,3 +55,10 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - **`CREATE/DROP TRIGGER` is not preparable** (MySQL 1295) — `raw_sql` sends COM_QUERY, `query()` goes through COM_STMT_PREPARE. `DROP TABLE IF EXISTS` via `query()` is fine.
 - **`cargo fmt` is a parse check, not just a formatter** — it refused to write because of an unclosed delimiter (`|tx| { Box::pin(async {` factory with mismatched `})` closers from a mechanical edit), catching the breakage before `rustc`. If a scripted multi-file edit produces unbalanced parens, `cargo fmt` names the file.
 - **Jitter without a dependency would have needed one anyway** — `rand 0.10` was already in the tree (transitively); declaring it direct is the cheapest AWS/SRE-jittered backoff (`rand(5, 20·retry)` ms) available. Verify license class against `deny.toml` before adding anything new.
+
+## 2026-11-20 — gungraun baseline (T046)
+
+- gungraun >=0.20 required for test mode (llvm-cov --all-targets executes bench targets).
+- Baselines committed under backend-rs/benches/baselines/. CI: `--baseline=<name> --callgrind-limits='ir=0%'`.
+- Counts only comparable on identical toolchain + valgrind + runner + arch.
+- `Ir` blind to cache locality.

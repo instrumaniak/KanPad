@@ -40,6 +40,8 @@ docker-compose.test.yml
 # (no `public/` — the API serves no frontend asset; the SPA lives on its
 #  own origin, see docs/deployment.md.)
 # src/        the crate.
+# benches/    Cargo.toml declares [[bench]] targets; cargo validates their
+#             paths at manifest load, so the build context must ship them.
 # tests/      see SCOPE DISCIPLINE above — kept for the explicit [[test]] path.
 #
 # Note: `!` re-includes are unnecessary because none of the exclusion patterns

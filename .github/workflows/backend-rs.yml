@@ -763,6 +763,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$CODE" | grep -q 'COPY .sqlx' || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
+          printf '%s\n' "$CODE" | grep -q 'COPY benches' || { echo 'FAIL: Dockerfile must COPY benches (Cargo.toml declares [[bench]] targets)'; exit 1; }
           if printf '%s\n' "$CODE" | grep -Eq 'COPY .*public/'; then echo 'FAIL: Dockerfile must NOT COPY public/ (API-only, T008)'; exit 1; fi
           echo 'OK: Dockerfile contract gates pass'
 

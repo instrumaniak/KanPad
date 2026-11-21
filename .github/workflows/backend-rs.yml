@@ -838,12 +838,6 @@ jobs:
         working-directory: frontend
         run: npm run test
 
-      - name: playwright @perf (workers=1, retries=0) (T046)
-        working-directory: frontend
-        env:
-          E2E_BASE_URL: http://localhost:3001
-        run: npx playwright test --grep @perf --workers=1 --retries=0
-
       # T017: real two-origin Playwright e2e against :3001 (spec:
       # specs/tasks/T017-retarget-playwright-to-backend-rs-enable-in-c-i.md).
       # The API under test is the BUILT image (kanpad-rust-e2e) on a throwaway
@@ -895,6 +889,12 @@ jobs:
         # --with-deps: the bare (pinned) ubuntu runner image lacks the system libraries
         # the headless shell needs; the storybook workflow uses the same shape.
         run: npx playwright install --with-deps chromium --only-shell
+
+      - name: playwright @perf (workers=1, retries=0) (T046)
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:3001
+        run: npx playwright test --grep @perf --workers=1 --retries=0
 
       - name: playwright test (two-origin e2e; API pinned via E2E_BASE_URL)
         working-directory: frontend

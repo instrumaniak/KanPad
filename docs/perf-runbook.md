@@ -29,9 +29,13 @@ Requires valgrind + gungraun-runner. Counts only comparable on identical toolcha
   files). CI sets `GUNGRAUN_HOME=$GITHUB_WORKSPACE/backend-rs/benches/baselines`.
 - Recorded Ir (2026-11-20): `bench_key_between_middle` 416394,
   `bench_keys_between_ten` 441852, `bench_needs_rebalance` 414350.
-- Pinned valgrind: **3.18.1** (`valgrind --version | grep -q 'valgrind-3.18.1'`).
+- Pinned env (assert in `.github/workflows/backend-rs.yml`): runner
+  **`ubuntu-26.04`** + valgrind **3.26.0** (`valgrind --version | grep -q
+  'valgrind-3.26.0'`) + gungraun-runner **0.20.0** + toolchain **1.99.1**
+  (`backend-rs/rust-toolchain.toml`).
   Bump → re-baseline with `--save-baseline=main` in the same PR + record the
-  new Ir values here.
+  new Ir values here (runbook + `perf-budgets.md` + workflow assert move
+  together).
 - `EntryPoint::None` in `order_key_callgrind.rs`: gungraun's default
   `--toggle-collect='*::__gungraun_wrapper_mod::*'` (DEFAULT_TOGGLE in
   gungraun-runner 0.20) never fires on this toolchain (callgrind records 0 Ir

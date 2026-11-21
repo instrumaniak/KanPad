@@ -62,3 +62,9 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - Baselines committed under backend-rs/benches/baselines/. CI: `--baseline=<name> --callgrind-limits='ir=0%'`.
 - Counts only comparable on identical toolchain + valgrind + runner + arch.
 - `Ir` blind to cache locality.
+
+## 2026-11-21 — query-plan guard hardening (post-T046 MariaDB leg red)
+
+- `sqlx::query()` takes `impl SqlSafeStr`, which is **only** `&'static str` — a `format!`-built SQL string does not compile (`E0277`), and the escape hatch is `AssertSqlSafe(...)` (audit required), not a cast. Build variant queries as paired `const &str` literals that differ only in the hint, so the two can't drift.
+- Tabular EXPLAIN's `table` column shows the **alias** used in the query (`n` for `FROM notes n`), on both MySQL 8.4 and MariaDB 11.4 — a row lookup by base table name silently finds nothing ("no EXPLAIN row for table notes").
+- Both engines accept `FORCE INDEX (\`idx\`)`; MariaDB 11.4 with 50 rows/board still picks `ALL` + filesort without it while MySQL 8.4 picks `ref` + backward index scan, so the forced-shape assertion is stable on both legs (verified locally: MySQL 4/4, MariaDB 4/4).

@@ -33,15 +33,12 @@ vi.mock('@/components/ui/use-toast', () => ({
 vi.mock('../../columns/column', () => ({
   Column: ({
     column,
-    allColumns,
   }: {
     column: { id: number; name: string; cards?: { id: number; title: string }[] };
-    allColumns?: unknown;
+    nextColumnId?: number;
+    moveTargets?: Array<{ id: number; name: string }>;
   }) => (
-    <div
-      data-testid={`column-${column.id}`}
-      data-all-columns={Array.isArray(allColumns) ? allColumns.length : 0}
-    >
+    <div data-testid={`column-${column.id}`}>
       {column.name}
       {(column.cards ?? []).map((c) => (
         <span key={c.id}>{c.title}</span>

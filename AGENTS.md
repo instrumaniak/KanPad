@@ -7,7 +7,7 @@ Tech stack:
 - _Backend_ : Rust, Axum, sqlx : `backend-rs`
 - _Database_: MySQL/MariaDB
 
-Read this file if available: `AGENTS-local.md`
+For backend development & testing, set `CARGO_TARGET_DIR`, `CARGO_HOME` if found in `.env` or `.env.test` .
 
 ## Project Specification References
 
@@ -29,19 +29,19 @@ The backend is rewritten from node.js to rust. The spec files related to that:
 ## General Agent Instructions
 
 - Be aware of system resources. Do not crash anything. Do not run too many things all at once.
-- Whenever in doubt follow industry standards and community best practices
+- Whenever in doubt search the web, follow industry standards and community best practices, ask questions.
 - Plan the implementation including edge cases, verify your plan by web search or documentation.
 - TDD - do Test driven development. check coverage.
-- Task Breakdown: Always break tasks into smaller, trackable todo items using `todowrite`.
+- Task Breakdown: Always break tasks into smaller, trackable todo items.
 - Parallel Independent Task Execution with context: Use sub-agents for tasks that can be independently done in a background process.
-- after implementation check for errors, run tests, fix linting or type check error
+- after implementation check for errors, run tests, fix linting or type check error.
 - Follow project coding conventions & community best practices. Frontend conventions: `frontend/CONVENTIONS.md`; Rust test harness: `backend-rs/tests/README.md`.
 - add the lessons you learned while implementing tasks & fixing issues to `docs/lessons/*.md` (dated, tagged) or the relevant `specs/tasks/Txxx-*.md`; promote to a standing rule in this file only when it changes behavior.
-- T007: a reverse proxy that overwrites `X-Forwarded-For` collapses per-IP throttling into one global bucket; one canonical origin list feeds CORS and CSRF; proxies must forward `Host` unchanged; a `422 text/plain` on one route family signals an extractor bypass. See `specs/tasks/T007-...md` §Notes 4.
 - DO NOT git commit without asking & confirming first. In case you are given approval, follow the Git Commit Message Guidelines.
 
+
 ## Git Commit Message Guidelines
-Analyze staged changes (`git diff --cached`) and write a single lowercase, present-tense Conventional Commit message matching: `<type>(<scope>): <description>`.
+Analyze changes and write a single lowercase, present-tense Conventional Commit message matching: `<type>(<scope>): <description>`.
 
 Keep the summary line strictly between **20 and 50 characters** with no ending period. Provide an optional body wrapped at **72 characters** *only* for breaking or complex changes.
 
@@ -54,6 +54,7 @@ Keep the summary line strictly between **20 and 50 characters** with no ending p
 - For ALL data modification endpoints, tests MUST verify actual database state, not just API response.
 - For every PATCH/POST/DELETE test, add ONE additional assertion that verifies persistence via a different API call or DB query.
 - The backend must work on both MySQL (8.4 LTS) & MariaDB (11.4 LTS)
+- For backend e2e testing using DB, use throw-away db containers. Use a tmpfs (RAM disk) for MySQL/MariaDB in Docker, must move MySQL's storage engine off the hard drive and into system memory.
 
 ## Frontend API Layer Conventions
 

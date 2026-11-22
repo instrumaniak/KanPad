@@ -24,7 +24,11 @@ defaults:
 
 jobs:
   storybook:
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-26.04 for parity with backend-rs.yml (see that
+    # workflow's header note: `ubuntu-latest` migrated 24.04 -> 26.04 on
+    # 2026-11-19). No env-sensitive gate here, but pinning keeps CI
+    # reproducible and aligned with the containerization bundle.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

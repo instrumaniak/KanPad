@@ -60,8 +60,9 @@ test.describe('Due Dates E2E', () => {
     const calendarGrid = page.locator('[data-slot="calendar"]');
     await expect(calendarGrid).toBeVisible();
 
-    const dayButton = calendarGrid.locator('button').filter({ hasText: '15' }).first();
-    await dayButton.click();
+    const dayButton = page.getByRole('button', { name: /November 15th, 2026/ });
+    await dayButton.focus();
+    await dayButton.press('Enter');
 
     await page.waitForTimeout(500);
     await expect(page.getByRole('dialog', { name: /card details/i })).toBeVisible();

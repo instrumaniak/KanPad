@@ -7,6 +7,20 @@
 > and adds the missing "growing column" signaling. Not a pagination task — T022
 > fixes the data path; this task fixes the box the cards live in and what the
 > board says about column size.
+>
+> **Amendment 2026-11-19 (T021):** **Stage A shipped inside T021** (user sign-off —
+> virtualization cannot scroll without a bounded height chain; the two unconditional
+> breaks went exactly as listed in part 1: `board-view.tsx` root `h-full min-h-0` +
+> `.transition-opacity` `flex min-h-0 flex-1 flex-col` + `overflow-x-auto` scrollers
+> `h-full min-h-0`, and `column-droppable.tsx` root `flex min-h-0 flex-1 flex-col`;
+> plus `flex min-h-0` on the column scroller's child in `column.tsx` and
+> `column-card-list.tsx` (the virtualizer's scroll element — chain-necessary), and
+> two matching `min-h-0` on the list-view chain (`board-view.tsx` list wrapper,
+> `BoardListView` root + `px-6 scroll area`). `app-layout.tsx` untouched, no
+> `main` edits. `overscroll-behavior: contain` / `scrollbar-gutter: stable` were NOT
+> applied (not required for correctness; deliberately deferred — fold into Stage B2
+> with the fade + Load-more pass, or drop). When picking this task up, drop
+> part 1 and treat parts 2–5 as the remaining scope.
 
 ## Goal
 
@@ -312,6 +326,15 @@ end; Stage A includes the `column-droppable.tsx` break; `status.yaml` records
 `depends: T021, T022`.
 
 ## Lessons
+
+- **2026-11-20 — button-placement follow-up (shipped):** "+ Add a card" was
+  pinned to the column's full height because the droppable root *and* the column
+  scroller both carried `flex-1`. Fix = content-sized scroller (`flex: 0 1 auto`
+  + `min-h-0`) + footer moved **inside** the droppable (keeps the drop zone
+  spanning header→column bottom; the droppable-only variant collapsed it to a
+  16 px stub on empty columns). Geometry regression test:
+  `frontend/e2e/column-add-card-placement.spec.ts`; full story in
+  `docs/lessons/frontend.md` ("Column footer placement…", 2026-11-20).
 
 (pending — Stage A lesson likely lands in `docs/lessons/frontend.md`; the Playwright
 verification playbook already lives at `docs/lessons/frontend-visual-testing.md`,

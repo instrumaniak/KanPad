@@ -55,3 +55,16 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - **`CREATE/DROP TRIGGER` is not preparable** (MySQL 1295) — `raw_sql` sends COM_QUERY, `query()` goes through COM_STMT_PREPARE. `DROP TABLE IF EXISTS` via `query()` is fine.
 - **`cargo fmt` is a parse check, not just a formatter** — it refused to write because of an unclosed delimiter (`|tx| { Box::pin(async {` factory with mismatched `})` closers from a mechanical edit), catching the breakage before `rustc`. If a scripted multi-file edit produces unbalanced parens, `cargo fmt` names the file.
 - **Jitter without a dependency would have needed one anyway** — `rand 0.10` was already in the tree (transitively); declaring it direct is the cheapest AWS/SRE-jittered backoff (`rand(5, 20·retry)` ms) available. Verify license class against `deny.toml` before adding anything new.
+
+## 2026-11-20 — gungraun baseline (T046)
+
+- gungraun >=0.20 required for test mode (llvm-cov --all-targets executes bench targets).
+- Baselines committed under backend-rs/benches/baselines/. CI: `--baseline=<name> --callgrind-limits='ir=0%'`.
+- Counts only comparable on identical toolchain + valgrind + runner + arch.
+- `Ir` blind to cache locality.
+
+## 2026-11-21 — query-plan guard hardening (post-T046 MariaDB leg red)
+
+- `sqlx::query()` takes `impl SqlSafeStr`, which is **only** `&'static str` — a `format!`-built SQL string does not compile (`E0277`), and the escape hatch is `AssertSqlSafe(...)` (audit required), not a cast. Build variant queries as paired `const &str` literals that differ only in the hint, so the two can't drift.
+- Tabular EXPLAIN's `table` column shows the **alias** used in the query (`n` for `FROM notes n`), on both MySQL 8.4 and MariaDB 11.4 — a row lookup by base table name silently finds nothing ("no EXPLAIN row for table notes").
+- Both engines accept `FORCE INDEX (\`idx\`)`; MariaDB 11.4 with 50 rows/board still picks `ALL` + filesort without it while MySQL 8.4 picks `ref` + backward index scan, so the forced-shape assertion is stable on both legs (verified locally: MySQL 4/4, MariaDB 4/4).

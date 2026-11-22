@@ -65,6 +65,8 @@ mod openapi_snapshot;
 mod projects;
 #[path = "api/proxy_headers.rs"]
 mod proxy_headers;
+#[path = "api/query_plans.rs"]
+mod query_plans;
 #[path = "api/serve_boot.rs"]
 mod serve_boot;
 #[path = "api/sort_key_migration.rs"]

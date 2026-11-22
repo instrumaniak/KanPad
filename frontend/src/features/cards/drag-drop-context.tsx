@@ -1,7 +1,7 @@
 import { DndContext, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core';
-import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
+import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import type { DragEndEvent, DragOverEvent, DragStartEvent, DropAnimation } from '@dnd-kit/core';
-import { useCallback, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { createPortal } from 'react-dom';
 import { useMoveCard, useReorderCard, type Card } from './use-cards';
@@ -10,6 +10,25 @@ import { useToast } from '@/components/ui/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Column } from '../columns/columns.api';
 import { CardPreview } from './card-preview';
+import { moveCardToColumn } from './drag-over-cache';
+
+// rAF coalescing helpers (T021 / P4). Kept behind globalThis lookups so tests can
+// stub requestAnimationFrame/cancelAnimationFrame deterministically, with a
+// setTimeout fallback for environments lacking rAF.
+function scheduleFrame(cb: () => void): number {
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    return globalThis.requestAnimationFrame(cb);
+  }
+  return globalThis.setTimeout(cb, 16) as unknown as number;
+}
+
+function cancelFrame(id: number): void {
+  if (typeof globalThis.cancelAnimationFrame === 'function') {
+    globalThis.cancelAnimationFrame(id);
+    return;
+  }
+  globalThis.clearTimeout(id);
+}
 
 function getCardIdFromDndId(id: string | number): number | undefined {
   if (typeof id === 'number') return id;
@@ -72,6 +91,9 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
+      // Deterministic for tests/e2e — smooth scrolling makes keyboard-drag
+      // step timing unpredictable (scroll callbacks fire during assertions).
+      scrollBehavior: 'auto',
     })
   );
 
@@ -86,7 +108,26 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     });
   }, [queryClient, boardId]);
 
+  // rAF-coalesced dragOver: dnd-kit fires onDragOver at pointer-move rate, and
+  // each un-throttled setQueryData re-rendered the whole board. At most ONE
+  // cache write happens per animation frame; the pending event slot always holds
+  // the latest event only (earlier ones in the same frame are obsolete).
+  const pendingDragOverRef = useRef<DragOverEvent | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+
+  const cancelPendingDragOver = useCallback(() => {
+    pendingDragOverRef.current = null;
+    if (rafIdRef.current !== null) {
+      cancelFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => cancelPendingDragOver(), [cancelPendingDragOver]);
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    // A fresh drag supersedes any frame scheduled by a previous drag.
+    cancelPendingDragOver();
     const activeData = event.active.data.current as DragData & { index?: number };
     if (activeData?.card) {
       setActiveCard(activeData.card);
@@ -95,11 +136,12 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
         index: activeData.index ?? 0,
       });
     }
-  }, []);
+  }, [cancelPendingDragOver]);
 
-  const handleDragOver = useCallback((event: DragOverEvent) => {
-    // Live rearrangement for cross-column drag: update target column cards
-    // but do NOT call mutations (those are handled in handleDragEnd)
+  // Resolves the target column + insert index for a cross-column event and
+  // applies the live rearrangement — ONLY when the order actually changed.
+  // Same-column events and no-op echoes return the cache untouched (skip write).
+  const applyDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
     if (!over) return;
 
@@ -110,7 +152,8 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
     const columns = getColumns();
     if (!columns) return;
 
-    // Find source column
+    // Find the column the card is CURRENTLY in (position may have been moved
+    // optimistically by an earlier live rearrangement).
     let sourceColumn: Column | undefined;
     for (const col of columns) {
       const idx = col.cards.findIndex((c) => c.id === cardId);
@@ -147,45 +190,46 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
 
     if (!isSameColumn) {
       const targetColumn = columns.find((col) => col.id === targetColumnId);
-      if (targetColumn) {
-        const overData = over.data.current as { card?: { id: number }; index?: number };
-        const targetCards = targetColumn.cards;
-        let insertIndex: number;
-        if (overData?.card) {
-          const cardIdx = targetCards.findIndex((c) => c.id === overData.card!.id);
-          insertIndex = cardIdx !== -1 ? cardIdx : targetCards.length;
-        } else {
-          insertIndex = targetCards.length;
-        }
-        // Update cache for live rearrangement (no mutation)
-        setColumns((cols) => {
-          return cols.map((col) => {
-            if (col.id === sourceColumn!.id) {
-              return { ...col, cards: col.cards.filter((c) => c.id !== cardId) };
-            }
-            if (col.id === targetColumnId) {
-              const movedCard = {
-                ...activeData.card,
-                // Columns-cache cards always carry the flag (backend source of
-                // truth); keep the defensive default for a card that arrives
-                // without it. Runtime behavior is unchanged (undefined was
-                // already falsy).
-                has_description: activeData.card.has_description ?? false,
-                column_id: targetColumnId,
-                position: insertIndex,
-              };
-              const newCards = [...col.cards];
-              newCards.splice(insertIndex, 0, movedCard);
-              return { ...col, cards: newCards.map((c, i) => ({ ...c, position: i })) };
-            }
-            return col;
-          });
-        });
+      if (!targetColumn) return;
+
+      const overData = over.data.current as { card?: { id: number }; index?: number };
+      const targetCards = targetColumn.cards;
+      let insertIndex: number;
+      if (overData?.card) {
+        const cardIdx = targetCards.findIndex((c) => c.id === overData.card!.id);
+        insertIndex = cardIdx !== -1 ? cardIdx : targetCards.length;
+      } else {
+        insertIndex = targetCards.length;
       }
+      // Structural sharing: only the changed column(s) get new identities;
+      // unchanged cards keep their object references; no order change → the
+      // helper returns the SAME array reference and we skip setQueryData.
+      const next = moveCardToColumn(columns, cardId, targetColumnId, insertIndex, activeData.card);
+      if (next === columns) return;
+      queryClient.setQueryData<Column[]>(['columns', boardId], next);
     }
-  }, [getColumns, setColumns]);
+  }, [getColumns, queryClient, boardId]);
+
+  const flushPendingDragOver = useCallback(() => {
+    rafIdRef.current = null;
+    const event = pendingDragOverRef.current;
+    pendingDragOverRef.current = null;
+    if (event) applyDragOver(event);
+  }, [applyDragOver]);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    // Live rearrangement for cross-column drag: update target column cards
+    // but do NOT call mutations (those are handled in handleDragEnd).
+    pendingDragOverRef.current = event;
+    if (rafIdRef.current === null) {
+      rafIdRef.current = scheduleFrame(flushPendingDragOver);
+    }
+  }, [flushPendingDragOver]);
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    // The drop supersedes any in-flight coalesced dragOver frame — drop it so a
+    // stale pending event can never land after the post-drop cache writes here.
+    cancelPendingDragOver();
     const { active, over } = event;
     const animationDuration = prefersReducedMotion ? 1 : 300;
 
@@ -196,23 +240,40 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
       setDragSource(null);
     }, animationDuration);
 
-    if (!over) return;
+    if (!over) {
+      // A cross-column dragOver may have already moved the card optimistically in
+      // the cache — the drop landed nowhere, so nothing will sync the server.
+      // Roll back to server truth (same semantics as handleDragCancel).
+      queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+      return;
+    }
 
     const activeData = active.data.current as DragData & { index?: number };
-    if (!activeData || !activeData.card) return;
+    if (!activeData || !activeData.card) {
+      queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+      return;
+    }
 
     const cardId = activeData.cardId;
     const columns = getColumns();
-    if (!columns) return;
+    if (!columns) {
+      queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+      return;
+    }
 
     // Use original source column from drag start (captured in handleDragStart)
     // handleDragOver may have already moved the card optimistically in the cache
-    if (!dragSource) return;
+    if (!dragSource) {
+      queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+      return;
+    }
     const sourceColumnId = dragSource.columnId;
-    const sourceCardIndex = dragSource.index;
     const sourceColumn = columns.find((col) => col.id === sourceColumnId);
 
-    if (!sourceColumn || sourceCardIndex === -1) return;
+    if (!sourceColumn) {
+      queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+      return;
+    }
 
     const overId = over.id as string;
     let targetColumnId: number | undefined;
@@ -256,12 +317,21 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
         newIndex = cards.length - 1;
       }
 
-      if (sourceCardIndex === newIndex) return;
+      // The dragged card's position in the CURRENT cache may differ from the
+      // dragStart snapshot (optimistic live moves may have relocated it) —
+      // look it up live; -1 means the drop is out of our hands (invalidate).
+      const currentIndex = cards.findIndex((c) => c.id === cardId);
+      if (currentIndex === -1) {
+        queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+        return;
+      }
+
+      if (currentIndex === newIndex) return;
 
       setColumns((columns) => {
         return columns.map((col) => {
           if (col.id !== sourceColumn.id) return col;
-          const reordered = arrayMove(col.cards, sourceCardIndex, newIndex).map((c, i) => ({
+          const reordered = arrayMove(col.cards, currentIndex, newIndex).map((c, i) => (c.position === i ? c : {
             ...c,
             position: i,
           }));
@@ -277,9 +347,14 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
         queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
       }
     } else {
-      // Cross-column move
+      // Cross-column move — authoritative for both the "card never moved live"
+      // and the "card was live-moved into the target" cases. Shares dragOver's
+      // structural sharing: reindex only changed cards; same reference → no write.
       const targetColumn = columns.find((col) => col.id === targetColumnId);
-      if (!targetColumn) return;
+      if (!targetColumn) {
+        queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+        return;
+      }
 
       const overData = over.data.current as { card?: Card; index?: number };
       const targetCards = targetColumn.cards;
@@ -288,34 +363,14 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
       if (overData?.card) {
         const cardIdx = targetCards.findIndex((c) => c.id === overData.card!.id);
         insertIndex = cardIdx !== -1 ? cardIdx : targetCards.length;
-        if (insertIndex === -1) insertIndex = targetCards.length;
       } else {
         insertIndex = targetCards.length;
       }
 
-      setColumns((columns) => {
-        return columns.map((col) => {
-          if (col.id === sourceColumn.id) {
-            return { ...col, cards: col.cards.filter((c) => c.id !== cardId) };
-          }
-          if (col.id === targetColumnId) {
-            const movedCard = {
-              ...activeData.card,
-              // Columns-cache cards always carry the flag (backend source of
-              // truth); keep the defensive default for a card that arrives
-              // without it. Runtime behavior is unchanged (undefined was
-              // already falsy).
-              has_description: activeData.card.has_description ?? false,
-              column_id: targetColumnId,
-              position: insertIndex,
-            };
-            const newCards = col.cards.filter((c) => c.id !== cardId);
-            newCards.splice(insertIndex, 0, movedCard);
-            return { ...col, cards: newCards.map((c, i) => ({ ...c, position: i })) };
-          }
-          return col;
-        });
-      });
+      const next = moveCardToColumn(columns, cardId, targetColumnId, insertIndex, activeData.card);
+      if (next !== columns) {
+        setColumns(() => next);
+      }
 
       try {
         await moveCardMutation.mutateAsync({ id: cardId, data: { column_id: targetColumnId, position: insertIndex } });
@@ -325,13 +380,14 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
         queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
       }
     }
-  }, [dragSource, moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns, prefersReducedMotion]);
+  }, [dragSource, moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns, prefersReducedMotion, cancelPendingDragOver]);
 
   const handleDragCancel = useCallback(() => {
+    cancelPendingDragOver();
     setActiveCard(null);
     setDragSource(null);
     queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
-  }, [queryClient, boardId]);
+  }, [queryClient, boardId, cancelPendingDragOver]);
 
   return (
     <DndContext

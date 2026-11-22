@@ -163,7 +163,7 @@ export function AppLayout() {
             onToggle={toggleSidebar}
           />
         )}
-        <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6">
+        <main className="flex-1 overflow-y-auto bg-background px-4 pt-2 pb-2 sm:px-6 sm:py-2">
           <Outlet />
         </main>
       </div>

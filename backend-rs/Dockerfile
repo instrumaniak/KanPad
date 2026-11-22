@@ -39,7 +39,9 @@ COPY .sqlx ./.sqlx
 COPY migrations ./migrations
 COPY openapi.json ./openapi.json
 COPY src ./src
-
+# Cargo.toml declares [[bench]] targets; cargo validates their paths at
+# manifest load, so the build context must ship them.
+COPY benches ./benches
 # BuildKit cache mounts: the registry and target/ survive rebuilds on this
 # machine only (fresh CI builders start empty — the build is unaffected).
 # T62 cache-mount lesson: the binary MUST be cp'd out of the cache-mounted

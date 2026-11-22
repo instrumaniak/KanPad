@@ -97,8 +97,8 @@ in the tree vs verified absent — no speculation.
 |----|-----|---------|----------|-----------|
 | P1 | **HIGH** | Route code-splitting defeated in the production build: all 9 `React.lazy` routes merge into one entry chunk (rolldown `codeSplitting.groups` capture); `dist/` has 5 JS files, 1 dynamic import. **2026-11-17 (T016): fixed + closed** — catch-all `vendor`/`app` groups removed; post-fix dist has route-level chunks. **Second amendment (2026-11-17, same day): all app routes are now static imports** (user directive — perceive-snappiness first); markdown/pele stay lazy; one `vendor` chunk; 58 JS files | `frontend/vite.config.ts`; `frontend/dist/assets/` (measured) | T016 |
 | P2 | **HIGH** | The mermaid chunk (measured 2026-11-17: **4.9 MB raw / 1,355,682 B gzip**; was 2026-11-13/2026-11-16 figures, now stale) was `modulepreload`ed from the entry → initial JS incl. `/login` ≈ **1.84 MB gzip**. **2026-11-17 (T016): closed by replacing the renderer with pele 1.13.0** (`pele/lazy`, per-type chunks on demand; mermaid chunk gone) → **initial gzip = 257,986 B** (entry 69,500 + runtime 429 + vendor 188,057; TS second amendment — all app routes static, `markdown-renderer` + pele stay lazy with idle prefetch) | `frontend/dist/index.html:23-26`, `frontend/dist/assets/` (measured 2026-11-17) | T016 |
-| P3 | **HIGH** | Board loads ALL cards unpaginated in one response and renders them all — no virtualization, no `useInfiniteQuery`, O(N) `CardDetailPanel` instances per board | `frontend/src/features/columns/columns.api.ts:52-54`, `backend-rs/src/features/columns/routes.rs:69-70`, no `virtual` in `frontend/src` | T021 |
-| P4 | MEDIUM-HIGH | Cross-column drag writes `setQueryData` on **every `dragOver` event**; `allColumns` prop identity changes per write → full-board re-render at pointer-move rate | `frontend/src/features/cards/drag-drop-context.tsx:100-186`, `frontend/src/features/boards/board-view.tsx:256,269` | T021 |
+| P3 | **HIGH** | Board loads ALL cards unpaginated in one response and renders them all — no virtualization, no `useInfiniteQuery`, O(N) `CardDetailPanel` instances per board. **2026-11-19 (T021): rendering half closed** — `@tanstack/react-virtual` on `column-card-list` + `board-list-view` (bounded DOM window; full item list to `SortableContext`; dragged row pinned via custom `rangeExtractor`; `CardDetailPanel` mount-gated on first open). Unpaginated data path stays with **T022**; column containment + visual affordances with **T044** (Stage A containment shipped inside T021) | `frontend/src/features/columns/columns.api.ts:52-54`, `backend-rs/src/features/columns/routes.rs:69-70`, `frontend/src/features/columns/column-card-list.tsx`, `frontend/src/features/boards/board-view/board-list-view.tsx` | T021 (rendering), T022 (hydration), T044 (visual) |
+| P4 | MEDIUM-HIGH | Cross-column drag writes `setQueryData` on **every `dragOver` event**; `allColumns` prop identity changes per write → full-board re-render at pointer-move rate. **2026-11-19 (T021): closed** — dragOver writes rAF-coalesced to ≤ 1/frame, structural sharing (only changed columns re-spread; unchanged cards keep object identity; no order change → no write), `columns ?? EMPTY_COLUMNS` hoisted, counts memoized | `frontend/src/features/cards/drag-drop-context.tsx`, `frontend/src/features/cards/drag-over-cache.ts`, `frontend/src/features/boards/board-view/board-view.tsx` | T021 |
 | P5 | MEDIUM | Lists use `LIMIT/OFFSET` with **no page ceiling**; notes/projects search is `LIKE '%q%'` (leading wildcard — `IDX_notes_title` can never serve it; no FULLTEXT anywhere) | `backend-rs/src/extract.rs:115-135`, `backend-rs/src/features/notes/store.rs:354-357`, grep `FULLTEXT` → 0 | T022 (ceilings), T023 (FTS) |
 | P6 | LOW-MED | Board/archived/notes lists fetch with backend defaults (limit 50) and have **no pagination UI** → items beyond page 1 invisible | `frontend/src/features/boards/use-boards.ts:38-46`, `board-list.tsx` (no page state) | T022 |
 | P7 | LOW | Metrics gaps: `acquire_timed` never called in production (acquire-duration histogram always empty); `kanpad_db_up` only refreshed by `/ready` hits; global 30 s timeout + 10-conn pool means ~10 concurrent slow queries starve everyone (an 11th waits on pool checkout up to the 30 s timeout, then 503) | `backend-rs/src/state.rs:177-184` (only caller is a test), `backend-rs/src/metrics.rs:104-161`, `backend-rs/src/lib.rs:72` | T024 (metrics); timeout/pool interplay = capacity input (T026) |
@@ -253,3 +253,22 @@ own amendment notes in-line where relevant.
      verified on 11.4 legs + 10.6 caveat. **40-operations §3/§6** — backup doc single
      owner; CI MariaDB leg runs 11.4 — 10.6 correction path recorded.
   6. D-5 gate status: T010 done; T020 unblocked (decision text unchanged — historical).
+
+- **2026-11-19 — P3/P4 (T021):** rendering half of P3 closed; P4 closed. Card lists
+  virtualized with `@tanstack/react-virtual` (full item list to `SortableContext`;
+  vertical strategy; outer virtualizer cell + inner sortable node layer separation;
+  custom `rangeExtractor` pins the dragged/editing row; `CardDetailPanel` mount-gated
+  on first open). dragOver cache writes rAF-coalesced to ≤ 1/frame, with structural
+  sharing (no order change → no write; only changed columns re-spread; unchanged
+  cards keep object identity). Counts memoized; `columns ?? EMPTY_COLUMNS` hoisted.
+  **Stage A containment shipped inside T021** (user sign-off — the virtualizer's
+  scroll element must be bounded; T044 keeps Stages B1–B4 and was amended inline).
+  Measured: **13 DOM rows mounted of 500** in a real-browser 500-card board (both
+  board and list views; `aria-rowcount=500` preserved), time-to-interactive ≈ 1.2 s;
+  keyboard drag verified end-to-end on a 120-card column (stepwise, focus preserved
+  on the pinned source row, persisted — e2e). Initial gzip 267,420 B (from 257,986 B;
+  +9.4 KB from react-virtual) — budget gate green (310,000 B cap). Full-vitest + `tsc -b`
+  clean; drag-drop unit + e2e suites green; `gen:api --check` no-op (no wire change);
+  no POST/PATCH/DELETE endpoints touched (dragEnd's PATCH covered by existing suites).
+  The "Closed by T021" register line for P3 is hereby split (rendering → T021 done;
+  hydration → T022; visual → T044).

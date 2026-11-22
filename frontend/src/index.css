@@ -338,6 +338,14 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-thumb-hover);
   }
+
+  /* Column scrollbars (board view): transparent track */
+  .kanpad-column-scroll {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  .kanpad-column-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 /* === Safe Area Inset Utilities (Notch / Home Indicator) === */

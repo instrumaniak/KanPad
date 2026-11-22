@@ -86,7 +86,13 @@ jobs:
   # ---------------------------------------------------------------- backend
   backend:
     name: backend (fmt -> clippy -> migrate -> prepare --check -> test+coverage -> snapshot)
-    runs-on: ubuntu-latest
+    # Pinned, not `latest`: `ubuntu-latest` flipped 24.04 -> 26.04 on
+    # 2026-11-19 (actions/runner-images#14748) and silently changed the
+    # system valgrind (3.18.1/3.22.0 -> 3.26.0), which red-lined the
+    # gungraun version assert with zero repo changes (see
+    # docs/lessons/ci-quality.md). Pin the runner so env-sensitive gates
+    # (valgrind/callgrind baselines) only change when we bump them here.
+    runs-on: ubuntu-26.04
     services:
       mysql:
         image: mysql:8.4
@@ -304,6 +310,14 @@ jobs:
           fi
           cargo sqlx --version
 
+      - name: Install gungraun-runner 0.20.0
+        run: |
+          set -euo pipefail
+          if ! command -v gungraun-runner >/dev/null 2>&1; then
+            cargo install --locked gungraun-runner --version 0.20.0
+          fi
+          gungraun-runner --version
+
       - name: migrate run
         working-directory: backend-rs
         run: |
@@ -476,6 +490,33 @@ jobs:
           cargo deny check licenses
           cargo deny check bans
 
+      # -- gungraun callgrind gate (T046 B1) -------------------------------
+      - name: valgrind version assert
+        run: |
+          set -euo pipefail
+          if ! command -v valgrind >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y valgrind
+          fi
+          # Pinned: callgrind profiles are only comparable on identical
+          # toolchain + valgrind + runner + arch (T046 B1). Re-baseline with
+          # `--save-baseline=main` after any bump.
+          # Pinned runner `ubuntu-26.04` (resolute) ships valgrind 3.26.0
+          # (`apt-get install valgrind` -> 1:3.26.0-0ubuntu1). When this value
+          # is bumped, regenerate the committed baselines in the SAME env and
+          # update docs/perf-runbook.md + docs/perf-budgets.md together.
+          valgrind --version | grep -q 'valgrind-3.26.0'
+
+      - name: gungraun callgrind bench
+        working-directory: backend-rs
+        env:
+          # Committed baselines under backend-rs/benches/baselines/ — without
+          # this, `--baseline=main` auto-creates an empty baseline and the
+          # gate cannot go red (T046 B1).
+          GUNGRAUN_HOME: ${{ github.workspace }}/backend-rs/benches/baselines
+        run: |
+          set -euo pipefail
+          cargo bench --bench order_key_callgrind -- --baseline=main --callgrind-limits='ir=0%'
+
       # -- 7. openapi snapshot (ACTIVE; T40a fills DTO coverage) -----------
       # export-openapi boots NO pool/sessions, so this also proves the
       # binary builds offline. SQLX_OFFLINE=true here mirrors the Dockerfile.
@@ -492,7 +533,8 @@ jobs:
     # EXTENDED to the migration/backfill + ordering suites — otherwise the
     # full-matrix AC is unverifiable in CI.
     name: backend-mariadb (migrations + ordering suites on MariaDB 11.4)
-    runs-on: ubuntu-latest
+    # Pinned runner — why: see the `backend` job header.
+    runs-on: ubuntu-26.04
     services:
       mariadb:
         image: mariadb:11.4
@@ -548,6 +590,14 @@ jobs:
           fi
           cargo sqlx --version
 
+      - name: Install gungraun-runner 0.20.0
+        run: |
+          set -euo pipefail
+          if ! command -v gungraun-runner >/dev/null 2>&1; then
+            cargo install --locked gungraun-runner --version 0.20.0
+          fi
+          gungraun-runner --version
+
       - name: migrate run
         working-directory: backend-rs
         run: |
@@ -599,12 +649,14 @@ jobs:
           cargo test --locked --test api columns_crud
           cargo test --locked --test api checklist_items
           cargo test --locked --test api e2e_columns_cards
+          cargo test --locked --test api query_plans
 
   # ------------------------------------------------------------------ web
   # gen:api --check -> tsc -> vite build -> bundle budget (dist feeds the docker image).
   web:
     name: web (gen:api --check -> tsc -> vite build -> bundle budget)
-    runs-on: ubuntu-latest
+    # Pinned runner — why: see the `backend` job header.
+    runs-on: ubuntu-26.04
     needs: [backend]
     steps:
       - name: Checkout
@@ -649,10 +701,24 @@ jobs:
         working-directory: frontend
         run: npm run budget
 
+      - name: perf registry schema check (T046)
+        run: node scripts/check-perf-registry.mjs
+
+      - name: __PERF__ absence in dist (T046)
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          if grep -R "__PERF__" dist/ ; then
+            echo 'FAIL: __PERF__ leaked into production bundle'
+            exit 1
+          fi
+          echo 'OK: no __PERF__ in dist'
+
   # --------------------------------------- docker build + :3001 e2e
   docker-e2e:
     name: docker build + vitest + playwright e2e
-    runs-on: ubuntu-latest
+    # Pinned runner — why: see the `backend` job header.
+    runs-on: ubuntu-26.04
     needs: [backend, web]
     services:
       mysql:
@@ -697,6 +763,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$CODE" | grep -q 'COPY .sqlx' || { echo 'FAIL: Dockerfile must COPY .sqlx'; exit 1; }
+          printf '%s\n' "$CODE" | grep -q 'COPY benches' || { echo 'FAIL: Dockerfile must COPY benches (Cargo.toml declares [[bench]] targets)'; exit 1; }
           if printf '%s\n' "$CODE" | grep -Eq 'COPY .*public/'; then echo 'FAIL: Dockerfile must NOT COPY public/ (API-only, T008)'; exit 1; fi
           echo 'OK: Dockerfile contract gates pass'
 
@@ -819,9 +886,15 @@ jobs:
 
       - name: playwright install chromium
         working-directory: frontend
-        # --with-deps: the bare ubuntu-latest image lacks the system libraries
+        # --with-deps: the bare (pinned) ubuntu runner image lacks the system libraries
         # the headless shell needs; the storybook workflow uses the same shape.
         run: npx playwright install --with-deps chromium --only-shell
+
+      - name: playwright @perf (workers=1, retries=0) (T046)
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:3001
+        run: npx playwright test --grep @perf --workers=1 --retries=0
 
       - name: playwright test (two-origin e2e; API pinned via E2E_BASE_URL)
         working-directory: frontend

@@ -105,7 +105,7 @@ tasks:
     critical: true
   T021:
     name: "Board render perf: virtualization + dragOver throttle"
-    status: pending
+    status: done
     depends: ~
     phase: 1
     critical: false
@@ -141,6 +141,7 @@ tasks:
       - T020
       - T021
       - T022
+      - T046
     phase: 1
     critical: false
   T027:
@@ -280,6 +281,18 @@ tasks:
     depends: ~
     phase: 1
     critical: false
+  T046:
+    name: Performance harness & tooling
+    status: done
+    depends: ~
+    phase: 1
+    critical: false
+  T047:
+    name: "fe perf issues: dnd, scroll perf"
+    status: in_progress
+    depends: ~
+    phase: 0
+    critical: false
 phases:
   0: Architecture
   1: Observability
@@ -288,4 +301,3 @@ critical_path:
   - T021
   - T022
   - T044
-  

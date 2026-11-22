@@ -354,3 +354,8 @@ measurement task; AC = reproducible numbers + doc).
 - **Keyset pagination** (open call under T022) — adopt only if T026 shows offset pain.
 - **Session read caching** (F9 from the review: 1 SELECT/request on `sessions`) — hot PK
   table, fine at this scale; revisit with capacity data.
+
+
+## 2026-11-20 amendment (T046)
+
+Perf-smoke harness/assertion transferred from T026 to T046 (baselines remain T026's). T046 builds the harness; T026 consumes baselines.

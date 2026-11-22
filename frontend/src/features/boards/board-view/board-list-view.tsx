@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, Plus, Trash2, Letters } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,6 +48,11 @@ const SORT_OPTIONS: { key: BoardListSortKey; label: string }[] = [
   { key: 'title', label: 'Title' },
 ];
 
+// Upper bound of a list-row height (py-2 + title line + badge row + optional
+// checklist-progress row). Dynamic rows are measured per-row via measureElement.
+const ESTIMATED_ROW_HEIGHT = 96;
+const ROW_OVERSCAN = 5;
+
 export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const [sortKey, setSortKey] = useState<BoardListSortKey>('created_at');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -58,6 +64,14 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const [newTitle, setNewTitle] = useState('');
   const [targetColumnId, setTargetColumnId] = useState<string>('');
   const titleCommitGuard = useRef<number | null>(null);
+  // Focused row pinned in the virtual window — a focused, non-editing row that
+  // scrolls out of the window would otherwise unmount underneath the user and
+  // drop focus to <body> (WCAG 2.4.3 focus order).
+  const [focusedCardId, setFocusedCardId] = useState<number | null>(null);
+  const pendingFocusRestoreRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    pendingFocusRestoreRef.current = null;
+  }, []);
 
   const { toast } = useToast();
   const { showSuccess, showError } = useToastHelpers();
@@ -80,6 +94,45 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
     [flatCards, sortKey, sortDir],
   );
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Keep the inline-edit row AND the focused row mounted even when they scroll
+  // out of the virtual window — unmounting either mid-interaction destroys
+  // the input/button and drops focus.
+  const editingIndex = useMemo(
+    () => sortedCards.findIndex((c) => c.id === editingCardId),
+    [sortedCards, editingCardId],
+  );
+  const focusedIndex = useMemo(
+    () => sortedCards.findIndex((c) => c.id === focusedCardId),
+    [sortedCards, focusedCardId],
+  );
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const base = defaultRangeExtractor(range);
+      const missing = [...new Set([editingIndex, focusedIndex])].filter(
+        (i) => i >= 0 && !base.includes(i),
+      );
+      if (missing.length === 0) return base;
+      return [...base, ...missing].sort((a, b) => a - b);
+    },
+    [editingIndex, focusedIndex],
+  );
+  const getItemKey = useCallback(
+    (index: number) => {
+      const card = sortedCards[index];
+      return card ? `${card.id}` : `__i_${index}`;
+    },
+    [sortedCards],
+  );
+  const virtualizer = useVirtualizer({
+    count: sortedCards.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: ROW_OVERSCAN,
+    getItemKey,
+    rangeExtractor,
+  });
+
   const handleSort = (key: BoardListSortKey) => {
     if (key === sortKey) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -89,10 +142,25 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
     }
   };
 
+  const titleRestoreRef = (cardId: number) => (el: HTMLButtonElement | null) => {
+    if (el && pendingFocusRestoreRef.current === cardId) {
+      pendingFocusRestoreRef.current = null;
+      el.focus();
+    }
+  };
+
   const startTitleEdit = (card: Card) => {
     titleCommitGuard.current = null;
+    setFocusedCardId(card.id);
     setEditingCardId(card.id);
     setEditTitle(card.title);
+  };
+
+  const restoreFocusAfterEdit = (card: Card) => {
+    // Keep the row pinned and restore focus to its rename button once it
+    // remounts — committing/cancelling must not strand the user on <body>.
+    pendingFocusRestoreRef.current = card.id;
+    setFocusedCardId(card.id);
   };
 
   const commitTitleEdit = (card: Card) => {
@@ -101,13 +169,17 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
     if (!trimmed || trimmed === card.title) {
       titleCommitGuard.current = card.id;
       setEditingCardId(null);
+      restoreFocusAfterEdit(card);
       return;
     }
     titleCommitGuard.current = card.id;
     updateCard.mutate(
       { id: card.id, data: { title: trimmed } },
       {
-        onSuccess: () => setEditingCardId(null),
+        onSuccess: () => {
+          setEditingCardId(null);
+          restoreFocusAfterEdit(card);
+        },
         onError: (err) => {
           titleCommitGuard.current = null;
           showError(
@@ -122,6 +194,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const cancelTitleEdit = (card: Card) => {
     titleCommitGuard.current = card.id;
     setEditingCardId(null);
+    restoreFocusAfterEdit(card);
   };
 
   const handleDelete = () => {
@@ -202,7 +275,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   };
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         className="flex shrink-0 flex-wrap items-center gap-2 px-6 py-2"
         role="toolbar"
@@ -233,50 +306,45 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 pb-6" data-testid="board-list-scroll">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-6 pb-6" data-testid="board-list-scroll">
         {sortedCards.length === 0 ? (
           <p className="py-8 text-center text-muted-foreground">No cards yet</p>
         ) : (
-          <div role="table" aria-label="Board cards list">
-            <div role="row" className="sr-only">
-              {SORT_OPTIONS.map(({ key, label }) => (
-                <div
-                  key={key}
-                  role="columnheader"
-                  aria-sort={
-                    sortKey === key
-                      ? sortDir === 'asc'
-                        ? 'ascending'
-                        : 'descending'
-                      : 'none'
-                  }
-                >
-                  {label}
-                </div>
-              ))}
+          <div role="table" aria-label="Board cards list" aria-rowcount={sortedCards.length + 1}>
+            <div role="row" aria-rowindex={1} className="sr-only">
+              {/* Header row mirrors the two data cells: the card column carries
+                  the active sort (aria-sort), the actions column is labelled. */}
+              <div
+                role="columnheader"
+                aria-sort={sortDir === 'asc' ? 'ascending' : 'descending'}
+              >
+                Cards sorted by {SORT_OPTIONS.find((o) => o.key === sortKey)?.label}
+              </div>
+              <div role="columnheader" aria-label="Actions" />
             </div>
-            {sortedCards.map((card) => {
+            <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const card = sortedCards[virtualRow.index];
+              if (!card) return null;
               const dueBadge = getDueDateBadge(card.due_date);
               return (
                 <div
-                  key={card.id}
+                  key={virtualRow.key}
+                  ref={virtualizer.measureElement}
+                  data-index={virtualRow.index}
                   role="row"
+                  aria-rowindex={virtualRow.index + 2}
                   data-testid="board-list-row"
-                  className="flex items-center gap-3 border-b py-2"
+                  className="absolute left-0 top-0 flex w-full items-center gap-3 border-b py-2"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  onFocusCapture={() => setFocusedCardId(card.id)}
+                  onBlurCapture={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      setFocusedCardId(null);
+                    }
+                  }}
                 >
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open card details: ${card.title}`}
-                    className="flex flex-1 cursor-pointer flex-col gap-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => setDetailCard(card)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setDetailCard(card);
-                      }
-                    }}
-                  >
+                  <div role="cell" className="flex min-w-0 flex-1 flex-col gap-1">
                     {editingCardId === card.id ? (
                       <Input
                         value={editTitle}
@@ -292,8 +360,11 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                         onBlur={() => commitTitleEdit(card)}
                       />
                     ) : (
-                      <span
-                        className="flex items-center gap-1 break-words font-medium"
+                      <button
+                        ref={titleRestoreRef(card.id)}
+                        type="button"
+                        aria-label={`Edit title of card: ${card.title}`}
+                        className="flex items-center gap-1 break-words text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                         onClick={(e) => {
                           e.stopPropagation();
                           startTitleEdit(card);
@@ -308,46 +379,62 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                             data-testid="card-description-icon"
                           />
                         )}
-                      </span>
+                      </button>
                     )}
-                    <span className="flex flex-wrap items-center gap-1">
-                      <Badge variant="secondary">{card.columnName}</Badge>
-                      {(card.labels ?? []).map((label) => (
-                        <LabelBadge key={label.id} label={label} />
-                      ))}
-                      {dueBadge && (
-                        <span
-                          className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${dueBadge.className}`}
-                        >
-                          {dueBadge.text}
+                    <button
+                      type="button"
+                      aria-label={`Open card details: ${card.title}`}
+                      className="flex cursor-pointer flex-col gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+                      onClick={() => setDetailCard(card)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setDetailCard(card);
+                        }
+                      }}
+                    >
+                      <span className="flex flex-wrap items-center gap-1">
+                        <Badge variant="secondary">{card.columnName}</Badge>
+                        {(card.labels ?? []).map((label) => (
+                          <LabelBadge key={label.id} label={label} />
+                        ))}
+                        {dueBadge && (
+                          <span
+                            className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${dueBadge.className}`}
+                          >
+                            {dueBadge.text}
+                          </span>
+                        )}
+                      </span>
+                      {card.checklist_progress && (
+                        <span className="flex items-center gap-2">
+                          <ProgressBar
+                            completed={card.checklist_progress.completed}
+                            total={card.checklist_progress.total}
+                            className="flex-1"
+                          />
+                          <span className="whitespace-nowrap text-xs text-muted-foreground">
+                            {card.checklist_progress.completed}/{card.checklist_progress.total} (
+                            {card.checklist_progress.percent}%)
+                          </span>
                         </span>
                       )}
-                    </span>
-                    {card.checklist_progress && (
-                      <span className="flex items-center gap-2">
-                        <ProgressBar
-                          completed={card.checklist_progress.completed}
-                          total={card.checklist_progress.total}
-                          className="flex-1"
-                        />
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">
-                          {card.checklist_progress.completed}/{card.checklist_progress.total} (
-                          {card.checklist_progress.percent}%)
-                        </span>
-                      </span>
-                    )}
+                    </button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Delete card ${card.title}`}
-                    onClick={() => setDeleteCard(card)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div role="cell">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Delete card ${card.title}`}
+                      onClick={() => setDeleteCard(card)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               );
             })}
+            </div>
           </div>
         )}
       </div>

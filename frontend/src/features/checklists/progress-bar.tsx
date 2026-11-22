@@ -14,9 +14,13 @@ export function ProgressBar({ completed, total, className = '' }: ProgressBarPro
 
   return (
     <div
-      className={`relative h-2 overflow-hidden rounded-full bg-secondary ${className}`}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
       aria-label={`Checklist progress: ${completed}/${total} (${percent}%)`}
       data-progress-state={isComplete ? 'complete' : percent === 0 ? 'empty' : 'partial'}
+      className={`relative h-2 overflow-hidden rounded-full bg-secondary ${className}`}
     >
       <div
         className={`h-full rounded-full transition-all ${fillClass}`}

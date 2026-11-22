@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { memo, useState, useRef } from 'react';
+import { PerfProfiler } from '@/lib/perf-profiler';
 import { useDeleteCard, useCreateCard, type Card as CardType } from './use-cards';
 import { CardDraggable } from './card-draggable';
 import { CardDetailPanel } from './card-detail-panel';
@@ -23,6 +24,66 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { useToastHelpers } from '@/lib/toast-helpers';
 
+interface CardFaceProps {
+  card: CardType;
+  isNew?: boolean;
+  isDragging: boolean;
+  onContextMenuOpenChange: (open: boolean) => void;
+  onClick: (e: React.MouseEvent) => void;
+  onPointerDown: (e: React.PointerEvent) => void;
+  onKeyDown: (e: React.KeyboardEvent) => void;
+  onDeleteSelect: () => void;
+}
+
+// Memo boundary isolates expensive card face from CardDraggable/useSortable rerenders.
+// dnd-kit useSortable subscribes to DndContext, so sortable wrappers rerender often during drag;
+// only the active card's isDragging changes, allowing other faces to skip.
+const CardFace = memo(function CardFace({
+  card,
+  isNew,
+  isDragging,
+  onContextMenuOpenChange,
+  onClick,
+  onPointerDown,
+  onKeyDown,
+  onDeleteSelect,
+}: CardFaceProps) {
+  return (
+    <PerfProfiler id="CardFace" meta={{ cardId: card.id }}>
+      <ContextMenu onOpenChange={onContextMenuOpenChange}>
+        <ContextMenuTrigger asChild disabled={isDragging}>
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Open card details"
+            aria-haspopup="menu"
+            title="Right-click for card menu"
+            className={`relative rounded bg-card p-3 text-sm shadow-sm hover:bg-accent/50 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring ${isNew ? 'animate-slide-up' : ''} ${isDragging ? 'shadow-lg scale-[1.02]' : ''}`}
+            onClick={onClick}
+            onPointerDown={onPointerDown}
+            onKeyDown={onKeyDown}
+            onContextMenu={(e) => e.stopPropagation()}
+            style={{
+              cursor: isDragging ? 'grabbing' : 'grab',
+            }}
+          >
+            <CardPreview card={card} />
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent onClick={(e) => e.stopPropagation()}>
+          <ContextMenuItem
+            onSelect={onDeleteSelect}
+            className="text-destructive focus:text-destructive"
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    </PerfProfiler>
+  );
+});
+
 interface CardProps {
   card: CardType;
   index: number;
@@ -31,6 +92,11 @@ interface CardProps {
 
 export function Card({ card, index, isNew }: CardProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  // Gate CardDetailPanel's FIRST mount — every card used to mount the panel
+  // (and its hooks/fetches) eagerly, O(N) per board. Until a card's panel is
+  // opened once, the panel (and its query machinery) stays unmounted; once
+  // opened it stays mounted so the exit animation is preserved (T021).
+  const [hasOpenedOnce, setHasOpenedOnce] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
@@ -41,6 +107,11 @@ export function Card({ card, index, isNew }: CardProps) {
   const createCardMutation = useCreateCard();
   const { toast } = useToast();
   const { showSuccess, showError } = useToastHelpers();
+
+  const openPanel = () => {
+    setHasOpenedOnce(true);
+    setIsPanelOpen(true);
+  };
 
   const handleClick = (e: React.MouseEvent) => {
     if (Date.now() < suppressUntilRef.current) {
@@ -58,7 +129,7 @@ export function Card({ card, index, isNew }: CardProps) {
       pointerDownPos.current = null;
     }
     e.stopPropagation();
-    setIsPanelOpen(true);
+    openPanel();
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -68,7 +139,7 @@ export function Card({ card, index, isNew }: CardProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
-      setIsPanelOpen(true);
+      openPanel();
     }
   };
 
@@ -124,39 +195,21 @@ export function Card({ card, index, isNew }: CardProps) {
     <>
       <CardDraggable card={card} index={index} isDragDisabled={contextMenuOpen}>
         {({ isDragging }) => (
-          <ContextMenu onOpenChange={handleContextMenuOpenChange}>
-            <ContextMenuTrigger asChild disabled={isDragging}>
-              <div
-                role="button"
-                tabIndex={0}
-                aria-label="Open card details"
-                aria-haspopup="menu"
-                title="Right-click for card menu"
-                className={`relative rounded bg-card p-3 text-sm shadow-sm hover:bg-accent/50 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring ${isNew ? 'animate-slide-up' : ''} ${isDragging ? 'shadow-lg scale-[1.02]' : ''}`}
-                onClick={handleClick}
-                onPointerDown={handlePointerDown}
-                onKeyDown={handleKeyDown}
-                onContextMenu={(e) => e.stopPropagation()}
-                style={{
-                  cursor: isDragging ? 'grabbing' : 'grab',
-                }}
-              >
-                <CardPreview card={card} />
-              </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent onClick={(e) => e.stopPropagation()}>
-              <ContextMenuItem
-                onSelect={openDeleteDialog}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
+          <CardFace
+            card={card}
+            isNew={isNew}
+            isDragging={isDragging}
+            onContextMenuOpenChange={handleContextMenuOpenChange}
+            onClick={handleClick}
+            onPointerDown={handlePointerDown}
+            onKeyDown={handleKeyDown}
+            onDeleteSelect={openDeleteDialog}
+          />
         )}
       </CardDraggable>
-      <CardDetailPanel card={card} open={isPanelOpen} onOpenChange={setIsPanelOpen} />
+      {hasOpenedOnce && (
+        <CardDetailPanel card={card} open={isPanelOpen} onOpenChange={setIsPanelOpen} />
+      )}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent onClick={(e) => e.stopPropagation()}>
           <AlertDialogHeader>

@@ -7,9 +7,16 @@
 - Paced pointer input: single-step `mouse.move` interleaved with awaited rAF.
 - Warm-up: 1 discarded + 3 measured runs → median. `PERF_BUDGET_SCALE` env var (CI sets measured value; local default 1).
 
+## Column scroll profile (F5, statistical)
+- Spec: `frontend/e2e/perf-scroll.spec.ts` (`@perf`). Measures column scroll frame delta on a dense virtualized column.
+- Run: `cd frontend && npx playwright test e2e/perf-scroll.spec.ts --workers=1 --retries=0`
+- Paced scroll: hover column `[data-testid="column-card-list-scroll"]`, `mouse.wheel` in small deltas interleaved with `requestAnimationFrame`. Setup/reset scroll excluded from measured window.
+- Frame metrics are Tier B/statistical; render counts from `window.__PERF__` are deterministic dev-mode signals when present. Use same machine/profile for before/after comparison.
+
 ## Frontend profiler
 - `window.__PERF__` store (timings/ids only). Dev-gated (`import.meta.env.DEV`).
 - Verify absence in prod: `grep -R "__PERF__" frontend/dist` must be empty.
+- Playwright probe (dev mode): `page.evaluate(() => window.__PERF__?.reset())` before a scripted interaction, `page.evaluate(() => window.__PERF__?.snapshot())` after. Helpers: `resetPerfInPage`/`snapshotPerfInPage`/`perfCountsById` in `frontend/e2e/perf-helpers.ts`. Render counts are deterministic; durations are environment-sensitive.
 
 ## Criterion (local/manual)
 ```

@@ -7,7 +7,10 @@ import {
   inputLatencyFromLoaf,
   installPerfInstrumentation,
   median,
+  perfCountsById,
   pooledP95,
+  resetPerfInPage,
+  snapshotPerfInPage,
   startPerfMeasurement,
   stopPerfMeasurement,
   warmupAndMeasure,
@@ -140,6 +143,7 @@ monitoringTest.describe('Perf drag @perf', () => {
     }
 
     await installPerfInstrumentation(page);
+    await resetPerfInPage(page);
     await startPerfMeasurement(page);
 
     try {
@@ -165,11 +169,12 @@ monitoringTest.describe('Perf drag @perf', () => {
       // Settle final paint/observer callbacks from the measured window, then stop once.
       await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const { frames, loafEntries, eventSamples } = await stopPerfMeasurement(page);
+      const perfEntries = await snapshotPerfInPage(page);
 
       const dt = frames.map((s) => s.dt).filter((d) => d > 0);
       const maxDt = dt.length ? Math.max(...dt) : 0;
       const loafLatencies = loafEntries.map(inputLatencyFromLoaf).filter((x): x is number => x !== null);
-      return { maxDt, loafLatencies, eventSamples };
+      return { maxDt, loafLatencies, eventSamples, perfEntries };
     } finally {
       // Ensure no drag state leaks into subsequent warmup/measured runs.
       await page.mouse.up().catch(() => {});
@@ -198,11 +203,16 @@ monitoringTest.describe('Perf drag @perf', () => {
       const pooledEvent = results.flatMap((r) => r.eventSamples);
       const eventP95 = pooledP95(pooledEvent);
       const loafP95 = pooledLoaf.length ? pooledP95(pooledLoaf) : null;
+      const renderCounts = results.map((r) => perfCountsById(r.perfEntries));
+      const medColumnListRenders = median(renderCounts.map((c) => c.ColumnCardList ?? 0));
+      const medBoardViewRenders = median(renderCounts.map((c) => c.BoardView ?? 0));
 
       console.log(
         `[perf-drag:${scenario}] median maxDt=${medMaxDt} eventP95=${eventP95} ` +
-          `loafP95=${loafP95 ?? 'n/a'} loafts=${pooledLoaf.length} events=${pooledEvent.length}`,
+          `loafP95=${loafP95 ?? 'n/a'} loafts=${pooledLoaf.length} events=${pooledEvent.length} ` +
+          `median ColumnCardList renders=${medColumnListRenders} median BoardView renders=${medBoardViewRenders}`,
       );
+      console.log(`[perf-drag:${scenario}] renderCounts=${JSON.stringify(renderCounts)}`);
 
       // ≥100 pointermove samples/drag pooled across measured runs so p95 is meaningful.
       expect(pooledEvent.length).toBeGreaterThanOrEqual(100);

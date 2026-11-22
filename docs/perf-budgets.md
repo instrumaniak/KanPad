@@ -16,6 +16,7 @@ Freshness rule: any threshold change must update `last-measured` in the same PR.
 | F3 | Heap growth delta (10 cycles) | -0.48MB measured (budget +5MB*scale) | B | `perf-load-heap.spec.ts` | 2026-11-21 (local compose `localhost:5173`, @perf) | dev-mode tripwire |
 | F4 | BoardView render count | <=2 (jsdom) | A | `render-budget.test.tsx` | 2026-11-21 (local vitest 878/878) | identity-stability (uncompiled React) |
 | F4 | ColumnCardList render count | <=2 (jsdom) | A | `render-budget.test.tsx` | 2026-11-21 (local vitest 878/878) | identity-stability (uncompiled React) |
+| F5 | Column scroll frame delta (maxDt, median) | baseline pending (budget 3500*scale, dev-mode tripwire) | B | `frontend/e2e/perf-scroll.spec.ts` | pending baseline (scroll jank reported; measure on target env with `--workers=1 --retries=0`) | dev-mode tripwire — scroll smoothness (T046 deferred; not NFR-enforcing) |
 | B1 | order_key Ir (gungraun) | committed baseline | A | `order_key_callgrind` | 2026-11-21 local pass (no change; CI pin now ubuntu-26.04/valgrind 3.26.0; committed baselines still creator callgrind-3.18.1 — regeneration pending in pinned env); 2026-11-20 baseline Ir: key_between 416394, keys_between_ten 441852, needs_rebalance 414350 | T010 sort-key math |
 | B2 | EXPLAIN plan shape (no ALL/index, key required) | index used | A | `query_plans` | 2026-11-21 (local runtime pass: MySQL 8.4 testdb `127.0.0.1:3337`, 4/4; CI covers both DB legs) | hot SQL |
 | NFR1 | page <2s | deferred/unenforced | — | none | deferred/unenforced | deferred (prod load timing) |

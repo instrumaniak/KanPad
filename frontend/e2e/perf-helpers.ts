@@ -217,3 +217,30 @@ export function inputLatencyFromLoaf(entry: any): number | null {
 export function pooledP95(pooled: number[]): number {
   return p95(pooled);
 }
+
+export interface PerfRenderEntry {
+  id: string;
+  phase: 'mount' | 'update' | 'nested-update';
+  actualDuration: number;
+  baseDuration: number;
+  startTime: number;
+  commitTime: number;
+}
+
+// Dev-gated store (window.__PERF__) — deterministic render-count signal.
+// Available only when the app runs in dev mode (import.meta.env.DEV).
+export async function resetPerfInPage(page: any): Promise<void> {
+  await page.evaluate(() => {
+    (window as any).__PERF__?.reset?.();
+  });
+}
+
+export async function snapshotPerfInPage(page: any): Promise<PerfRenderEntry[]> {
+  return page.evaluate(() => ((window as any).__PERF__?.snapshot?.() ?? []) as PerfRenderEntry[]);
+}
+
+export function perfCountsById(entries: PerfRenderEntry[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const e of entries) counts[e.id] = (counts[e.id] ?? 0) + 1;
+  return counts;
+}

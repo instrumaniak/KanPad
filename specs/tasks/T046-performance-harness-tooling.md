@@ -83,8 +83,11 @@ weekly → re-baseline procedure required), and `Ir` is blind to cache locality
   call, not silently assigned to T030.
 - **Virtualized-scroll frame-delta gate & notes/long-text render budget** —
   F1 covers drag; virtualization *DOM* bounds are already asserted
-  (`virtualization.spec.ts:134-145`). Add scroll/notes budgets if jank is
-  reported or T022's pagination rework lands.
+  (`virtualization.spec.ts:134-145`). Scroll jank was reported (2026-11-22):
+  added `frontend/e2e/perf-scroll.spec.ts` (`@perf`, Tier B, F5 in
+  `docs/perf-budgets.md`) with paced wheel scroll + `window.__PERF__`
+  render-count probe; baseline pending on target env. Notes/long-text render
+  budget still deferred until reported or T022 lands.
 - **Slow-query digest / per-query metrics** — T029; T046 only *borrows*
   `/metrics` for a smoke assertion (coordinate with T024, which fixes the
   empty-histogram defect first — ordering noted in Depends On).
@@ -542,6 +545,8 @@ follow-up fixes and local verification in this loop.
   - **Frontend gates:** `npm run lint` ✓ (0 errors, 2 pre-existing warnings), `npm test` ✓ (92 files, 878 tests), `npm run build` ✓, `npm run budget` ✓ (initial gzip 267768 B < 310000 B), `grep -R "__PERF__" frontend/dist` ✓ (absent).
   - **B3/hygiene:** `scripts/load/seed.mjs` BASE_URL loopback guard enforced (`K6_ALLOW_REMOTE=1` for non-loopback); README updated.
   - **Still CI-only / external evidence:** docker-e2e before/after duration delta and perf-step `≤10 min` observation; CI-green on `backend-rs.yml` jobs/legs (incl. MariaDB 11.4 plan guards + workflow gungraun steps) and docker-e2e `@perf` step; authoritative CI/docker-e2e baseline reconciliation beyond these local measurements. All locally-fixable/runtime-verifiable items above are closed.
+
+- **Scroll jank probe added (2026-11-22, reported regression after react-virtual):** Added `frontend/e2e/perf-scroll.spec.ts` (`@perf`, Tier B) measuring column scroll `maxDt` median with paced wheel+`requestAnimationFrame`, reusing `perf-helpers.ts` instrumentation. Extended `perf-drag.spec.ts` and helpers with `window.__PERF__` render-count snapshots (`resetPerfInPage`/`snapshotPerfInPage`/`perfCountsById`) for deterministic rerender fan-out signal during drag/scroll. Registered F5 in `docs/perf-budgets.md` (baseline pending on target env) and documented in `docs/perf-runbook.md`. Frame metrics remain statistical; render counts are deterministic in dev mode.
 
 ## Lessons
 

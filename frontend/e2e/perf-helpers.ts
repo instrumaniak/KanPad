@@ -225,6 +225,13 @@ export interface PerfRenderEntry {
   baseDuration: number;
   startTime: number;
   commitTime: number;
+  meta?: Record<string, unknown>;
+}
+
+export interface PerfMarkEntry {
+  name: string;
+  at: number;
+  data?: Record<string, unknown>;
 }
 
 // Dev-gated store (window.__PERF__) — deterministic render-count signal.
@@ -239,8 +246,23 @@ export async function snapshotPerfInPage(page: any): Promise<PerfRenderEntry[]> 
   return page.evaluate(() => ((window as any).__PERF__?.snapshot?.() ?? []) as PerfRenderEntry[]);
 }
 
+export async function snapshotPerfMarksInPage(page: any): Promise<PerfMarkEntry[]> {
+  return page.evaluate(() => ((window as any).__PERF__?.snapshotMarks?.() ?? []) as PerfMarkEntry[]);
+}
+
 export function perfCountsById(entries: PerfRenderEntry[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const e of entries) counts[e.id] = (counts[e.id] ?? 0) + 1;
+  return counts;
+}
+
+export function perfColumnRenderCounts(entries: PerfRenderEntry[], id = 'ColumnCardList'): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const e of entries) {
+    if (e.id !== id) continue;
+    const columnId = e.meta?.columnId;
+    const key = columnId === undefined ? 'unknown' : String(columnId);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
   return counts;
 }

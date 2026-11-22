@@ -15,11 +15,11 @@ import {
 
 interface ColumnHeaderProps {
   column: Column;
-  allColumns?: Column[];
+  moveTargets?: Array<Pick<Column, 'id' | 'name'>>;
   onDeleted?: () => void;
 }
 
-export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeaderProps) {
+export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(column.name);
   const [showMenu, setShowMenu] = useState(false);
@@ -128,7 +128,7 @@ export function ColumnHeader({ column, allColumns = [], onDeleted }: ColumnHeade
     }
   };
 
-  const otherColumns = allColumns.filter((c) => c.id !== column.id);
+  const otherColumns = moveTargets.filter((c) => c.id !== column.id);
 
   return (
     <div className="flex items-center justify-between px-3 py-2">

@@ -121,6 +121,28 @@ export function BoardView() {
     return result;
   }, [columns, activeQuery, isSearching, hasActiveFilters, filters]);
 
+  // Stable column metadata for child props. Drag commits create new column arrays
+  // but rarely change column names/positions; keying on metadata keeps
+  // moveTargets/nextColumnId references stable so Column/ColumnHeader can skip rerenders.
+  const columnMetaKey = (columns ?? EMPTY_COLUMNS)
+    .map((c) => `${c.id}:${c.name}:${c.position}`)
+    .join('|');
+  const moveTargets = useMemo(
+    () => (columns ?? EMPTY_COLUMNS).map((c) => ({ id: c.id, name: c.name })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [columnMetaKey],
+  );
+  const nextColumnIdById = useMemo(() => {
+    const map = new Map<number, number>();
+    const cols = columns ?? EMPTY_COLUMNS;
+    for (const c of cols) {
+      const next = cols.find((n) => n.position === c.position + 1);
+      if (next) map.set(c.id, next.id);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnMetaKey]);
+
   // Memoized counts — a double flatMap per render defeated identity stability on
   // every dragOver cache write (T021 / P4).
   const columnsForCounts = columns ?? EMPTY_COLUMNS;
@@ -308,7 +330,12 @@ export function BoardView() {
                 <DragDropContext boardId={id}>
                   <div className="flex h-full min-w-max gap-4 p-4 pb-4">
                     {filteredColumns.map((column) => (
-                      <Column key={column.id} column={column} allColumns={columns ?? EMPTY_COLUMNS} />
+                      <Column
+                        key={column.id}
+                        column={column}
+                        nextColumnId={nextColumnIdById.get(column.id)}
+                        moveTargets={moveTargets}
+                      />
                     ))}
                     <AddColumnButton onClick={handleAddColumn} />
                   </div>
@@ -321,7 +348,12 @@ export function BoardView() {
                 <DragDropContext boardId={id}>
                   <div className="flex h-full gap-6 p-6 pb-6">
                     {filteredColumns.map((column) => (
-                      <Column key={column.id} column={column} allColumns={columns ?? EMPTY_COLUMNS} />
+                      <Column
+                        key={column.id}
+                        column={column}
+                        nextColumnId={nextColumnIdById.get(column.id)}
+                        moveTargets={moveTargets}
+                      />
                     ))}
                     <AddColumnButton onClick={handleAddColumn} />
                   </div>

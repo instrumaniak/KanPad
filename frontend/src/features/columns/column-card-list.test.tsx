@@ -19,6 +19,11 @@ vi.mock('@dnd-kit/sortable', async (importOriginal) => {
   };
 });
 
+vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>();
+  return { ...actual, useDndMonitor: () => {} };
+});
+
 // Keep the DOM light — the Card component's internals are covered by card.test.tsx.
 vi.mock('../cards/card', () => ({
   Card: ({ card, index }: { card: { id: number; title: string }; index: number }) => (

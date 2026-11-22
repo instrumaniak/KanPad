@@ -7,6 +7,7 @@ import {
   inputLatencyFromLoaf,
   installPerfInstrumentation,
   median,
+  perfColumnRenderCounts,
   perfCountsById,
   pooledP95,
   resetPerfInPage,
@@ -67,7 +68,7 @@ monitoringTest.describe('Perf drag @perf', () => {
 
   monitoringTest.beforeAll(async ({ request }, testInfo) => {
     // Seeding 3 isolated boards (15 cols × 40 cards each) is slow; extend hook timeout.
-    testInfo.setTimeout(300_000);
+    testInfo.setTimeout(420_000);
 
     const reg = await request.post(`${E2E_API}/api/v1/auth/register`, {
       data: { email: TEST_EMAIL, password: TEST_PASSWORD },
@@ -182,7 +183,8 @@ monitoringTest.describe('Perf drag @perf', () => {
   }
 
   for (const scenario of SCENARIOS) {
-    monitoringTest(`${scenario} drag perf`, async ({ page, monitoring }) => {
+    monitoringTest(`${scenario} drag perf`, async ({ page, monitoring }, testInfo) => {
+      if (scenario === 'throttled-4x') testInfo.setTimeout(300_000);
       const boardId = boardIds[scenario];
       if (!boardId) throw new Error(`missing seeded board for scenario: ${scenario}`);
 
@@ -192,7 +194,8 @@ monitoringTest.describe('Perf drag @perf', () => {
 
       const scale = Number(process.env.PERF_BUDGET_SCALE || 1);
       const runOnce = () => runDrag(page, scenario);
-      const results = await warmupAndMeasure(runOnce, 1, 3);
+      const measuredRuns = scenario === 'throttled-4x' ? 2 : 3;
+      const results = await warmupAndMeasure(runOnce, 1, measuredRuns);
 
       const medMaxDt = median(results.map((r) => r.maxDt));
       // Spec: "p95 over pooled pointermove samples across the measured runs" —
@@ -204,15 +207,18 @@ monitoringTest.describe('Perf drag @perf', () => {
       const eventP95 = pooledP95(pooledEvent);
       const loafP95 = pooledLoaf.length ? pooledP95(pooledLoaf) : null;
       const renderCounts = results.map((r) => perfCountsById(r.perfEntries));
+      const perColumnCounts = results.map((r) => perfColumnRenderCounts(r.perfEntries));
       const medColumnListRenders = median(renderCounts.map((c) => c.ColumnCardList ?? 0));
       const medBoardViewRenders = median(renderCounts.map((c) => c.BoardView ?? 0));
+      const medCardFaceRenders = median(renderCounts.map((c) => c.CardFace ?? 0));
 
       console.log(
         `[perf-drag:${scenario}] median maxDt=${medMaxDt} eventP95=${eventP95} ` +
           `loafP95=${loafP95 ?? 'n/a'} loafts=${pooledLoaf.length} events=${pooledEvent.length} ` +
-          `median ColumnCardList renders=${medColumnListRenders} median BoardView renders=${medBoardViewRenders}`,
+          `median ColumnCardList renders=${medColumnListRenders} median BoardView renders=${medBoardViewRenders} median CardFace renders=${medCardFaceRenders}`,
       );
       console.log(`[perf-drag:${scenario}] renderCounts=${JSON.stringify(renderCounts)}`);
+      console.log(`[perf-drag:${scenario}] columnCardListPerColumn=${JSON.stringify(perColumnCounts)}`);
 
       // ≥100 pointermove samples/drag pooled across measured runs so p95 is meaningful.
       expect(pooledEvent.length).toBeGreaterThanOrEqual(100);

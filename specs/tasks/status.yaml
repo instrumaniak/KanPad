@@ -287,6 +287,12 @@ tasks:
     depends: ~
     phase: 1
     critical: false
+  T047:
+    name: "fe perf issues: dnd, scroll perf"
+    status: in_progress
+    depends: ~
+    phase: 0
+    critical: false
 phases:
   0: Architecture
   1: Observability

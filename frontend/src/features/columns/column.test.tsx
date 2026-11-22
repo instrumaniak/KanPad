@@ -140,21 +140,12 @@ describe('Column', () => {
   });
 
   it('passes nextColumnId when next column exists', () => {
-    const nextColumn: ColumnType = {
-      id: 2,
-      name: 'In Progress',
-      position: 1,
-      board_id: 1,
-      cards: [],
-      created_at: '2024-01-01',
-      updated_at: '2024-01-01',
-    };
-    render(<Column column={baseColumn} allColumns={[baseColumn, nextColumn]} />);
+    render(<Column column={baseColumn} nextColumnId={2} />);
     expect(screen.getByTestId('add-card-input')).toHaveAttribute('data-next-column-id', '2');
   });
 
   it('does not pass nextColumnId when no next column exists', () => {
-    render(<Column column={baseColumn} allColumns={[baseColumn]} />);
+    render(<Column column={baseColumn} />);
     expect(screen.getByTestId('add-card-input')).not.toHaveAttribute('data-next-column-id');
   });
 

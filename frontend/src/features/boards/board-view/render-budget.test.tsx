@@ -37,6 +37,14 @@ vi.mock('@tanstack/react-virtual', () => ({
   defaultRangeExtractor: (range: unknown) => range,
 }));
 
+vi.mock('@dnd-kit/core', async () => {
+  const actual = await vi.importActual<typeof import('@dnd-kit/core')>('@dnd-kit/core');
+  return {
+    ...actual,
+    useDndMonitor: () => {},
+  };
+});
+
 // -- BoardView mocks (copied from board-view.test.tsx — same directory,
 //    so the relative module paths are identical) ------------------------------
 const mockNavigate = vi.fn();

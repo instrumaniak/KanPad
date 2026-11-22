@@ -3,18 +3,35 @@ import { render, fireEvent } from '@testing-library/react';
 import { ColumnCardList } from './column-card-list';
 import type { Card } from '../cards/use-cards';
 
-// Simulate an in-flight drag: useDndContext returns an active draggable with id
-// 'card-3'. The main column-card-list.test.tsx uses the default (no provider)
-// context — pinning behavior needs an active drag.
+// Simulate an in-flight drag. ColumnCardList tracks active drag id via
+// useDndMonitor callbacks (not useDndContext) to avoid high-frequency rerenders.
 const dndState = vi.hoisted(() => ({
   active: { id: 'card-3' } as { id: string | number } | null,
 }));
 
 vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const React = await import('react');
   const actual = await importOriginal<typeof import('@dnd-kit/core')>();
   return {
     ...actual,
-    useDndContext: () => ({ active: dndState.active }),
+    useDndMonitor: (handlers: {
+      onDragStart?: (e: { active: { id: string | number } }) => void;
+      onDragEnd?: (e: { active: { id: string | number } }) => void;
+      onDragCancel?: (e: { active: { id: string | number } }) => void;
+    }) => {
+      const prevActive = React.useRef<{ id: string | number } | null>(null);
+      React.useEffect(() => {
+        const curr = dndState.active;
+        if (curr && !prevActive.current) {
+          handlers.onDragStart?.({ active: { id: curr.id } });
+        } else if (!curr && prevActive.current) {
+          handlers.onDragEnd?.({ active: { id: prevActive.current.id } });
+        } else if (curr && prevActive.current && curr.id !== prevActive.current.id) {
+          handlers.onDragStart?.({ active: { id: curr.id } });
+        }
+        prevActive.current = curr;
+      });
+    },
   };
 });
 
@@ -119,7 +136,7 @@ describe('ColumnCardList — dragged row pinning (T021)', () => {
 
     // Drag ends: no active node → pin must not force-mount the row anymore.
     dndState.active = null;
-    rerender(<ColumnCardList cards={cards} />);
+    rerender(<ColumnCardList cards={[...cards]} />);
     expect(container.querySelector('[data-index="2"]')).toBeNull();
   });
 });

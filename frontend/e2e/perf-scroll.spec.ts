@@ -5,6 +5,7 @@ import { monitoringTest, assertNoErrors } from './test-utils';
 import {
   installPerfInstrumentation,
   median,
+  perfColumnRenderCounts,
   perfCountsById,
   pooledP95,
   resetPerfInPage,
@@ -133,6 +134,7 @@ monitoringTest.describe('Perf scroll @perf', () => {
     const pooledLoaf = results.flatMap((r) => r.loafEntries);
     const pooledLongTasks = results.flatMap((r) => r.longTaskEntries);
     const renderCounts = results.map((r) => perfCountsById(r.perfEntries));
+    const perColumnCounts = results.map((r) => perfColumnRenderCounts(r.perfEntries));
     const medColumnListRenders = median(renderCounts.map((c) => c.ColumnCardList ?? 0));
     const medBoardViewRenders = median(renderCounts.map((c) => c.BoardView ?? 0));
 
@@ -142,6 +144,7 @@ monitoringTest.describe('Perf scroll @perf', () => {
         `median ColumnCardList renders=${medColumnListRenders} median BoardView renders=${medBoardViewRenders}`,
     );
     console.log(`[perf-scroll] renderCounts=${JSON.stringify(renderCounts)}`);
+    console.log(`[perf-scroll] columnCardListPerColumn=${JSON.stringify(perColumnCounts)}`);
 
     // Frame timing is statistical (Tier B). Budget is generous/dev-mode tripwire.
     expect(medMaxDt).toBeLessThanOrEqual(3500 * scale);

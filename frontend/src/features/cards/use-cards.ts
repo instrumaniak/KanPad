@@ -58,8 +58,14 @@ export function useUpdateCard() {
   return useMutation({
     mutationFn: ({ id, data }: { id: number; data: UpdateCardData }) =>
       updateCard(id, data),
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.id) });
+    onSuccess: (response, variables) => {
+      // Seed detail cache immediately so open panels (e.g. due-date picker)
+      // reflect the saved value without waiting for an invalidation refetch.
+      if (response?.data) {
+        queryClient.setQueryData(cardKeys.byId(variables.id), response.data);
+      } else {
+        queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.id) });
+      }
       queryClient.invalidateQueries({ queryKey: ['columns'] });
     },
   });

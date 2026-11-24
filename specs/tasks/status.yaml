@@ -293,6 +293,36 @@ tasks:
     depends: ~
     phase: 0
     critical: false
+  T048:
+    name: "Backend: parameterized embed limit + board cards list endpoint"
+    status: pending
+    depends:
+      - T022
+    phase: 1
+    critical: false
+  T049:
+    name: "Backend: server-side board card search and filters"
+    status: pending
+    depends:
+      - T022
+      - T048
+    phase: 1
+    critical: false
+  T050:
+    name: "Frontend: board infinite scroll and server-driven filters"
+    status: pending
+    depends:
+      - T048
+      - T049
+    phase: 1
+    critical: false
+  T051:
+    name: "E2E: board pagination and server-side filter coverage"
+    status: pending
+    depends:
+      - T050
+    phase: 1
+    critical: false
 phases:
   0: Architecture
   1: Observability

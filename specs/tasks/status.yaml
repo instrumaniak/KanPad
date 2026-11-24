@@ -323,6 +323,12 @@ tasks:
       - T050
     phase: 1
     critical: false
+  T052:
+    name: "Backend: multi-db support"
+    status: pending
+    depends: ~
+    phase: 1
+    critical: false
 phases:
   0: Architecture
   1: Observability

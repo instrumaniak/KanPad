@@ -22,7 +22,7 @@
 //! in three fns — the caller assembles via [`assemble_summaries`]).
 
 use serde::Serialize;
-use sqlx::MySqlExecutor;
+use sqlx::{MySql, MySqlExecutor, QueryBuilder, Row};
 use utoipa::ToSchema;
 
 use crate::{
@@ -234,6 +234,171 @@ where
             completed: row.completed,
         })
         .collect())
+}
+
+/// Authoritative per-column card totals for a board (all cards, not just embedded).
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_board_card_totals<'e, E>(
+    ex: E,
+    board_id: i32,
+) -> Result<std::collections::HashMap<i32, u64>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let rows = sqlx::query(
+        "SELECT k.`column_id` AS `column_id`, COUNT(*) AS `total` \
+          FROM `cards` k \
+          WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) \
+          GROUP BY k.`column_id`",
+    )
+    .bind(board_id)
+    .fetch_all(ex)
+    .await
+    .map_err(AppError::Db)?;
+    let mut out = std::collections::HashMap::new();
+    for row in rows {
+        let column_id: i32 = row.try_get("column_id").map_err(AppError::Db)?;
+        let total: i64 = row.try_get("total").map_err(AppError::Db)?;
+        let total = u64::try_from(total).map_err(|_| AppError::Internal(Internal))?;
+        out.insert(column_id, total);
+    }
+    Ok(out)
+}
+
+/// Board cards for the summary embed, limited to first `limit_per_column` per
+/// column by stable card order (`sort_key ASC, id ASC`). TEXT-free.
+/// Wire `position` is assigned per column in [`assemble_summaries`].
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_board_cards_limited<'e, E>(
+    ex: E,
+    board_id: i32,
+    limit_per_column: u32,
+) -> Result<Vec<SummaryRow>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    // Runtime query: window function keeps SQL portable (MySQL 8.4 / MariaDB 11.4)
+    // and avoids N+1 per-column fetches.
+    let rows = sqlx::query(
+        "SELECT ranked.`id`, ranked.`title`, ranked.`column_id`, ranked.`has_description`, \
+                ranked.`due_date`, ranked.`created_at`, ranked.`updated_at` \
+         FROM ( \
+           SELECT k.`id`, k.`title`, k.`column_id`, \
+             CAST((CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' \
+               THEN 1 ELSE 0 END) AS SIGNED) AS `has_description`, \
+             k.`due_date`, k.`created_at`, k.`updated_at`, \
+             ROW_NUMBER() OVER (PARTITION BY k.`column_id` ORDER BY k.`sort_key` ASC, k.`id` ASC) AS `rn` \
+           FROM `cards` k \
+           WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) \
+         ) ranked \
+         WHERE ranked.`rn` <= ? \
+         ORDER BY ranked.`column_id` ASC, ranked.`rn` ASC",
+    )
+    .bind(board_id)
+    .bind(limit_per_column)
+    .fetch_all(ex)
+    .await
+    .map_err(AppError::Db)?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let has_description: i64 = row.try_get("has_description").map_err(AppError::Db)?;
+        out.push(SummaryRow {
+            id: row.try_get("id").map_err(AppError::Db)?,
+            title: row.try_get("title").map_err(AppError::Db)?,
+            has_description,
+            column_id: row.try_get("column_id").map_err(AppError::Db)?,
+            due_date: row
+                .try_get::<Option<chrono::NaiveDateTime>, _>("due_date")
+                .map_err(AppError::Db)?,
+            created_at: row
+                .try_get::<chrono::NaiveDateTime, _>("created_at")
+                .map_err(AppError::Db)?,
+            updated_at: row
+                .try_get::<chrono::NaiveDateTime, _>("updated_at")
+                .map_err(AppError::Db)?,
+        });
+    }
+    Ok(out)
+}
+
+/// Label links for specific card ids (`card_id, label id` order). Empty input
+/// short-circuits.
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_card_labels_for_ids<'e, E>(
+    ex: E,
+    card_ids: &[i32],
+) -> Result<Vec<CardLabelRow>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    if card_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+        "SELECT cl.`card_id` AS `card_id`, l.`id` AS `label_id`, l.`name`, l.`color` \
+          FROM `card_labels` cl JOIN `labels` l ON l.`id` = cl.`label_id` \
+          WHERE cl.`card_id` IN (",
+    );
+    {
+        let mut separated = builder.separated(", ");
+        for id in card_ids {
+            separated.push_bind(*id);
+        }
+    }
+    builder.push(") ORDER BY cl.`card_id` ASC, l.`id` ASC");
+    let rows = builder.build().fetch_all(ex).await.map_err(AppError::Db)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(CardLabelRow {
+            card_id: row.try_get("card_id").map_err(AppError::Db)?,
+            label_id: row.try_get("label_id").map_err(AppError::Db)?,
+            name: row.try_get("name").map_err(AppError::Db)?,
+            color: row.try_get("color").map_err(AppError::Db)?,
+        });
+    }
+    Ok(out)
+}
+
+/// Checklist rollups for specific card ids (one row per card owning ≥ 1 checklist).
+/// Empty input short-circuits.
+#[tracing::instrument(skip(ex))]
+pub async fn fetch_card_progress_for_ids<'e, E>(
+    ex: E,
+    card_ids: &[i32],
+) -> Result<Vec<ProgressRow>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    if card_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut builder: QueryBuilder<MySql> = QueryBuilder::new(
+        "SELECT cl.`card_id` AS `card_id`, COUNT(ci.`id`) AS `total`, \
+          COUNT(CASE WHEN ci.`is_completed` <> 0 THEN 1 END) AS `completed` \
+          FROM `checklists` cl \
+          LEFT JOIN `checklist_items` ci ON ci.`checklist_id` = cl.`id` \
+          WHERE cl.`card_id` IN (",
+    );
+    {
+        let mut separated = builder.separated(", ");
+        for id in card_ids {
+            separated.push_bind(*id);
+        }
+    }
+    builder.push(") GROUP BY cl.`card_id`");
+    let rows = builder.build().fetch_all(ex).await.map_err(AppError::Db)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let total: i64 = row.try_get("total").map_err(AppError::Db)?;
+        let completed: i64 = row.try_get("completed").map_err(AppError::Db)?;
+        out.push(ProgressRow {
+            card_id: row.try_get("card_id").map_err(AppError::Db)?,
+            total,
+            completed,
+        });
+    }
+    Ok(out)
 }
 
 /// Assemble summary rows + label links + progress rollups into per-column

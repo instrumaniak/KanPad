@@ -4,6 +4,7 @@ import { LoadingSkeleton } from '@/components/loading-skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorState } from '@/components/error-state';
 import {
+  flattenPages,
   useArchivedBoards,
   useRestoreBoard,
   usePermanentDeleteBoard,
@@ -14,7 +15,16 @@ import { Archive, RotateCcw, Trash2 } from 'lucide-react';
 import { useToastHelpers } from '@/lib/toast-helpers';
 
 export function ArchivedBoards() {
-  const { data: boardsData, isLoading, isError, error, refetch } = useArchivedBoards();
+  const {
+    data: boardsData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useArchivedBoards();
   const restoreMutation = useRestoreBoard();
   const deleteMutation = usePermanentDeleteBoard();
   const { showSuccess, showError } = useToastHelpers();
@@ -25,7 +35,7 @@ export function ArchivedBoards() {
 
   // The API's `archived=true` means “include archived” (active boards included
   // too — there is no “only archived” mode). This page lists just the archived ones.
-  const boards = (boardsData?.data ?? []).filter((board) => board.is_archived);
+  const boards = flattenPages(boardsData?.pages).filter((board) => board.is_archived);
 
   const handleRestore = useCallback(
     async (board: Board) => {
@@ -91,48 +101,70 @@ export function ArchivedBoards() {
     <div className="mx-auto max-w-6xl">
       <h1 className="mb-6 text-2xl font-bold">Archived Boards</h1>
 
-      {boards.length === 0 ? (
+      {boards.length === 0 && !hasNextPage ? (
         <EmptyState
           icon={<Archive className="h-8 w-8 text-muted-foreground" />}
           headline="No archived boards"
           description="Boards you archive will appear here"
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          {boards.map((board) => (
-            <div
-              key={board.id}
-              className="relative overflow-hidden rounded-lg border bg-card p-4 shadow-sm"
-            >
-              <h3 className="mb-3 truncate font-semibold">{board.name}</h3>
-              {board.project && (
-                <p className="mb-4 text-sm text-muted-foreground">
-                  Project: {board.project.name}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => handleRestore(board)}
-                  disabled={restoreMutation.isPending}
+        <>
+          {boards.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No archived boards on loaded pages yet. Load more to check remaining pages.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+              {boards.map((board) => (
+                <div
+                  key={board.id}
+                  className="relative overflow-hidden rounded-lg border bg-card p-4 shadow-sm"
                 >
-                  <RotateCcw className="mr-1 h-4 w-4" />
-                  Restore
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => handlePermanentDelete(board)}
-                  disabled={deleteMutation.isPending}
-                >
-                  <Trash2 className="mr-1 h-4 w-4" />
-                  Delete
-                </Button>
-              </div>
+                  <h3 className="mb-3 truncate font-semibold">{board.name}</h3>
+                  {board.project && (
+                    <p className="mb-4 text-sm text-muted-foreground">
+                      Project: {board.project.name}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => handleRestore(board)}
+                      disabled={restoreMutation.isPending}
+                    >
+                      <RotateCcw className="mr-1 h-4 w-4" />
+                      Restore
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => handlePermanentDelete(board)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="mr-1 h-4 w-4" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+          {hasNextPage ? (
+            <div className="mt-6 flex justify-center">
+              <Button
+                variant="outline"
+                onClick={() => void fetchNextPage()}
+                disabled={isFetchingNextPage}
+              >
+                {isFetchingNextPage ? 'Loading more...' : 'Load more boards'}
+              </Button>
+            </div>
+          ) : null}
+          <p className="sr-only" aria-live="polite" aria-atomic="true">
+            {isFetchingNextPage ? 'Loading more archived boards' : !hasNextPage && boards.length > 0 ? `Showing all ${boards.length} archived boards` : ''}
+          </p>
+        </>
       )}
 
       <DeleteDialog

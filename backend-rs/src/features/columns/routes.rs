@@ -11,8 +11,8 @@ use axum::{
 use crate::{
     common::{
         card_summary::{
-            CardSummary, assemble_summaries, fetch_board_card_labels, fetch_board_card_progress,
-            fetch_board_cards,
+            CardSummary, assemble_summaries, fetch_board_card_totals, fetch_board_cards_limited,
+            fetch_card_labels_for_ids, fetch_card_progress_for_ids,
         },
         ownership::check_board_owned,
     },
@@ -20,6 +20,8 @@ use crate::{
     extract::{AuthSession, ValidJson, ValidPath},
     state::AppState,
 };
+
+const EMBED_CARD_LIMIT: u32 = 50;
 
 use super::{
     store::{
@@ -40,17 +42,29 @@ use crate::common::{
     tx_retry::{TxRetryOpts, with_tx_retry},
 };
 
-/// Load a board's card summaries grouped by column id (three set-based
-/// selects + pure assembly — no N+1, no TEXT). Single owner for the
-/// fetch-assemble sequence so handlers stay one call.
+/// Load a board's card summaries grouped by column id (limited embed) plus
+/// authoritative per-column totals. Single owner for the fetch-assemble sequence.
 async fn load_summaries(
     pool: &sqlx::MySqlPool,
     board_id: i32,
-) -> Result<std::collections::HashMap<i32, Vec<CardSummary>>, AppError> {
-    let rows = fetch_board_cards(pool, board_id).await?;
-    let labels = fetch_board_card_labels(pool, board_id).await?;
-    let progress = fetch_board_card_progress(pool, board_id).await?;
-    assemble_summaries(rows, labels, progress)
+) -> Result<
+    (
+        std::collections::HashMap<i32, Vec<CardSummary>>,
+        std::collections::HashMap<i32, u64>,
+    ),
+    AppError,
+> {
+    let (rows, totals) = tokio::try_join!(
+        fetch_board_cards_limited(pool, board_id, EMBED_CARD_LIMIT),
+        fetch_board_card_totals(pool, board_id),
+    )?;
+    let card_ids: Vec<i32> = rows.iter().map(|r| r.id).collect();
+    let (labels, progress) = tokio::try_join!(
+        fetch_card_labels_for_ids(pool, &card_ids),
+        fetch_card_progress_for_ids(pool, &card_ids),
+    )?;
+    let summaries = assemble_summaries(rows, labels, progress)?;
+    Ok((summaries, totals))
 }
 
 /// Feature router (no `with_state` inside; the caller applies state once).
@@ -96,9 +110,9 @@ pub async fn list_columns(
     let board_id = board_id.get();
     check_board_owned(&state.pool, user_id, board_id).await?;
     let rows = fetch_columns(&state.pool, board_id).await?;
-    let summaries = load_summaries(&state.pool, board_id).await?;
+    let (summaries, totals) = load_summaries(&state.pool, board_id).await?;
     Ok(Json(ColumnListBody {
-        data: to_response(rows, &summaries),
+        data: to_response(rows, &summaries, &totals),
     }))
 }
 
@@ -149,13 +163,13 @@ pub async fn create_column(
     .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
-    let summaries = load_summaries(&state.pool, board_id).await?;
+    let (summaries, totals) = load_summaries(&state.pool, board_id).await?;
     let location = format!("/api/v1/columns/{id}");
     Ok((
         StatusCode::CREATED,
         [(header::LOCATION, location)],
         Json(ColumnBody {
-            data: to_response_one(row, &summaries),
+            data: to_response_one(row, &summaries, &totals),
         }),
     ))
 }
@@ -233,9 +247,9 @@ pub async fn rename_column_handler(
     .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
-    let summaries = load_summaries(&state.pool, row.board_id.get()).await?;
+    let (summaries, totals) = load_summaries(&state.pool, row.board_id.get()).await?;
     Ok(Json(ColumnBody {
-        data: to_response_one(row, &summaries),
+        data: to_response_one(row, &summaries, &totals),
     }))
 }
 

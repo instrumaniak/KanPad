@@ -55,6 +55,9 @@ impl PaginationParams {
     pub const DEFAULT_LIMIT: u32 = 50;
     /// Hard ceiling; larger values are 400, never clamped.
     pub const MAX_LIMIT: u32 = 100;
+    /// Hard offset window ceiling: `page * limit` must stay within this
+    /// window (overflow-safe math). Larger windows are 400, never clamped.
+    pub const MAX_PAGE_WINDOW: u64 = 10_000;
 }
 
 impl Default for PaginationParams {
@@ -128,6 +131,15 @@ where
             report.append(
                 garde::Path::new("limit"),
                 garde::Error::new("must be at most 100"),
+            );
+        }
+        if page >= 1
+            && (1..=Self::MAX_LIMIT).contains(&limit)
+            && u64::from(page).saturating_mul(u64::from(limit)) > Self::MAX_PAGE_WINDOW
+        {
+            report.append(
+                garde::Path::new("page"),
+                garde::Error::new("page is outside the allowed window"),
             );
         }
 
@@ -354,13 +366,54 @@ mod tests {
             let response = error.into_response();
             assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
         }
-        // `page` has no ceiling: large pages are legal (possibly empty data).
+    }
+
+    #[tokio::test]
+    async fn page_window_ceiling_is_strict_400_with_errors() {
+        // Boundary: exactly at window is allowed.
         assert_eq!(
-            extract("/items?page=999999&limit=100").await.unwrap(),
+            extract("/items?page=100&limit=100").await.unwrap(),
             PaginationParams {
-                page: 999_999,
+                page: 100,
                 limit: 100
             }
+        );
+        // Just over window is rejected.
+        let error = extract("/items?page=101&limit=100")
+            .await
+            .expect_err("must reject over-window page");
+        let response = error.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["title"], "Validation Failed");
+        assert!(
+            json["type"]
+                .as_str()
+                .is_some_and(|t| t.ends_with("/validation-error")),
+            "type missing validation-error: {json}"
+        );
+        assert!(json["errors"].is_array(), "errors[] missing: {json}");
+        assert!(
+            json["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["field"] == "page"),
+            "page field error missing: {json}"
+        );
+
+        // Old case: very large page is now rejected (red-proof flip).
+        assert!(
+            extract("/items?page=999999&limit=100").await.is_err(),
+            "large page must be rejected"
+        );
+        // Overflow-safe: huge page value must not panic/wrap.
+        assert!(
+            extract("/items?page=4294967295&limit=100").await.is_err(),
+            "u32::MAX page must be rejected safely"
         );
     }
 

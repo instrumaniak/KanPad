@@ -65,22 +65,22 @@ describe('useProjects', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toEqual(mockProjects);
+    expect(result.current.data?.pages[0]).toEqual(mockProjects);
     expect(projectsApi.fetchProjects).toHaveBeenCalledTimes(1);
   });
 
-  it('includes the resolved page in the query key and fetch params', async () => {
+  it('includes the resolved limit in fetch params and starts at page 1', async () => {
     const mockProjects = pageFixture([]);
     const fetchMock = projectsApi.fetchProjects as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValue(mockProjects);
 
-    const { result } = renderHook(() => useProjects({ page: 2, limit: 10 }), {
+    const { result } = renderHook(() => useProjects({ limit: 10 }), {
       wrapper: createWrapper(),
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(fetchMock).toHaveBeenCalledWith({ page: 2, limit: 10 });
+    expect(fetchMock).toHaveBeenCalledWith(expect.objectContaining({ page: 1, limit: 10 }));
   });
 
   it('handles fetch error', async () => {
@@ -102,7 +102,7 @@ describe('useProjects', () => {
     const { result } = renderHook(() => useProjects(), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual(mockProjects);
+    expect(result.current.data?.pages[0]).toEqual(mockProjects);
   });
 });
 
@@ -321,10 +321,10 @@ describe('useUpdateProject post-boundary guard', () => {
 
     // Optimistic rename applied.
     await waitFor(() => {
-      const entries = queryClient.getQueriesData<{ data: { name: string }[] }>({
+      const entries = queryClient.getQueriesData<{ pages: Array<{ data: { name: string }[] }> }>({
         queryKey: ['projects'],
       });
-      expect(entries[0]?.[1]?.data?.[0]?.name).toBe('Updated');
+      expect(entries[0]?.[1]?.pages?.[0]?.data?.[0]?.name).toBe('Updated');
     });
 
     // Session boundary lands while the mutation is in flight.
@@ -367,9 +367,9 @@ describe('useUpdateProject post-boundary guard', () => {
 
     // Same epoch — the previous snapshot MUST be restored (guard must not
     // over-fence: rollback only dies at a session boundary).
-    const entries = queryClient.getQueriesData<{ data: { name: string }[] }>({
+    const entries = queryClient.getQueriesData<{ pages: Array<{ data: { name: string }[] }> }>({
       queryKey: ['projects'],
     });
-    expect(entries[0]?.[1]?.data?.[0]?.name).toBe('Original');
+    expect(entries[0]?.[1]?.pages?.[0]?.data?.[0]?.name).toBe('Original');
   });
 });

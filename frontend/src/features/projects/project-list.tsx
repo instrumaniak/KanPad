@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -12,6 +13,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { useToastHelpers } from '@/lib/toast-helpers';
 import {
+  flattenProjectPages,
   useProjects,
   useCreateProject,
   useUpdateProject,
@@ -147,6 +149,7 @@ function DeleteDialog({
   onDeleted: () => void;
 }) {
   const deleteMutation = useDeleteProject();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const { showError } = useToastHelpers();
 
@@ -164,6 +167,7 @@ function DeleteDialog({
           onClick: async () => {
             try {
               await recreateProject(deletedName);
+              await queryClient.invalidateQueries({ queryKey: ['projects'] });
               toast({ title: 'Project restored', type: 'success' });
             } catch (err) {
               toast({
@@ -260,7 +264,16 @@ export function ProjectList() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
-  const { data, isLoading, isError, error, refetch } = useProjects();
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useProjects();
 
   const handleEdit = useCallback((id: number, name: string) => {
     setEditingId(id);
@@ -279,7 +292,7 @@ export function ProjectList() {
     setDeleteTarget({ id, name });
   }, []);
 
-  const projects = data?.data ?? [];
+  const projects = flattenProjectPages(data?.pages);
 
   if (isLoading) {
     return (
@@ -364,6 +377,20 @@ export function ProjectList() {
           ),
         )}
       </div>
+      {hasNextPage ? (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? 'Loading more...' : 'Load more projects'}
+          </Button>
+        </div>
+      ) : null}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {isFetchingNextPage ? 'Loading more projects' : !hasNextPage && projects.length > 0 ? `Showing all ${projects.length} projects` : ''}
+      </p>
 
       {deleteTarget && (
         <DeleteDialog

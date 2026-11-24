@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/loading-skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorState } from '@/components/error-state';
-import { useBoards, useRestoreBoard, type Board } from './use-boards';
+import { flattenPages, useBoards, useRestoreBoard, type Board } from './use-boards';
 import { BoardFormModal } from './board-form-modal';
 import { BoardCard, DeleteDialog } from './board-card';
 import { useToast } from '@/components/ui/use-toast';
@@ -15,11 +15,20 @@ export function BoardList() {
   const [editingBoard, setEditingBoard] = useState<Board | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
-  const { data: boardsData, isLoading, isError, error, refetch } = useBoards();
+  const {
+    data: boardsData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useBoards();
   const restoreMutation = useRestoreBoard();
   const { toast } = useToast();
 
-  const boards = boardsData?.data ?? [];
+  const boards = flattenPages(boardsData?.pages);
 
   const handleEdit = useCallback((board: Board) => {
     setEditingBoard(board);
@@ -112,6 +121,20 @@ export function BoardList() {
           <BoardCard key={board.id} board={board} onEdit={handleEdit} onDelete={handleDelete} />
         ))}
       </div>
+      {hasNextPage ? (
+        <div className="mt-6 flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? 'Loading more...' : 'Load more boards'}
+          </Button>
+        </div>
+      ) : null}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {isFetchingNextPage ? 'Loading more boards' : !hasNextPage && boards.length > 0 ? `Showing all ${boards.length} boards` : ''}
+      </p>
 
       <BoardFormModal
         mode="create"

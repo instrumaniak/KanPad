@@ -101,8 +101,10 @@ pub struct ColumnResponse {
     pub position: i32,
     /// Owning board id.
     pub board_id: BoardId,
-    /// Nested card summaries (sort-key order).
+    /// Nested card summaries (sort-key order; first N embedded, rest via pagination).
     pub cards: Vec<CardSummary>,
+    /// Total cards in this column (authoritative; may exceed `cards.len()`).
+    pub total_cards: u64,
     /// `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC).
     pub created_at: String,
     /// `updated_at`, same shape.

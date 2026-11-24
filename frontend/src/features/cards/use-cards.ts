@@ -134,9 +134,11 @@ export function useMoveCard() {
         });
       }
     },
-    onSettled: (_data, _err, variables) => {
+    onSettled: (_data, err, variables) => {
       queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.id) });
-      queryClient.invalidateQueries({ queryKey: ['columns'] });
+      if (err) {
+        queryClient.invalidateQueries({ queryKey: ['columns'] });
+      }
     },
   });
 }

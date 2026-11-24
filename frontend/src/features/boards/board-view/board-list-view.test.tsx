@@ -17,6 +17,10 @@ vi.mock('@/components/ui/use-toast', () => ({
   useToast: () => ({ toast: mockToast }),
 }));
 
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ setQueryData: vi.fn(), getQueryData: vi.fn() }),
+}));
+
 vi.mock('../../cards/card-detail-panel', () => ({
   CardDetailPanel: ({ card, open }: { card: { title: string }; open: boolean }) =>
     open ? <div data-testid="detail-panel">{card.title}</div> : null,

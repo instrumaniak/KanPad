@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToastHelpers } from '@/lib/toast-helpers';
 import { useCreateBoard, useUpdateBoard } from './use-boards';
-import { useCreateProject, useProjects } from '../projects/use-projects';
+import { useCreateProject, useProjects, flattenProjectPages } from '../projects/use-projects';
 import { Plus, Pencil } from 'lucide-react';
 
 export type BoardProjectMode = 'select' | 'new';
@@ -225,7 +225,7 @@ function BoardFormContent({
   const navigate = useNavigate();
 
   const isPending = createBoard.isPending || updateBoard.isPending || createProject.isPending;
-  const projects = projectsData?.data ?? [];
+  const projects = flattenProjectPages(projectsData?.pages);
   const trimmed = name.trim();
   const trimmedNewProject = newProjectName.trim();
   const isNewProjectMode = projectMode === 'new';

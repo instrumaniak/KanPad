@@ -308,12 +308,19 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
       // Same-column reorder
       const overData = over.data.current as { card?: Card; index?: number };
       const cards = sourceColumn.cards;
+      const sourceTotal = (sourceColumn as Column & { total_cards?: number }).total_cards ?? cards.length;
+      const sourceHasUnloaded = cards.length < sourceTotal;
 
       let newIndex: number;
       if (overData?.card) {
         const cardIdx = cards.findIndex((c) => c.id === overData.card!.id);
         newIndex = cardIdx !== -1 ? cardIdx : cards.length - 1;
       } else {
+        if (sourceHasUnloaded) {
+          toast({ title: 'Load more cards before dropping at the end of this column', type: 'error' });
+          queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+          return;
+        }
         newIndex = cards.length - 1;
       }
 
@@ -358,19 +365,23 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
 
       const overData = over.data.current as { card?: Card; index?: number };
       const targetCards = targetColumn.cards;
+      const targetTotal = (targetColumn as Column & { total_cards?: number }).total_cards ?? targetCards.length;
+      const targetHasUnloaded = targetCards.length < targetTotal;
 
       let insertIndex: number;
       if (overData?.card) {
         const cardIdx = targetCards.findIndex((c) => c.id === overData.card!.id);
         insertIndex = cardIdx !== -1 ? cardIdx : targetCards.length;
       } else {
+        if (targetHasUnloaded) {
+          toast({ title: 'Load more cards before dropping at the end of this column', type: 'error' });
+          queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+          return;
+        }
         insertIndex = targetCards.length;
       }
 
-      const next = moveCardToColumn(columns, cardId, targetColumnId, insertIndex, activeData.card);
-      if (next !== columns) {
-        setColumns(() => next);
-      }
+      setColumns((old) => moveCardToColumn(old, cardId, targetColumnId, insertIndex, activeData.card));
 
       try {
         await moveCardMutation.mutateAsync({ id: cardId, data: { column_id: targetColumnId, position: insertIndex } });

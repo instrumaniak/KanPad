@@ -111,7 +111,7 @@ tasks:
     critical: false
   T022:
     name: Pagination UX + page ceilings
-    status: pending
+    status: done
     depends:
       - T021
     phase: 1
@@ -289,7 +289,7 @@ tasks:
     critical: false
   T047:
     name: "fe perf issues: dnd, scroll perf"
-    status: in_progress
+    status: done
     depends: ~
     phase: 0
     critical: false

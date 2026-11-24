@@ -45,6 +45,11 @@ vi.mock('../cards/card', () => ({
   ),
 }));
 
+vi.mock('./use-columns', () => ({
+  useLoadMoreColumnCards: () => ({ loadMore: vi.fn(), isFetching: false }),
+  COLUMN_CARD_PAGE_SIZE: 50,
+}));
+
 const makeCard = (id: number): Card => ({
   id,
   title: `Card ${id}`,

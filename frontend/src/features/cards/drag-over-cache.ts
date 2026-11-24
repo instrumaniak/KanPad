@@ -84,7 +84,21 @@ export function moveCardToColumn(
   }
   // Note: the source column is NOT reindexed (positions are array-order
   // bookkeeping; trailing cards keep their identity).
-  next[fromIndex] = { ...from, cards: from.cards.filter((c) => c.id !== cardId) };
-  next[targetIndex] = { ...target, cards: nextTargetCards };
+  const fromTotal = (from as Column & { total_cards?: number }).total_cards ?? from.cards.length;
+  const targetTotal = (target as Column & { total_cards?: number }).total_cards ?? target.cards.length;
+  next[fromIndex] = {
+    ...from,
+    cards: from.cards.filter((c) => c.id !== cardId),
+    ...(typeof (from as Column & { total_cards?: number }).total_cards === 'number'
+      ? { total_cards: Math.max(0, fromTotal - 1) }
+      : {}),
+  } as Column;
+  next[targetIndex] = {
+    ...target,
+    cards: nextTargetCards,
+    ...(typeof (target as Column & { total_cards?: number }).total_cards === 'number'
+      ? { total_cards: targetTotal + 1 }
+      : {}),
+  } as Column;
   return next;
 }

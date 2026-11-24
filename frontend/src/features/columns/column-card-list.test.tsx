@@ -24,6 +24,11 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
   return { ...actual, useDndMonitor: () => {} };
 });
 
+vi.mock('./use-columns', () => ({
+  useLoadMoreColumnCards: () => ({ loadMore: vi.fn(), isFetching: false }),
+  COLUMN_CARD_PAGE_SIZE: 50,
+}));
+
 // Keep the DOM light — the Card component's internals are covered by card.test.tsx.
 vi.mock('../cards/card', () => ({
   Card: ({ card, index }: { card: { id: number; title: string }; index: number }) => (

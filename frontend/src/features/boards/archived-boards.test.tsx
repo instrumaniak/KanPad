@@ -17,6 +17,8 @@ vi.mock('./use-boards', () => ({
   usePermanentDeleteBoard: () => mockUsePermanentDeleteBoard(),
   useUpdateBoard: () => mockUseUpdateBoard(),
   useArchiveBoard: () => mockUseArchiveBoard(),
+  flattenPages: (pages: Array<{ data: unknown[] }> | undefined) =>
+    pages?.flatMap((p) => p.data) ?? [],
 }));
 
 const createWrapper = () => {
@@ -45,6 +47,9 @@ describe('ArchivedBoards', () => {
       isError: false,
       error: null,
       refetch: vi.fn(),
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
     });
     mockUseRestoreBoard.mockReturnValue({
       mutateAsync: vi.fn().mockResolvedValue({}),
@@ -64,11 +69,14 @@ describe('ArchivedBoards', () => {
 
   it('renders empty state when no archived boards', () => {
     mockUseArchivedBoards.mockReturnValue({
-      data: { data: [], total: 0 },
+      data: { pages: [{ data: [], page: 1, limit: 50, total: 0 }], pageParams: [1] },
       isLoading: false,
       isError: false,
       error: null,
       refetch: vi.fn(),
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
     });
 
     const Wrapper = createWrapper();
@@ -79,15 +87,25 @@ describe('ArchivedBoards', () => {
   it('renders archived boards when data is available', () => {
     mockUseArchivedBoards.mockReturnValue({
       data: {
-        data: [
-          { id: 1, name: 'Archived Board 1', background_color: '#0079BF', is_archived: true },
+        pages: [
+          {
+            data: [
+              { id: 1, name: 'Archived Board 1', background_color: '#0079BF', is_archived: true },
+            ],
+            page: 1,
+            limit: 50,
+            total: 1,
+          },
         ],
-        total: 1,
+        pageParams: [1],
       },
       isLoading: false,
       isError: false,
       error: null,
       refetch: vi.fn(),
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
     });
 
     const Wrapper = createWrapper();

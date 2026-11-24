@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createNote,
   fetchNotes,
@@ -11,20 +11,42 @@ import type {
   CreateNoteData,
   UpdateNoteData,
   NoteFilters,
+  NoteSummary,
 } from './notes.api';
+import type { Page } from '@/lib/api/client';
 
 export const noteKeys = {
   all: () => ['notes'] as const,
-  list: (filters?: NoteFilters) => ['notes', 'list', filters] as const,
+  list: (filters?: Omit<NoteFilters, 'page'>) => ['notes', 'list', filters] as const,
   detail: (id: number) => ['notes', id] as const,
   byBoard: (boardId: number) => ['notes', 'board', boardId] as const,
 };
 
 export function useNotes(filters?: NoteFilters) {
-  return useQuery({
-    queryKey: noteKeys.list(filters),
-    queryFn: () => fetchNotes(filters),
+  const { page: _page, ...rest } = filters ?? {};
+  return useInfiniteQuery({
+    queryKey: noteKeys.list(rest),
+    queryFn: ({ pageParam }) => fetchNotes({ ...rest, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const loaded = lastPage.page * lastPage.limit;
+      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
+    },
   });
+}
+
+export function flattenNotePages(pages: Page<NoteSummary>[] | undefined): NoteSummary[] {
+  if (!pages) return [];
+  const seen = new Set<number>();
+  const out: NoteSummary[] = [];
+  for (const page of pages) {
+    for (const item of page.data) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 export function useNote(id: number) {

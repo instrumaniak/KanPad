@@ -9,12 +9,13 @@ import { useBreakpoint } from '@/hooks/use-breakpoint';
 
 interface ColumnProps {
   column: ColumnType;
+  boardId: number;
   nextColumnId?: number;
   moveTargets?: Array<Pick<ColumnType, 'id' | 'name'>>;
   onDeleted?: () => void;
 }
 
-export const Column = memo(function Column({ column, nextColumnId, moveTargets = [], onDeleted }: ColumnProps) {
+export const Column = memo(function Column({ column, boardId, nextColumnId, moveTargets = [], onDeleted }: ColumnProps) {
   const [newCardId, setNewCardId] = useState<number | undefined>();
   const breakpoint = useBreakpoint();
 
@@ -43,11 +44,17 @@ export const Column = memo(function Column({ column, nextColumnId, moveTargets =
         {({ isOver }) => (
           <>
             <div
-              className={`flex min-h-0 overflow-y-auto p-2 transition-colors kanpad-column-scroll ${
+              className={`flex min-h-0 flex-col transition-colors ${
                 isOver ? 'bg-teal-500/10' : ''
               }`}
             >
-              <ColumnCardList cards={column.cards} columnId={column.id} newCardId={newCardId} />
+              <ColumnCardList
+                cards={column.cards}
+                columnId={column.id}
+                boardId={boardId}
+                totalCards={(column as ColumnType & { total_cards?: number }).total_cards}
+                newCardId={newCardId}
+              />
             </div>
             <div className="p-2">
               <AddCardInput columnId={column.id} nextColumnId={nextColumnId} onCardCreated={handleCardCreated} />

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useNotes } from './use-notes';
+import { flattenNotePages, useNotes } from './use-notes';
 import { NoteCard } from './note-card';
 import { CreateNoteDialog } from './create-note-dialog';
 import { NoteEditor } from './note-editor';
@@ -70,8 +70,17 @@ export function NoteList() {
 
 
 
-  const { data, isLoading, isError, error, refetch } = useNotes(filters);
-  const notes = data?.data ?? [];
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useNotes(filters);
+  const notes = flattenNotePages(data?.pages);
 
   const handleDelete = () => {
     if (!deletingNote) return;
@@ -192,6 +201,20 @@ export function NoteList() {
                 onTagClick={handleTagClick}
               />
             ))}
+            {hasNextPage ? (
+              <div className="flex justify-center pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                >
+                  {isFetchingNextPage ? 'Loading more...' : 'Load more notes'}
+                </Button>
+              </div>
+            ) : null}
+            <p className="sr-only" aria-live="polite" aria-atomic="true">
+              {isFetchingNextPage ? 'Loading more notes' : !hasNextPage && notes.length > 0 ? `Showing all ${notes.length} notes` : ''}
+            </p>
           </div>
         )}
       </ScrollArea>

@@ -146,12 +146,23 @@ export function BoardView() {
   // Memoized counts — a double flatMap per render defeated identity stability on
   // every dragOver cache write (T021 / P4).
   const columnsForCounts = columns ?? EMPTY_COLUMNS;
+  const hasUnloadedCards = useMemo(
+    () =>
+      columnsForCounts.some(
+        (c) => ((c as typeof c & { total_cards?: number }).total_cards ?? c.cards.length) > c.cards.length,
+      ),
+    [columnsForCounts],
+  );
   const visibleCount = useMemo(
     () => filteredColumns.reduce((n, c) => n + (c.cards ?? []).length, 0),
     [filteredColumns],
   );
   const totalCount = useMemo(
-    () => columnsForCounts.reduce((n, c) => n + (c.cards ?? []).length, 0),
+    () =>
+      columnsForCounts.reduce(
+        (n, c) => n + ((c as typeof c & { total_cards?: number }).total_cards ?? c.cards.length),
+        0,
+      ),
     [columnsForCounts],
   );
   const isFilteredEmpty =
@@ -294,6 +305,11 @@ export function BoardView() {
         }}
         onClearAll={() => setFilters(DEFAULT_FILTER_STATE)}
       />
+      {(isSearching || hasActiveFilters) && hasUnloadedCards ? (
+        <p className="px-4 text-xs text-muted-foreground sm:px-6" role="status">
+          Searching loaded cards only. Load more cards to include remaining results.
+        </p>
+      ) : null}
       <p aria-live="polite" aria-atomic="true" className="sr-only">
         {isSearching || hasActiveFilters ? `${visibleCount} of ${totalCount} cards` : ''}
       </p>
@@ -307,8 +323,12 @@ export function BoardView() {
             <h2 className="text-lg font-semibold">No cards found</h2>
             <p className="text-sm text-muted-foreground">
               {isSearchEmpty
-                ? 'No cards match your search. Try a different term or clear the search.'
-                : 'No cards match your filters. Try different filters or clear them.'}
+                ? hasUnloadedCards
+                  ? 'No loaded cards match your search. Load more cards in columns or clear the search.'
+                  : 'No cards match your search. Try a different term or clear the search.'
+                : hasUnloadedCards
+                  ? 'No loaded cards match your filters. Load more cards in columns or clear filters.'
+                  : 'No cards match your filters. Try different filters or clear them.'}
             </p>
             <div className="flex gap-2">
               {isSearchEmpty && (
@@ -333,6 +353,7 @@ export function BoardView() {
                       <Column
                         key={column.id}
                         column={column}
+                        boardId={id}
                         nextColumnId={nextColumnIdById.get(column.id)}
                         moveTargets={moveTargets}
                       />
@@ -351,6 +372,7 @@ export function BoardView() {
                       <Column
                         key={column.id}
                         column={column}
+                        boardId={id}
                         nextColumnId={nextColumnIdById.get(column.id)}
                         moveTargets={moveTargets}
                       />

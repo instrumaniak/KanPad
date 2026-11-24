@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, Plus, Trash2, Letters } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { fetchCards } from '../../cards/cards.api';
+import { COLUMN_CARD_PAGE_SIZE } from '../../columns/use-columns';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +81,49 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const updateCard = useUpdateCard();
   const deleteCardMutation = useDeleteCard();
   const createCardMutation = useCreateCard();
+  const queryClient = useQueryClient();
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const hasUnloadedCards = useMemo(
+    () =>
+      columns.some(
+        (c) => ((c as BoardColumn & { total_cards?: number }).total_cards ?? c.cards.length) > c.cards.length,
+      ),
+    [columns],
+  );
+
+  const loadMoreCards = useCallback(async () => {
+    if (isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const targets = columns.filter(
+        (c) => ((c as BoardColumn & { total_cards?: number }).total_cards ?? c.cards.length) > c.cards.length,
+      );
+      for (const col of targets) {
+        const total = (col as BoardColumn & { total_cards?: number }).total_cards ?? col.cards.length;
+        if (col.cards.length >= total) continue;
+        const nextPage = Math.floor(col.cards.length / COLUMN_CARD_PAGE_SIZE) + 1;
+        const res = await fetchCards(col.id, nextPage, COLUMN_CARD_PAGE_SIZE);
+        queryClient.setQueryData<BoardColumn[]>(['columns', boardId], (old) => {
+          if (!old) return old;
+          return old.map((c) => {
+            if (c.id !== col.id) return c;
+            const seen = new Set(c.cards.map((card) => card.id));
+            const merged = [...c.cards];
+            for (const card of res.data) {
+              if (seen.has(card.id)) continue;
+              seen.add(card.id);
+              merged.push(card as BoardColumn['cards'][number]);
+            }
+            return { ...c, cards: merged };
+          });
+        });
+      }
+    } catch (err) {
+      showError('Failed to load more cards', err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [boardId, columns, isLoadingMore, queryClient]);
 
   const sortedColumns = useMemo(
     () => [...columns].sort((a, b) => a.position - b.position),
@@ -305,6 +351,19 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
           </Button>
         </div>
       </div>
+      {hasUnloadedCards ? (
+        <div className="flex items-center gap-2 px-6 py-1 text-xs text-muted-foreground" role="status">
+          <span>Showing loaded cards only. Some columns have more cards.</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void loadMoreCards()}
+            disabled={isLoadingMore}
+          >
+            {isLoadingMore ? 'Loading...' : 'Load more cards'}
+          </Button>
+        </div>
+      ) : null}
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-6 pb-6" data-testid="board-list-scroll">
         {sortedCards.length === 0 ? (

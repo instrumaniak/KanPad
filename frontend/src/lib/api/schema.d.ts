@@ -1122,7 +1122,7 @@ export interface components {
         ColumnResponse: {
             /** @description Owning board id. */
             board_id: components["schemas"]["BoardId"];
-            /** @description Nested card summaries (sort-key order). */
+            /** @description Nested card summaries (sort-key order; first N embedded, rest via pagination). */
             cards: components["schemas"]["CardSummary"][];
             /** @description `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC). */
             created_at: string;
@@ -1135,6 +1135,11 @@ export interface components {
              * @description Zero-based position (computed; sort-key order on the wire).
              */
             position: number;
+            /**
+             * Format: int64
+             * @description Total cards in this column (authoritative; may exceed `cards.len()`).
+             */
+            total_cards: number;
             /** @description `updated_at`, same shape. */
             updated_at: string;
         };

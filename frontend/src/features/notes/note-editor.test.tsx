@@ -47,10 +47,12 @@ vi.mock('./markdown-renderer', () => ({
 
 vi.mock('@/features/boards/use-boards', () => ({
   useBoards: () => ({ data: undefined }),
+  flattenPages: (pages: Array<{ data: unknown[] }> | undefined) => pages?.flatMap((p) => p.data) ?? [],
 }));
 
 vi.mock('@/features/projects/use-projects', () => ({
   useProjects: () => ({ data: undefined }),
+  flattenProjectPages: (pages: Array<{ data: unknown[] }> | undefined) => pages?.flatMap((p) => p.data) ?? [],
 }));
 
 vi.mock('@/features/columns/use-columns', () => ({

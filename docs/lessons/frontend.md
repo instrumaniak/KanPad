@@ -176,3 +176,12 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - Heap guard: `HeapProfiler.collectGarbage` twice before each sample + settle delay;
   fixed board set so React Query cache growth plateaus.
 - navToNetworkIdleMs is dev-mode tripwire, NOT NFR-enforcing.
+
+### T022 — Infinite load-more + board hydration (2026-11-24)
+- **Tag:** `react-query,pagination,virtualization,dnd`
+- **Changing a query hook from `useQuery` to `useInfiniteQuery` is a contract change.** Every consumer, mock, and optimistic update must switch from `data.data`/page-shaped cache to `InfiniteData.pages/pageParams`. Grep for hook callers and test mocks; add flatten+dedupe helpers and keep `invalidateQueries` prefix keys stable.
+- **Keep one canonical DnD/render cache.** For partial board hydration, merge extra card pages into `['columns', boardId]` (the DnD cache) instead of creating a second per-column source. Dedupe by card id, preserve stable order, and guard in-flight loads.
+- **Do not add a second scroll container around a virtualized list.** The virtualizer/IO sentinel needs one scroll root. An outer `overflow-y-auto` wrapper around `ColumnCardList` created nested scroll/padding and broke layout contract; keep the virtual list as the sole scroller.
+- **Cross-column cache moves must update totals.** When moving cards between columns in the columns cache, update `total_cards` alongside `cards` or hasMore/unloaded-end guards become stale.
+- **Load-more failures need UI feedback.** Fire-and-forget `void loadMore()` with no catch produces silent unhandled rejections. Return/capture error state and render a retry affordance.
+- **DnD success should not wipe hydrated pages.** Broad `invalidateQueries(['columns'])` on settled move mutations resets board hydration to first page; prefer invalidation on error or a coherent refetch strategy. Reset-to-first-page is acceptable only when explicit and safe.

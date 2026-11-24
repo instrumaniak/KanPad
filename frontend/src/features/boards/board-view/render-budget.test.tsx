@@ -73,6 +73,8 @@ vi.mock('../../columns/use-columns', () => ({
   useDeleteColumn: () => ({ mutate: vi.fn(), isPending: false }),
   useSortCards: () => ({ mutate: vi.fn(), isPending: false }),
   useMoveAllCards: () => ({ mutate: vi.fn(), isPending: false }),
+  useLoadMoreColumnCards: () => ({ loadMore: vi.fn(), isFetching: false }),
+  COLUMN_CARD_PAGE_SIZE: 50,
 }));
 
 vi.mock('../../cards/drag-drop-context', () => ({

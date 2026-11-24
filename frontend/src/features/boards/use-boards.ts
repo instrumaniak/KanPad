@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchBoards,
   fetchBoard,
@@ -25,24 +25,42 @@ function sanitizeProjectId(projectId?: number): number | undefined {
     : undefined;
 }
 
-function sanitizePage(page?: number): number | undefined {
-  return page !== undefined && Number.isInteger(page) && page >= 1 ? page : undefined;
-}
-
 function sanitizeLimit(limit?: number): number | undefined {
   return limit !== undefined && Number.isInteger(limit) && limit >= 1 && limit <= 100
     ? limit
     : undefined;
 }
 
-export function useBoards(projectId?: number, page?: number, limit?: number) {
+export function useBoards(projectId?: number, limit?: number) {
   const project_id = sanitizeProjectId(projectId);
-  const cleanPage = sanitizePage(page);
   const cleanLimit = sanitizeLimit(limit);
-  return useQuery({
-    queryKey: ['boards', project_id, cleanPage, cleanLimit],
-    queryFn: () => fetchBoards({ project_id, page: cleanPage, limit: cleanLimit }),
+  return useInfiniteQuery({
+    queryKey: ['boards', project_id, cleanLimit],
+    queryFn: ({ pageParam }) =>
+      fetchBoards({ project_id, page: pageParam, limit: cleanLimit }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const loaded = lastPage.page * lastPage.limit;
+      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
+    },
   });
+}
+
+export function flattenPages<T>(pages: { data: T[] }[] | undefined): T[] {
+  if (!pages) return [];
+  const seen = new Set<unknown>();
+  const out: T[] = [];
+  for (const page of pages) {
+    for (const item of page.data) {
+      const id = (item as { id?: unknown }).id;
+      if (id !== undefined) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 export function useBoard(id: number) {
@@ -117,11 +135,16 @@ export function usePermanentDeleteBoard() {
   });
 }
 
-export function useArchivedBoards(page?: number, limit?: number) {
-  const cleanPage = sanitizePage(page);
+export function useArchivedBoards(limit?: number) {
   const cleanLimit = sanitizeLimit(limit);
-  return useQuery({
-    queryKey: ['archivedBoards', cleanPage, cleanLimit],
-    queryFn: () => fetchArchivedBoards({ page: cleanPage, limit: cleanLimit }),
+  return useInfiniteQuery({
+    queryKey: ['archivedBoards', cleanLimit],
+    queryFn: ({ pageParam }) =>
+      fetchArchivedBoards({ page: pageParam, limit: cleanLimit }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const loaded = lastPage.page * lastPage.limit;
+      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
+    },
   });
 }

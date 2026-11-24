@@ -32,26 +32,34 @@ const renderWithProviders = (ui: React.ReactElement) => {
 };
 
 const mockNotesData = {
-  data: [
+  pages: [
     {
-      id: 1,
-      title: 'First Note',
-      content: 'Content 1',
-      user_id: 1,
-      tags: [],
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-06-15T00:00:00Z',
-    },
-    {
-      id: 2,
-      title: 'Second Note',
-      content: 'Content 2',
-      user_id: 1,
-      tags: [],
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-06-15T00:00:00Z',
+      data: [
+        {
+          id: 1,
+          title: 'First Note',
+          content: 'Content 1',
+          user_id: 1,
+          tags: [],
+          created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-06-15T00:00:00Z',
+        },
+        {
+          id: 2,
+          title: 'Second Note',
+          content: 'Content 2',
+          user_id: 1,
+          tags: [],
+          created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-06-15T00:00:00Z',
+        },
+      ],
+      page: 1,
+      limit: 50,
+      total: 2,
     },
   ],
+  pageParams: [1],
 };
 
 const mockUseNotes = vi.fn();
@@ -61,6 +69,8 @@ const mockMutate = vi.fn();
 vi.mock('./use-notes', () => ({
   useNotes: () => mockUseNotes(),
   useDeleteNote: () => mockUseDeleteNote(),
+  flattenNotePages: (pages: Array<{ data: unknown[] }> | undefined) =>
+    pages?.flatMap((p) => p.data) ?? [],
 }));
 
 vi.mock('./note-card', () => ({
@@ -95,7 +105,7 @@ vi.mock('@/components/ui/use-toast', () => ({
 describe('NoteList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseNotes.mockReturnValue({ data: mockNotesData, isLoading: false, isError: false });
+    mockUseNotes.mockReturnValue({ data: mockNotesData, isLoading: false, isError: false, hasNextPage: false, fetchNextPage: vi.fn(), isFetchingNextPage: false });
     mockUseDeleteNote.mockReturnValue({ mutate: mockMutate });
   });
 
@@ -125,14 +135,14 @@ describe('NoteList', () => {
   });
 
   it('shows loading skeleton when loading', () => {
-    mockUseNotes.mockReturnValue({ data: undefined, isLoading: true });
+    mockUseNotes.mockReturnValue({ data: undefined, isLoading: true, isError: false, hasNextPage: false, fetchNextPage: vi.fn(), isFetchingNextPage: false });
     renderWithProviders(<NoteList />);
     const skeletons = document.querySelectorAll('.rounded-lg.border');
     expect(skeletons.length).toBe(4);
   });
 
   it('shows empty state when no notes', () => {
-    mockUseNotes.mockReturnValue({ data: { data: [] }, isLoading: false });
+    mockUseNotes.mockReturnValue({ data: { pages: [{ data: [], page: 1, limit: 50, total: 0 }], pageParams: [1] }, isLoading: false, isError: false, hasNextPage: false, fetchNextPage: vi.fn(), isFetchingNextPage: false });
     renderWithProviders(<NoteList />);
     expect(screen.getByText(/No notes yet/)).toBeInTheDocument();
   });

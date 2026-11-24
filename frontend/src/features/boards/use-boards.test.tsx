@@ -53,42 +53,42 @@ describe('useBoards', () => {
     (fetchBoards as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [],
       page: 1,
-      limit: 20,
+      limit: 50,
       total: 0,
     });
     const { result } = renderHook(() => useBoards(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(fetchBoards).toHaveBeenCalledWith({
       project_id: undefined,
-      page: undefined,
+      page: 1,
       limit: undefined,
     });
   });
 
-  it('fetches boards with projectId and pagination', async () => {
+  it('fetches boards with projectId and limit', async () => {
     (fetchBoards as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [],
-      page: 2,
+      page: 1,
       limit: 10,
       total: 0,
     });
-    const { result } = renderHook(() => useBoards(5, 2, 10), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useBoards(5, 10), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(fetchBoards).toHaveBeenCalledWith({ project_id: 5, page: 2, limit: 10 });
+    expect(fetchBoards).toHaveBeenCalledWith({ project_id: 5, page: 1, limit: 10 });
   });
 
   it('sanitizes garbage so the strict backend never sees it', async () => {
     (fetchBoards as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [],
       page: 1,
-      limit: 20,
+      limit: 50,
       total: 0,
     });
-    renderHook(() => useBoards(NaN, 0, 500), { wrapper: createWrapper() });
+    renderHook(() => useBoards(NaN, 500), { wrapper: createWrapper() });
     await waitFor(() =>
       expect(fetchBoards).toHaveBeenCalledWith({
         project_id: undefined,
-        page: undefined,
+        page: 1,
         limit: undefined,
       }),
     );
@@ -200,11 +200,11 @@ describe('useArchivedBoards', () => {
     (fetchArchivedBoards as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [],
       page: 1,
-      limit: 20,
+      limit: 50,
       total: 0,
     });
     const { result } = renderHook(() => useArchivedBoards(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(fetchArchivedBoards).toHaveBeenCalledWith({ page: undefined, limit: undefined });
+    expect(fetchArchivedBoards).toHaveBeenCalledWith({ page: 1, limit: undefined });
   });
 });

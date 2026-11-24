@@ -321,12 +321,12 @@ where
     E: MySqlExecutor<'e>,
 {
     let ordering = match (sort, order) {
-        ("name", "asc") => "b.`name` ASC",
-        ("name", "desc") => "b.`name` DESC",
-        ("created_at", "asc") => "b.`created_at` ASC",
-        ("created_at", "desc") => "b.`created_at` DESC",
-        ("updated_at", "asc") => "b.`updated_at` ASC",
-        _ => "b.`updated_at` DESC",
+        ("name", "asc") => "b.`name` ASC, b.`id` ASC",
+        ("name", "desc") => "b.`name` DESC, b.`id` DESC",
+        ("created_at", "asc") => "b.`created_at` ASC, b.`id` ASC",
+        ("created_at", "desc") => "b.`created_at` DESC, b.`id` DESC",
+        ("updated_at", "asc") => "b.`updated_at` ASC, b.`id` ASC",
+        _ => "b.`updated_at` DESC, b.`id` DESC",
     };
     let mut builder = QueryBuilder::new(
         "SELECT b.`id`, b.`name`, b.`background_color`, \

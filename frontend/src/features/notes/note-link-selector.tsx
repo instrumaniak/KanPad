@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
-import { useBoards } from '@/features/boards/use-boards';
-import { useProjects } from '@/features/projects/use-projects';
+import { flattenPages, useBoards } from '@/features/boards/use-boards';
+import { flattenProjectPages, useProjects } from '@/features/projects/use-projects';
 import { useColumns } from '@/features/columns/use-columns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,8 +36,8 @@ export function NoteLinkSelector({
   const { data: projectsData, isLoading: projectsLoading } = useProjects();
   const { data: columnsData, isLoading: columnsLoading } = useColumns(linkBoardId ?? 0);
 
-  const boards = boardsData?.data ?? [];
-  const projects = projectsData?.data ?? [];
+  const boards = flattenPages(boardsData?.pages);
+  const projects = flattenProjectPages(projectsData?.pages);
   const columnsDataSafe = useMemo(() => columnsData ?? [], [columnsData]);
   const cards = useMemo(() => columnsDataSafe.flatMap((col) => col.cards ?? []), [columnsDataSafe]);
 

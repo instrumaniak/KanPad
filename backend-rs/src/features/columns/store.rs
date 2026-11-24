@@ -443,12 +443,14 @@ where
 /// Render [`ColumnRow`]s + their card summaries for the wire (single owner —
 /// see [`super::types::format_timestamp`]). `summaries` maps
 /// `column_id → cards[]` (missing key = no cards, never an error).
+/// `totals` maps `column_id → total_cards` (authoritative count; missing key = 0).
 pub fn to_response(
     rows: Vec<ColumnRow>,
     summaries: &std::collections::HashMap<i32, Vec<crate::common::card_summary::CardSummary>>,
+    totals: &std::collections::HashMap<i32, u64>,
 ) -> Vec<ColumnResponse> {
     rows.into_iter()
-        .map(|row| to_response_one(row, summaries))
+        .map(|row| to_response_one(row, summaries, totals))
         .collect()
 }
 
@@ -462,14 +464,18 @@ pub fn to_response(
 pub fn to_response_one(
     row: ColumnRow,
     summaries: &std::collections::HashMap<i32, Vec<crate::common::card_summary::CardSummary>>,
+    totals: &std::collections::HashMap<i32, u64>,
 ) -> ColumnResponse {
-    let cards = summaries.get(&row.id.get()).cloned().unwrap_or_default();
+    let col_id = row.id.get();
+    let cards = summaries.get(&col_id).cloned().unwrap_or_default();
+    let total_cards = totals.get(&col_id).copied().unwrap_or(cards.len() as u64);
     ColumnResponse {
         id: row.id,
         name: row.name,
         position: row.position,
         board_id: row.board_id,
         cards,
+        total_cards,
         created_at: format_timestamp(&row.created_at),
         updated_at: format_timestamp(&row.updated_at),
     }

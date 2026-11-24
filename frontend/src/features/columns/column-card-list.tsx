@@ -1,10 +1,11 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDndMonitor } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/react-virtual';
 import type { Card } from '../cards/use-cards';
 import { PerfProfiler } from '@/lib/perf-profiler';
 import { Card as CardComponent } from '../cards/card';
+import { useLoadMoreColumnCards } from './use-columns';
 
 // Upper bound of a typical card face height (p-3 padding + title line + up to
 // two badge rows + a checklist row). Only used until the row is measured —
@@ -19,10 +20,12 @@ const EMPTY_CARDS: Card[] = [];
 interface ColumnCardListProps {
   cards: Card[];
   columnId?: number;
+  boardId?: number;
+  totalCards?: number;
   newCardId?: number;
 }
 
-export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, newCardId }: ColumnCardListProps) {
+export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, boardId, totalCards, newCardId }: ColumnCardListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Track only the active drag id. useDndContext() re-renders on every
   // drag move/over; useDndMonitor fires callbacks without subscribing to
@@ -38,6 +41,27 @@ export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, ne
   // drop focus to <body> (WCAG 2.4.3 focus order).
   const [focusedCardId, setFocusedCardId] = useState<number | null>(null);
   const cardList = cards ?? EMPTY_CARDS;
+  const { loadMore, isFetching: isFetchingMore, error: loadMoreError } = useLoadMoreColumnCards(boardId ?? 0, columnId ?? 0);
+  const hasMore = (totalCards ?? cardList.length) > cardList.length;
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!hasMore || !boardId || !columnId) return;
+    const root = scrollRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          void loadMore();
+        }
+      },
+      { root, rootMargin: '200px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, boardId, columnId, loadMore, cardList.length]);
   // Pin the in-flight dragged row in the rendered range so dnd-kit never loses
   // its measured node mid-drag (react-virtual has no stickyIndices). For
   // cross-column drags the card is removed from this column and pinned in the
@@ -84,7 +108,7 @@ export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, ne
     directDomUpdates: true,
   });
 
-  if (cardList.length === 0) {
+  if (cardList.length === 0 && !hasMore) {
     return null;
   }
 
@@ -131,6 +155,23 @@ export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, ne
           })}
         </div>
       </SortableContext>
+      {hasMore ? (
+        <div className="px-1 pb-2">
+          <div ref={sentinelRef} data-testid="column-cards-sentinel" />
+          <button
+            type="button"
+            className="w-full rounded-md border border-dashed px-2 py-2 text-xs text-muted-foreground hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => void loadMore()}
+            disabled={isFetchingMore}
+            aria-label={`Load more cards for column ${columnId ?? ''}`}
+          >
+            {isFetchingMore ? 'Loading more cards...' : loadMoreError ? 'Retry loading cards' : 'Load more cards'}
+          </button>
+          {loadMoreError ? (
+            <p className="mt-1 text-xs text-destructive" role="status">Failed to load more cards.</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
     </PerfProfiler>
   );

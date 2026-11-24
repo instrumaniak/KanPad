@@ -2158,6 +2158,7 @@
           "position",
           "board_id",
           "cards",
+          "total_cards",
           "created_at",
           "updated_at"
         ],
@@ -2171,7 +2172,7 @@
             "items": {
               "$ref": "#/components/schemas/CardSummary"
             },
-            "description": "Nested card summaries (sort-key order)."
+            "description": "Nested card summaries (sort-key order; first N embedded, rest via pagination)."
           },
           "created_at": {
             "type": "string",
@@ -2189,6 +2190,12 @@
             "type": "integer",
             "format": "int32",
             "description": "Zero-based position (computed; sort-key order on the wire)."
+          },
+          "total_cards": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total cards in this column (authoritative; may exceed `cards.len()`).",
+            "minimum": 0
           },
           "updated_at": {
             "type": "string",

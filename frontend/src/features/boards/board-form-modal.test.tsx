@@ -33,12 +33,18 @@ vi.mock('./use-boards', () => ({
 vi.mock('../projects/use-projects', () => ({
   useProjects: () => ({
     data: {
-      data: [
-        { id: 1, name: 'Project 1' },
-        { id: 2, name: 'Project 2' },
+      pages: [
+        {
+          data: [
+            { id: 1, name: 'Project 1' },
+            { id: 2, name: 'Project 2' },
+          ],
+        },
       ],
     },
   }),
+  flattenProjectPages: (pages: Array<{ data: Array<{ id: number; name: string }> }> | undefined) =>
+    pages?.flatMap((p) => p.data) ?? [],
   useCreateProject: () => ({
     mutateAsync: mockCreateProjectMutate,
     isPending: mockState.projectsPending,

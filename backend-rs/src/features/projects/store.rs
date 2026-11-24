@@ -103,12 +103,12 @@ where
     E: MySqlExecutor<'e>,
 {
     let ordering = match (sort, order) {
-        ("name", "asc") => "p.`name` ASC",
-        ("name", "desc") => "p.`name` DESC",
-        ("updated_at", "asc") => "p.`updated_at` ASC",
-        ("updated_at", "desc") => "p.`updated_at` DESC",
-        ("created_at", "asc") => "p.`created_at` ASC",
-        _ => "p.`created_at` DESC",
+        ("name", "asc") => "p.`name` ASC, p.`id` ASC",
+        ("name", "desc") => "p.`name` DESC, p.`id` DESC",
+        ("updated_at", "asc") => "p.`updated_at` ASC, p.`id` ASC",
+        ("updated_at", "desc") => "p.`updated_at` DESC, p.`id` DESC",
+        ("created_at", "asc") => "p.`created_at` ASC, p.`id` ASC",
+        _ => "p.`created_at` DESC, p.`id` DESC",
     };
     let mut builder = QueryBuilder::new(
         "SELECT p.`id`, p.`name`, CAST(COUNT(b.`id`) AS SIGNED) AS `board_count`, \

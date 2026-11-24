@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import {
   fetchProjects,
   createProject as createProjectApi,
@@ -11,12 +11,33 @@ import {
 import { currentSessionEpoch } from '@/lib/query-client-reset';
 
 export function useProjects(query: ProjectsQuery = {}) {
-  const resolved = resolveProjectsQuery(query);
-  return useQuery({
-    queryKey: ['projects', resolved],
-    queryFn: () => fetchProjects(resolved),
+  const { page: _page, ...rest } = query;
+  const resolved = resolveProjectsQuery(rest);
+  const { page: _resolvedPage, ...base } = resolved;
+  return useInfiniteQuery({
+    queryKey: ['projects', base],
+    queryFn: ({ pageParam }) => fetchProjects({ ...base, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const loaded = lastPage.page * lastPage.limit;
+      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
+    },
     staleTime: 5 * 60 * 1000,
   });
+}
+
+export function flattenProjectPages(pages: ProjectsPage[] | undefined) {
+  if (!pages) return [];
+  const seen = new Set<number>();
+  const out: ProjectsPage['data'] = [];
+  for (const page of pages) {
+    for (const item of page.data) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 export function useCreateProject() {
@@ -37,13 +58,16 @@ export function useUpdateProject() {
     mutationFn: ({ id, name }: { id: number; name: string }) => updateProjectApi(id, name),
     onMutate: async ({ id, name }) => {
       await queryClient.cancelQueries({ queryKey: ['projects'] });
-      const previous = queryClient.getQueriesData<ProjectsPage>({ queryKey: ['projects'] });
+      const previous = queryClient.getQueriesData<InfiniteData<ProjectsPage>>({ queryKey: ['projects'] });
 
-      queryClient.setQueriesData<ProjectsPage>({ queryKey: ['projects'] }, (old) => {
-        if (!old) return old;
+      queryClient.setQueriesData<InfiniteData<ProjectsPage>>({ queryKey: ['projects'] }, (old) => {
+        if (!old || !('pages' in old)) return old;
         return {
           ...old,
-          data: old.data.map((p) => (p.id === id ? { ...p, name } : p)),
+          pages: old.pages.map((page) => ({
+            ...page,
+            data: page.data.map((p) => (p.id === id ? { ...p, name } : p)),
+          })),
         };
       });
 

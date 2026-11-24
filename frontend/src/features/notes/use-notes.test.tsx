@@ -39,22 +39,24 @@ describe('useNotes', () => {
   });
 
   it('fetches notes list', async () => {
-    mockFetchNotes.mockResolvedValue({ data: [{ id: 1, title: 'Note 1' }] });
+    const page = { data: [{ id: 1, title: 'Note 1' }], page: 1, limit: 50, total: 1 };
+    mockFetchNotes.mockResolvedValue(page);
 
     const { result } = renderHook(() => useNotes(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ data: [{ id: 1, title: 'Note 1' }] });
-    expect(mockFetchNotes).toHaveBeenCalledWith(undefined);
+    expect(result.current.data?.pages[0]).toEqual(page);
+    expect(mockFetchNotes).toHaveBeenCalledWith({ page: 1 });
   });
 
   it('fetches notes with filters', async () => {
-    mockFetchNotes.mockResolvedValue({ data: [] });
+    const page = { data: [], page: 1, limit: 50, total: 0 };
+    mockFetchNotes.mockResolvedValue(page);
 
     const { result } = renderHook(() => useNotes({ search: 'hello', type: 'general' }), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockFetchNotes).toHaveBeenCalledWith({ search: 'hello', type: 'general' });
+    expect(mockFetchNotes).toHaveBeenCalledWith({ search: 'hello', type: 'general', page: 1 });
   });
 });
 

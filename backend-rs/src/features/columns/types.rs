@@ -12,6 +12,55 @@ use crate::common::{
     validation::{validate_optional_not_blank, validate_sort_order},
 };
 
+/// Default number of cards embedded per column when `embed_limit` is omitted.
+pub const DEFAULT_EMBED_LIMIT: u32 = 10;
+/// Hard ceiling for embedded cards per column (`100 * N columns * summary payload`).
+pub const MAX_EMBED_LIMIT: u32 = 100;
+
+/// `GET /api/v1/boards/{boardId}/columns` query.
+#[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ColumnListQuery {
+    /// Max cards embedded per column (default 10, min 1, max 100).
+    #[garde(custom(validate_embed_limit))]
+    pub embed_limit: Option<String>,
+}
+
+impl ColumnListQuery {
+    /// Parse and return the validated embed limit (default when omitted).
+    pub fn resolved_embed_limit(&self) -> Result<u32, garde::Report> {
+        match self.embed_limit.as_deref() {
+            None => Ok(DEFAULT_EMBED_LIMIT),
+            Some(raw) => parse_embed_limit(raw).map_err(|message| {
+                let mut report = garde::Report::new();
+                report.append(garde::Path::new("embed_limit"), garde::Error::new(message));
+                report
+            }),
+        }
+    }
+}
+
+fn parse_embed_limit(raw: &str) -> Result<u32, &'static str> {
+    if raw.is_empty() {
+        return Err("must be an integer");
+    }
+    let parsed: u32 = raw.parse().map_err(|_| "must be an integer")?;
+    if parsed < 1 {
+        return Err("must be at least 1");
+    }
+    if parsed > MAX_EMBED_LIMIT {
+        return Err("must be at most 100");
+    }
+    Ok(parsed)
+}
+
+fn validate_embed_limit(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value {
+        parse_embed_limit(raw).map_err(garde::Error::new)?;
+    }
+    Ok(())
+}
+
 /// `POST /api/v1/boards/{boardId}/columns` body (T23a handler): absent name
 /// defaults to `New Column` in the store.
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]

@@ -149,6 +149,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/boards/{boardId}/cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /api/v1/boards/{boardId}/cards?page&limit&sort&order → 200 Page<BoardCardListItem>`
+         *     (board-scoped list view; never selects TEXT — no `description` key, only
+         *     `has_description`; `checklist_progress` only when the card owns checklists).
+         *     `position` is the per-column computed position in stable column sort-key
+         *     order (0-based). `due_date` NULLs sort last in both directions (locked).
+         *     Foreign/missing board → 404 (no oracle, never 403).
+         */
+        get: operations["list_board_cards"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/boards/{boardId}/columns": {
         parameters: {
             query?: never;
@@ -157,8 +181,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * `GET /api/v1/boards/{boardId}/columns → 200 {data[]}` (nested unpaginated,
-         *     sort-key order, embeds card summaries — never `description` TEXT).
+         * `GET /api/v1/boards/{boardId}/columns?embed_limit=n → 200 {data[]}`
+         *     (nested unpaginated, sort-key order, embeds first `embed_limit` card
+         *     summaries per column — never `description` TEXT; `total_cards` remains
+         *     authoritative). `embed_limit` defaults to 10 (min 1, max 100); invalid
+         *     values return 400 `validation-error` with `errors[]`.
          *     Foreign/missing board id → 404 (no oracle, never 403); garbage id → 400
          *     `invalid-path` via `ValidPath`.
          */
@@ -853,6 +880,51 @@ export interface components {
             label_id?: number | null;
         };
         /**
+         * @description Wire board-card list item: card summary fields plus `column_name`.
+         *     `position` is the per-column computed position in stable column sort-key
+         *     order (0-based), matching column-embed `CardSummary.position` semantics.
+         */
+        BoardCardListItem: {
+            checklist_progress?: components["schemas"]["ChecklistProgress"] | null;
+            /** @description Owning column id. */
+            column_id: components["schemas"]["ColumnId"];
+            /** @description Owning column name. */
+            column_name: string;
+            /** @description `created_at`, same shape. */
+            created_at: string;
+            /** @description `due_date` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (`null` when unset). */
+            due_date?: string | null;
+            /** @description Whether the card has a non-blank description (SQL `CASE`, never TEXT). */
+            has_description: boolean;
+            /** @description `cards.id` (`INT` ↔ `i32` newtype). */
+            id: components["schemas"]["CardId"];
+            /** @description Attached labels (`id` order). */
+            labels: components["schemas"]["CardLabelRef"][];
+            /**
+             * Format: int32
+             * @description Zero-based per-column position in stable column sort-key order.
+             */
+            position: number;
+            /** @description Card title. */
+            title: string;
+            /** @description `updated_at`, same shape. */
+            updated_at: string;
+        };
+        /**
+         * @description `GET /api/v1/boards/{boardId}/cards` query. Single validated DTO so T049 can
+         *     extend with filters without extractor composition friction.
+         */
+        BoardCardsListQuery: {
+            /** @description Items per page (default 20, min 1, max 100). */
+            limit?: string | null;
+            /** @description Sort direction (`asc` | `desc`). */
+            order?: string | null;
+            /** @description 1-based page number (default 1). */
+            page?: string | null;
+            /** @description Sort key allowlist (`created_at` | `updated_at` | `due_date` | `title`). */
+            sort?: string | null;
+        };
+        /**
          * @description Success envelope for create/detail (`201 {data} + Location`, `200
          *     {data}`; no `message` key — dropped everywhere per `20-api-contract.md`).
          */
@@ -1114,6 +1186,11 @@ export interface components {
         ColumnListBody: {
             /** @description Board columns, sort-key order. */
             data: components["schemas"]["ColumnResponse"][];
+        };
+        /** @description `GET /api/v1/boards/{boardId}/columns` query. */
+        ColumnListQuery: {
+            /** @description Max cards embedded per column (default 10, min 1, max 100). */
+            embed_limit?: string | null;
         };
         /**
          * @description Wire column: scalars + nested card summaries (sort-key order, never
@@ -1387,6 +1464,54 @@ export interface components {
          * @description Primary key of `notes`.
          */
         NoteId: number;
+        /**
+         * @description Paginated list envelope. `total` is the full count for the applied
+         *     filters, not the length of this page.
+         */
+        Page_BoardCardListItem: {
+            /** @description Items on this page. */
+            data: {
+                checklist_progress?: components["schemas"]["ChecklistProgress"] | null;
+                /** @description Owning column id. */
+                column_id: components["schemas"]["ColumnId"];
+                /** @description Owning column name. */
+                column_name: string;
+                /** @description `created_at`, same shape. */
+                created_at: string;
+                /** @description `due_date` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (`null` when unset). */
+                due_date?: string | null;
+                /** @description Whether the card has a non-blank description (SQL `CASE`, never TEXT). */
+                has_description: boolean;
+                /** @description `cards.id` (`INT` ↔ `i32` newtype). */
+                id: components["schemas"]["CardId"];
+                /** @description Attached labels (`id` order). */
+                labels: components["schemas"]["CardLabelRef"][];
+                /**
+                 * Format: int32
+                 * @description Zero-based per-column position in stable column sort-key order.
+                 */
+                position: number;
+                /** @description Card title. */
+                title: string;
+                /** @description `updated_at`, same shape. */
+                updated_at: string;
+            }[];
+            /**
+             * Format: int32
+             * @description Items per page (echoes `limit`).
+             */
+            limit: number;
+            /**
+             * Format: int32
+             * @description 1-based page number (echoes [`crate::extract::PaginationParams::page`]).
+             */
+            page: number;
+            /**
+             * Format: int64
+             * @description Total items across all pages.
+             */
+            total: number;
+        };
         /**
          * @description Paginated list envelope. `total` is the full count for the applied
          *     filters, not the length of this page.
@@ -2123,11 +2248,70 @@ export interface operations {
             };
         };
     };
+    list_board_cards: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number (default 1). */
+                page?: string;
+                /** @description Items per page (default 20, min 1, max 100). */
+                limit?: string;
+                /** @description Sort key allowlist (`created_at` | `updated_at` | `due_date` | `title`). */
+                sort?: string;
+                /** @description Sort direction (`asc` | `desc`). */
+                order?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Board id */
+                boardId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Board cards page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_BoardCardListItem"];
+                };
+            };
+            /** @description Invalid board id, pagination, or query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Board not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_columns: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Max cards embedded per column (default 10, min 1, max 100). */
+                embed_limit?: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Board id */
+                boardId: number;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -2137,9 +2321,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ColumnListBody"];
+                };
             };
-            /** @description Invalid board id */
+            /** @description Invalid board id or query */
             400: {
                 headers: {
                     [name: string]: unknown;

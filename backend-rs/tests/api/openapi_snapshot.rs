@@ -46,6 +46,7 @@ fn snapshot_carries_envelopes_errors_and_paths() {
     assert_eq!(spec["info"]["title"], "KanPad backend-rs");
     for envelope in [
         "Page_BoardListResponse",
+        "Page_BoardCardListItem",
         "Page_CardSummary",
         "Page_LabelResponse",
         "Page_NoteSummaryResponse",
@@ -66,6 +67,7 @@ fn snapshot_carries_envelopes_errors_and_paths() {
     for path in [
         "/health",
         "/api/v1/boards",
+        "/api/v1/boards/{boardId}/cards",
         "/api/v1/cards/{id}",
         "/api/v1/auth/me",
     ] {

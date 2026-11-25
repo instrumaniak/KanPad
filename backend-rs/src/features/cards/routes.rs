@@ -11,24 +11,27 @@ use axum::{
 use crate::{
     common::{
         card_summary::CardSummary,
-        ownership::{check_column_owned, check_label_owned},
+        ownership::{check_board_owned, check_column_owned, check_label_owned},
         pagination::Page,
     },
     error::{AppError, Internal},
-    extract::{AuthSession, PaginationParams, ValidJson, ValidPath},
+    extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
     state::AppState,
 };
 
 use super::{
     store::{
-        CardPatch, apply_card_patch, count_cards_in_column, delete_card_label_link,
-        delete_card_row, fetch_card_keys_in_column, fetch_card_owned, fetch_card_page,
-        fetch_card_spot_for_update, fetch_detail_checklists, fetch_detail_items,
-        fetch_detail_labels, fetch_last_sort_key_for_update, fetch_page_labels,
-        fetch_page_progress, insert_card, insert_card_label_link, point_move_card, to_detail,
-        to_summaries,
+        CardPatch, apply_card_patch, count_board_cards, count_cards_in_column,
+        delete_card_label_link, delete_card_row, fetch_board_card_page, fetch_card_keys_in_column,
+        fetch_card_owned, fetch_card_page, fetch_card_spot_for_update, fetch_detail_checklists,
+        fetch_detail_items, fetch_detail_labels, fetch_last_sort_key_for_update, fetch_page_labels,
+        fetch_page_progress, hydrate_board_card_items, insert_card, insert_card_label_link,
+        point_move_card, to_detail, to_summaries,
     },
-    types::{AttachLabelInput, CardBody, CreateCardInput, UpdateCardInput, parse_due_date},
+    types::{
+        AttachLabelInput, BoardCardListItem, BoardCardsListQuery, CardBody, CreateCardInput,
+        UpdateCardInput, parse_due_date,
+    },
 };
 use crate::common::{
     order_key::{clamp_position, key_between, key_for_index, needs_rebalance},
@@ -56,6 +59,7 @@ pub fn router() -> axum::Router<crate::state::AppState> {
             put(attach_card_label).delete(detach_card_label),
         )
         .route("/columns/{colId}/cards", get(list_cards))
+        .route("/boards/{boardId}/cards", get(list_board_cards))
 }
 
 /// Load a card's detail nests (labels + checklists + items) and render the
@@ -538,6 +542,58 @@ pub async fn list_cards(
         pagination.limit,
         total,
     )))
+}
+
+/// `GET /api/v1/boards/{boardId}/cards?page&limit&sort&order → 200 Page<BoardCardListItem>`
+/// (board-scoped list view; never selects TEXT — no `description` key, only
+/// `has_description`; `checklist_progress` only when the card owns checklists).
+/// `position` is the per-column computed position in stable column sort-key
+/// order (0-based). `due_date` NULLs sort last in both directions (locked).
+/// Foreign/missing board → 404 (no oracle, never 403).
+#[utoipa::path(
+    get,
+    path = "/api/v1/boards/{boardId}/cards",
+    params(
+        ("boardId" = i32, Path, description = "Board id"),
+        BoardCardsListQuery
+    ),
+    responses(
+        (status = 200, description = "Board cards page", body = Page<BoardCardListItem>),
+        (status = 400, description = "Invalid board id, pagination, or query"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Board not found")
+    )
+)]
+#[tracing::instrument(skip(state, auth, filters))]
+pub async fn list_board_cards(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    ValidPath(board_id): ValidPath<crate::common::ids::BoardId>,
+    ValidQuery(filters): ValidQuery<BoardCardsListQuery>,
+) -> Result<Json<Page<BoardCardListItem>>, AppError> {
+    let user_id = auth.user_id.get();
+    let board_id = board_id.get();
+    let (page, limit) = filters.resolved_pagination().map_err(AppError::from)?;
+    check_board_owned(&state.pool, user_id, board_id).await?;
+
+    let total = count_board_cards(&state.pool, board_id).await?;
+    if total == 0 {
+        return Ok(Json(Page::empty(page, limit)));
+    }
+
+    let offset = page.saturating_sub(1).saturating_mul(limit);
+    let mut items = fetch_board_card_page(
+        &state.pool,
+        board_id,
+        filters.resolved_sort(),
+        filters.resolved_order(),
+        limit,
+        offset,
+    )
+    .await?;
+    hydrate_board_card_items(&state.pool, &mut items).await?;
+
+    Ok(Json(Page::new(items, page, limit, total)))
 }
 
 #[cfg(test)]

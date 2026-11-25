@@ -15,6 +15,8 @@ mod boards_create;
 mod boards_list;
 #[path = "api/boards_state.rs"]
 mod boards_state;
+#[path = "api/cards_board_list.rs"]
+mod cards_board_list;
 #[path = "api/cards_crud.rs"]
 mod cards_crud;
 #[path = "api/cards_labels.rs"]
@@ -29,6 +31,8 @@ mod checklists;
 mod collation;
 #[path = "api/columns_crud.rs"]
 mod columns_crud;
+#[path = "api/columns_embed_limit.rs"]
+mod columns_embed_limit;
 #[path = "api/columns_move_cards.rs"]
 mod columns_move_cards;
 #[path = "api/columns_sort.rs"]

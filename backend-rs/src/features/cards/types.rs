@@ -14,12 +14,12 @@
 //! land in T24b.
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::common::{
     card_summary::{CardLabelRef, ChecklistProgress},
     ids::{CardId, ChecklistId, ColumnId},
-    validation::{validate_due_date, validate_not_blank, validate_optional_not_blank},
+    validation::{SORT_ORDERS, validate_due_date, validate_not_blank, validate_optional_not_blank},
 };
 
 /// `POST /api/v1/cards` body (T24a handler).
@@ -208,4 +208,215 @@ pub fn parse_due_date(raw: &str) -> Option<chrono::NaiveDateTime> {
         return date.and_hms_opt(0, 0, 0);
     }
     chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f").ok()
+}
+
+/// Allowed `?sort=` keys for `GET /api/v1/boards/{boardId}/cards`.
+pub const BOARD_CARD_SORTS: [&str; 4] = ["created_at", "updated_at", "due_date", "title"];
+/// Default board cards list sort.
+pub const DEFAULT_BOARD_CARD_SORT: &str = "updated_at";
+/// Default board cards list order.
+pub const DEFAULT_BOARD_CARD_ORDER: &str = "desc";
+/// Default page for board cards list.
+pub const DEFAULT_BOARD_CARD_PAGE: u32 = 1;
+/// Default limit for board cards list.
+pub const DEFAULT_BOARD_CARD_LIMIT: u32 = 20;
+
+fn validate_optional_board_card_sort(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(sort) = value
+        && !BOARD_CARD_SORTS.contains(&sort.as_str())
+    {
+        return Err(garde::Error::new(format!(
+            "sort must be one of: {}",
+            BOARD_CARD_SORTS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn validate_optional_board_card_order(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(order) = value
+        && !SORT_ORDERS.contains(&order.as_str())
+    {
+        return Err(garde::Error::new(format!(
+            "order must be one of: {}",
+            SORT_ORDERS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn parse_u32_query_field(
+    raw: &str,
+    field: &'static str,
+    min: u32,
+    max: u32,
+) -> Result<u32, garde::Report> {
+    let mut report = garde::Report::new();
+    let parsed = match raw.parse::<u32>() {
+        Ok(value) => value,
+        Err(_) => {
+            report.append(
+                garde::Path::new(field),
+                garde::Error::new("must be an integer"),
+            );
+            return Err(report);
+        }
+    };
+    if parsed < min {
+        report.append(
+            garde::Path::new(field),
+            garde::Error::new(format!("must be at least {min}")),
+        );
+        return Err(report);
+    }
+    if parsed > max {
+        report.append(
+            garde::Path::new(field),
+            garde::Error::new(format!("must be at most {max}")),
+        );
+        return Err(report);
+    }
+    Ok(parsed)
+}
+
+fn validate_optional_board_card_page(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value {
+        parse_u32_query_field(raw, "page", 1, u32::MAX).map_err(|report| {
+            garde::Error::new(
+                report
+                    .iter()
+                    .next()
+                    .map(|(_, err)| err.to_string())
+                    .unwrap_or_else(|| "invalid page".to_string()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_optional_board_card_limit(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value {
+        parse_u32_query_field(raw, "limit", 1, crate::extract::PaginationParams::MAX_LIMIT)
+            .map_err(|report| {
+                garde::Error::new(
+                    report
+                        .iter()
+                        .next()
+                        .map(|(_, err)| err.to_string())
+                        .unwrap_or_else(|| "invalid limit".to_string()),
+                )
+            })?;
+    }
+    Ok(())
+}
+
+/// `GET /api/v1/boards/{boardId}/cards` query. Single validated DTO so T049 can
+/// extend with filters without extractor composition friction.
+#[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct BoardCardsListQuery {
+    /// 1-based page number (default 1).
+    #[garde(custom(validate_optional_board_card_page))]
+    pub page: Option<String>,
+    /// Items per page (default 20, min 1, max 100).
+    #[garde(custom(validate_optional_board_card_limit))]
+    pub limit: Option<String>,
+    /// Sort key allowlist (`created_at` | `updated_at` | `due_date` | `title`).
+    #[garde(custom(validate_optional_board_card_sort))]
+    pub sort: Option<String>,
+    /// Sort direction (`asc` | `desc`).
+    #[garde(custom(validate_optional_board_card_order))]
+    pub order: Option<String>,
+}
+
+impl BoardCardsListQuery {
+    /// Resolved page/limit with shared window ceiling validation.
+    pub fn resolved_pagination(&self) -> Result<(u32, u32), garde::Report> {
+        let mut report = garde::Report::new();
+        let page = match self.page.as_deref() {
+            None => DEFAULT_BOARD_CARD_PAGE,
+            Some(raw) => match parse_u32_query_field(raw, "page", 1, u32::MAX) {
+                Ok(value) => value,
+                Err(field_report) => {
+                    for (path, err) in field_report.iter() {
+                        report.append(path.clone(), err.clone());
+                    }
+                    DEFAULT_BOARD_CARD_PAGE
+                }
+            },
+        };
+        let limit = match self.limit.as_deref() {
+            None => DEFAULT_BOARD_CARD_LIMIT,
+            Some(raw) => match parse_u32_query_field(
+                raw,
+                "limit",
+                1,
+                crate::extract::PaginationParams::MAX_LIMIT,
+            ) {
+                Ok(value) => value,
+                Err(field_report) => {
+                    for (path, err) in field_report.iter() {
+                        report.append(path.clone(), err.clone());
+                    }
+                    DEFAULT_BOARD_CARD_LIMIT
+                }
+            },
+        };
+
+        if report.is_empty()
+            && u64::from(page).saturating_mul(u64::from(limit))
+                > crate::extract::PaginationParams::MAX_PAGE_WINDOW
+        {
+            report.append(
+                garde::Path::new("page"),
+                garde::Error::new("page is outside the allowed window"),
+            );
+        }
+
+        if report.is_empty() {
+            Ok((page, limit))
+        } else {
+            Err(report)
+        }
+    }
+
+    /// Resolved sort key (validated allowlist; defaults to `updated_at`).
+    pub fn resolved_sort(&self) -> &str {
+        self.sort.as_deref().unwrap_or(DEFAULT_BOARD_CARD_SORT)
+    }
+
+    /// Resolved sort direction (validated enum; defaults to `desc`).
+    pub fn resolved_order(&self) -> &str {
+        self.order.as_deref().unwrap_or(DEFAULT_BOARD_CARD_ORDER)
+    }
+}
+
+/// Wire board-card list item: card summary fields plus `column_name`.
+/// `position` is the per-column computed position in stable column sort-key
+/// order (0-based), matching column-embed `CardSummary.position` semantics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct BoardCardListItem {
+    /// `cards.id` (`INT` ↔ `i32` newtype).
+    pub id: CardId,
+    /// Card title.
+    pub title: String,
+    /// Whether the card has a non-blank description (SQL `CASE`, never TEXT).
+    pub has_description: bool,
+    /// Owning column id.
+    pub column_id: ColumnId,
+    /// Owning column name.
+    pub column_name: String,
+    /// Zero-based per-column position in stable column sort-key order.
+    pub position: i32,
+    /// `due_date` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (`null` when unset).
+    pub due_date: Option<String>,
+    /// `created_at`, same shape.
+    pub created_at: String,
+    /// `updated_at`, same shape.
+    pub updated_at: String,
+    /// Attached labels (`id` order).
+    pub labels: Vec<CardLabelRef>,
+    /// Checklist rollup (`None` = the card owns no checklist).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checklist_progress: Option<ChecklistProgress>,
 }

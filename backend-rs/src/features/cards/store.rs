@@ -53,7 +53,8 @@ use crate::{
 };
 
 use super::types::{
-    CardDetailResponse, ChecklistItemResponse, ChecklistResponse, format_timestamp,
+    BoardCardListItem, CardDetailResponse, ChecklistItemResponse, ChecklistResponse,
+    format_timestamp,
 };
 
 /// One `cards` row (assembled by [`fetch_card_owned`]; labels/checklists ride
@@ -860,4 +861,173 @@ pub fn to_summaries(
         });
     }
     Ok(summaries)
+}
+
+/// One TEXT-free board cards list row.
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct BoardCardPageRow {
+    id: i32,
+    title: String,
+    has_description: i64,
+    column_id: i32,
+    column_name: String,
+    position: i64,
+    due_date: Option<NaiveDateTime>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+}
+
+/// Shared board-scope WHERE for board card count/page queries. T049 extends
+/// this builder with filter/search clauses while keeping count/page drift-free.
+fn push_board_cards_filter(builder: &mut QueryBuilder<MySql>, board_id: i32) {
+    builder.push(" WHERE c.`board_id` = ");
+    builder.push_bind(board_id);
+}
+
+/// Static ORDER BY fragment for board cards list. User input is never
+/// interpolated; callers pass validated allowlist values only.
+fn board_cards_ordering(sort: &str, order: &str) -> &'static str {
+    match (sort, order) {
+        ("created_at", "asc") => "k.`created_at` ASC, k.`id` ASC",
+        ("created_at", "desc") => "k.`created_at` DESC, k.`id` DESC",
+        ("updated_at", "asc") => "k.`updated_at` ASC, k.`id` ASC",
+        ("updated_at", "desc") => "k.`updated_at` DESC, k.`id` DESC",
+        ("title", "asc") => "k.`title` ASC, k.`id` ASC",
+        ("title", "desc") => "k.`title` DESC, k.`id` DESC",
+        // due_date: NULLs last in both directions (locked T048 contract).
+        ("due_date", "asc") => "(k.`due_date` IS NULL) ASC, k.`due_date` ASC, k.`id` ASC",
+        ("due_date", "desc") => "(k.`due_date` IS NULL) ASC, k.`due_date` DESC, k.`id` DESC",
+        _ => "k.`updated_at` DESC, k.`id` DESC",
+    }
+}
+
+/// `SELECT COUNT(*)` for board-scoped card list `Page.total`.
+#[tracing::instrument(skip(ex))]
+pub async fn count_board_cards<'e, E>(ex: E, board_id: i32) -> Result<u64, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let mut builder = QueryBuilder::new(
+        "SELECT COUNT(*) FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id`",
+    );
+    push_board_cards_filter(&mut builder, board_id);
+    let total: i64 = builder
+        .build_query_scalar()
+        .fetch_one(ex)
+        .await
+        .map_err(AppError::Db)?;
+    u64::try_from(total).map_err(|_| AppError::Internal(Internal))
+}
+
+/// Page `SELECT` for board-scoped card list. TEXT-free; `position` is the
+/// per-column computed position in stable column sort-key order (0-based).
+#[tracing::instrument(skip(ex))]
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_board_card_page<'e, E>(
+    ex: E,
+    board_id: i32,
+    sort: &str,
+    order: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<BoardCardListItem>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    let ordering = board_cards_ordering(sort, order);
+    let mut builder = QueryBuilder::new(
+        "SELECT k.`id`, k.`title`, \
+          (CASE WHEN k.`description` IS NOT NULL AND k.`description` REGEXP '[^[:space:]]' \
+            THEN 1 ELSE 0 END) AS `has_description`, \
+          k.`column_id`, c.`name` AS `column_name`, \
+          (SELECT COUNT(*) FROM `cards` p2 \
+            WHERE p2.`column_id` = k.`column_id` AND p2.`sort_key` < k.`sort_key`) AS `position`, \
+          k.`due_date`, k.`created_at`, k.`updated_at` \
+          FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id`",
+    );
+    push_board_cards_filter(&mut builder, board_id);
+    builder.push(" ORDER BY ");
+    builder.push(ordering);
+    builder.push(" LIMIT ");
+    builder.push_bind(limit);
+    builder.push(" OFFSET ");
+    builder.push_bind(offset);
+
+    let rows: Vec<BoardCardPageRow> = builder
+        .build_query_as()
+        .fetch_all(ex)
+        .await
+        .map_err(AppError::Db)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(BoardCardListItem {
+            id: CardId::from(row.id),
+            title: row.title,
+            has_description: row.has_description != 0,
+            column_id: ColumnId::from(row.column_id),
+            column_name: row.column_name,
+            position: i32::try_from(row.position).map_err(|_| AppError::Internal(Internal))?,
+            due_date: row.due_date.as_ref().map(summary_timestamp),
+            created_at: summary_timestamp(&row.created_at),
+            updated_at: summary_timestamp(&row.updated_at),
+            labels: Vec::new(),
+            checklist_progress: None,
+        });
+    }
+    Ok(out)
+}
+
+/// Attach labels and checklist progress to board card list items (in place).
+/// Reuses page label/progress batch queries; empty input short-circuits.
+#[tracing::instrument(skip(pool, items))]
+pub async fn hydrate_board_card_items(
+    pool: &sqlx::MySqlPool,
+    items: &mut [BoardCardListItem],
+) -> Result<(), AppError> {
+    use std::collections::HashMap;
+
+    if items.is_empty() {
+        return Ok(());
+    }
+    let card_ids: Vec<i32> = items.iter().map(|item| item.id.get()).collect();
+    let (labels, progress) = tokio::try_join!(
+        fetch_page_labels(pool, &card_ids),
+        fetch_page_progress(pool, &card_ids),
+    )?;
+
+    let mut labels_by_card: HashMap<i32, Vec<CardLabelRef>> = HashMap::new();
+    for (card_id, label_id, name, color) in labels {
+        labels_by_card
+            .entry(card_id)
+            .or_default()
+            .push(CardLabelRef {
+                id: LabelId::from(label_id),
+                name,
+                color,
+            });
+    }
+    let mut progress_by_card: HashMap<i32, ChecklistProgress> = HashMap::new();
+    for (card_id, total, completed) in progress {
+        let total = i32::try_from(total).map_err(|_| AppError::Internal(Internal))?;
+        let completed = i32::try_from(completed).map_err(|_| AppError::Internal(Internal))?;
+        let percent = if total == 0 {
+            0
+        } else {
+            (f64::from(completed) / f64::from(total) * 100.0).round() as i32
+        };
+        progress_by_card.insert(
+            card_id,
+            ChecklistProgress {
+                completed,
+                total,
+                percent,
+            },
+        );
+    }
+    for item in items {
+        let id = item.id.get();
+        item.labels = labels_by_card.remove(&id).unwrap_or_default();
+        item.checklist_progress = progress_by_card.get(&id).copied();
+    }
+    Ok(())
 }

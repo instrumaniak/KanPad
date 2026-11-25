@@ -17,11 +17,9 @@ use crate::{
         ownership::check_board_owned,
     },
     error::{AppError, Internal},
-    extract::{AuthSession, ValidJson, ValidPath},
+    extract::{AuthSession, ValidJson, ValidPath, ValidQuery},
     state::AppState,
 };
-
-const EMBED_CARD_LIMIT: u32 = 50;
 
 use super::{
     store::{
@@ -32,8 +30,8 @@ use super::{
         to_response_one,
     },
     types::{
-        ColumnBody, ColumnListBody, CreateColumnInput, DEFAULT_COLUMN_NAME, MoveCardsBody,
-        MoveCardsData, MoveCardsInput, UpdateColumnInput,
+        ColumnBody, ColumnListBody, ColumnListQuery, CreateColumnInput, DEFAULT_COLUMN_NAME,
+        DEFAULT_EMBED_LIMIT, MoveCardsBody, MoveCardsData, MoveCardsInput, UpdateColumnInput,
     },
 };
 use crate::common::{
@@ -47,6 +45,7 @@ use crate::common::{
 async fn load_summaries(
     pool: &sqlx::MySqlPool,
     board_id: i32,
+    embed_limit: u32,
 ) -> Result<
     (
         std::collections::HashMap<i32, Vec<CardSummary>>,
@@ -55,7 +54,7 @@ async fn load_summaries(
     AppError,
 > {
     let (rows, totals) = tokio::try_join!(
-        fetch_board_cards_limited(pool, board_id, EMBED_CARD_LIMIT),
+        fetch_board_cards_limited(pool, board_id, embed_limit),
         fetch_board_card_totals(pool, board_id),
     )?;
     let card_ids: Vec<i32> = rows.iter().map(|r| r.id).collect();
@@ -86,31 +85,40 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         .route("/columns/{id}/move-cards", post(move_cards))
 }
 
-/// `GET /api/v1/boards/{boardId}/columns → 200 {data[]}` (nested unpaginated,
-/// sort-key order, embeds card summaries — never `description` TEXT).
+/// `GET /api/v1/boards/{boardId}/columns?embed_limit=n → 200 {data[]}`
+/// (nested unpaginated, sort-key order, embeds first `embed_limit` card
+/// summaries per column — never `description` TEXT; `total_cards` remains
+/// authoritative). `embed_limit` defaults to 10 (min 1, max 100); invalid
+/// values return 400 `validation-error` with `errors[]`.
 /// Foreign/missing board id → 404 (no oracle, never 403); garbage id → 400
 /// `invalid-path` via `ValidPath`.
 #[utoipa::path(
     get,
     path = "/api/v1/boards/{boardId}/columns",
+    params(
+        ("boardId" = i32, Path, description = "Board id"),
+        ColumnListQuery
+    ),
     responses(
-        (status = 200, description = "Board columns with card summaries"),
-        (status = 400, description = "Invalid board id"),
+        (status = 200, description = "Board columns with card summaries", body = ColumnListBody),
+        (status = 400, description = "Invalid board id or query"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Board not found")
     )
 )]
-#[tracing::instrument(skip(state, auth))]
+#[tracing::instrument(skip(state, auth, query))]
 pub async fn list_columns(
     State(state): State<AppState>,
     auth: AuthSession,
     ValidPath(board_id): ValidPath<crate::common::ids::BoardId>,
+    ValidQuery(query): ValidQuery<ColumnListQuery>,
 ) -> Result<Json<ColumnListBody>, AppError> {
     let user_id = auth.user_id.get();
     let board_id = board_id.get();
+    let embed_limit = query.resolved_embed_limit().map_err(AppError::from)?;
     check_board_owned(&state.pool, user_id, board_id).await?;
     let rows = fetch_columns(&state.pool, board_id).await?;
-    let (summaries, totals) = load_summaries(&state.pool, board_id).await?;
+    let (summaries, totals) = load_summaries(&state.pool, board_id, embed_limit).await?;
     Ok(Json(ColumnListBody {
         data: to_response(rows, &summaries, &totals),
     }))
@@ -163,7 +171,7 @@ pub async fn create_column(
     .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
-    let (summaries, totals) = load_summaries(&state.pool, board_id).await?;
+    let (summaries, totals) = load_summaries(&state.pool, board_id, DEFAULT_EMBED_LIMIT).await?;
     let location = format!("/api/v1/columns/{id}");
     Ok((
         StatusCode::CREATED,
@@ -247,7 +255,8 @@ pub async fn rename_column_handler(
     .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
-    let (summaries, totals) = load_summaries(&state.pool, row.board_id.get()).await?;
+    let (summaries, totals) =
+        load_summaries(&state.pool, row.board_id.get(), DEFAULT_EMBED_LIMIT).await?;
     Ok(Json(ColumnBody {
         data: to_response_one(row, &summaries, &totals),
     }))

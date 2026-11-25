@@ -229,19 +229,125 @@
         }
       }
     },
+    "/api/v1/boards/{boardId}/cards": {
+      "get": {
+        "tags": [
+          "crate::features::cards::routes"
+        ],
+        "summary": "`GET /api/v1/boards/{boardId}/cards?page&limit&sort&order → 200 Page<BoardCardListItem>`\n(board-scoped list view; never selects TEXT — no `description` key, only\n`has_description`; `checklist_progress` only when the card owns checklists).\n`position` is the per-column computed position in stable column sort-key\norder (0-based). `due_date` NULLs sort last in both directions (locked).\nForeign/missing board → 404 (no oracle, never 403).",
+        "operationId": "list_board_cards",
+        "parameters": [
+          {
+            "name": "boardId",
+            "in": "path",
+            "description": "Board id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page number (default 1).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (default 20, min 1, max 100).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort key allowlist (`created_at` | `updated_at` | `due_date` | `title`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Sort direction (`asc` | `desc`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Board cards page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_BoardCardListItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid board id, pagination, or query"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Board not found"
+          }
+        }
+      }
+    },
     "/api/v1/boards/{boardId}/columns": {
       "get": {
         "tags": [
           "crate::features::columns::routes"
         ],
-        "summary": "`GET /api/v1/boards/{boardId}/columns → 200 {data[]}` (nested unpaginated,\nsort-key order, embeds card summaries — never `description` TEXT).\nForeign/missing board id → 404 (no oracle, never 403); garbage id → 400\n`invalid-path` via `ValidPath`.",
+        "summary": "`GET /api/v1/boards/{boardId}/columns?embed_limit=n → 200 {data[]}`\n(nested unpaginated, sort-key order, embeds first `embed_limit` card\nsummaries per column — never `description` TEXT; `total_cards` remains\nauthoritative). `embed_limit` defaults to 10 (min 1, max 100); invalid\nvalues return 400 `validation-error` with `errors[]`.\nForeign/missing board id → 404 (no oracle, never 403); garbage id → 400\n`invalid-path` via `ValidPath`.",
         "operationId": "list_columns",
+        "parameters": [
+          {
+            "name": "boardId",
+            "in": "path",
+            "description": "Board id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "embed_limit",
+            "in": "query",
+            "description": "Max cards embedded per column (default 10, min 1, max 100).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Board columns with card summaries"
+            "description": "Board columns with card summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnListBody"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Invalid board id"
+            "description": "Invalid board id or query"
           },
           "401": {
             "description": "Not authenticated"
@@ -1605,6 +1711,115 @@
           }
         }
       },
+      "BoardCardListItem": {
+        "type": "object",
+        "description": "Wire board-card list item: card summary fields plus `column_name`.\n`position` is the per-column computed position in stable column sort-key\norder (0-based), matching column-embed `CardSummary.position` semantics.",
+        "required": [
+          "id",
+          "title",
+          "has_description",
+          "column_id",
+          "column_name",
+          "position",
+          "created_at",
+          "updated_at",
+          "labels"
+        ],
+        "properties": {
+          "checklist_progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ChecklistProgress",
+                "description": "Checklist rollup (`None` = the card owns no checklist)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "column_id": {
+            "$ref": "#/components/schemas/ColumnId",
+            "description": "Owning column id."
+          },
+          "column_name": {
+            "type": "string",
+            "description": "Owning column name."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "`created_at`, same shape."
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`due_date` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (`null` when unset)."
+          },
+          "has_description": {
+            "type": "boolean",
+            "description": "Whether the card has a non-blank description (SQL `CASE`, never TEXT)."
+          },
+          "id": {
+            "$ref": "#/components/schemas/CardId",
+            "description": "`cards.id` (`INT` ↔ `i32` newtype)."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CardLabelRef"
+            },
+            "description": "Attached labels (`id` order)."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Zero-based per-column position in stable column sort-key order."
+          },
+          "title": {
+            "type": "string",
+            "description": "Card title."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "`updated_at`, same shape."
+          }
+        }
+      },
+      "BoardCardsListQuery": {
+        "type": "object",
+        "description": "`GET /api/v1/boards/{boardId}/cards` query. Single validated DTO so T049 can\nextend with filters without extractor composition friction.",
+        "properties": {
+          "limit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Items per page (default 20, min 1, max 100)."
+          },
+          "order": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sort direction (`asc` | `desc`)."
+          },
+          "page": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1-based page number (default 1)."
+          },
+          "sort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sort key allowlist (`created_at` | `updated_at` | `due_date` | `title`)."
+          }
+        }
+      },
       "BoardDetailBody": {
         "type": "object",
         "description": "Success envelope for create/detail (`201 {data} + Location`, `200\n{data}`; no `message` key — dropped everywhere per `20-api-contract.md`).",
@@ -2146,6 +2361,19 @@
               "$ref": "#/components/schemas/ColumnResponse"
             },
             "description": "Board columns, sort-key order."
+          }
+        }
+      },
+      "ColumnListQuery": {
+        "type": "object",
+        "description": "`GET /api/v1/boards/{boardId}/columns` query.",
+        "properties": {
+          "embed_limit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Max cards embedded per column (default 10, min 1, max 100)."
           }
         }
       },
@@ -2712,6 +2940,115 @@
         "type": "integer",
         "format": "int32",
         "description": "Primary key of `notes`."
+      },
+      "Page_BoardCardListItem": {
+        "type": "object",
+        "description": "Paginated list envelope. `total` is the full count for the applied\nfilters, not the length of this page.",
+        "required": [
+          "data",
+          "page",
+          "limit",
+          "total"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Wire board-card list item: card summary fields plus `column_name`.\n`position` is the per-column computed position in stable column sort-key\norder (0-based), matching column-embed `CardSummary.position` semantics.",
+              "required": [
+                "id",
+                "title",
+                "has_description",
+                "column_id",
+                "column_name",
+                "position",
+                "created_at",
+                "updated_at",
+                "labels"
+              ],
+              "properties": {
+                "checklist_progress": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ChecklistProgress",
+                      "description": "Checklist rollup (`None` = the card owns no checklist)."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "column_id": {
+                  "$ref": "#/components/schemas/ColumnId",
+                  "description": "Owning column id."
+                },
+                "column_name": {
+                  "type": "string",
+                  "description": "Owning column name."
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "`created_at`, same shape."
+                },
+                "due_date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`due_date` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (`null` when unset)."
+                },
+                "has_description": {
+                  "type": "boolean",
+                  "description": "Whether the card has a non-blank description (SQL `CASE`, never TEXT)."
+                },
+                "id": {
+                  "$ref": "#/components/schemas/CardId",
+                  "description": "`cards.id` (`INT` ↔ `i32` newtype)."
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CardLabelRef"
+                  },
+                  "description": "Attached labels (`id` order)."
+                },
+                "position": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Zero-based per-column position in stable column sort-key order."
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Card title."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "description": "`updated_at`, same shape."
+                }
+              }
+            },
+            "description": "Items on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items per page (echoes `limit`).",
+            "minimum": 0
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based page number (echoes [`crate::extract::PaginationParams::page`]).",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total items across all pages.",
+            "minimum": 0
+          }
+        }
       },
       "Page_BoardListResponse": {
         "type": "object",

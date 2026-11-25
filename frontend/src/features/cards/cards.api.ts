@@ -56,6 +56,8 @@ export type Card = CardSummary & {
 export type CardBody = components['schemas']['CardBody'];
 
 export type CardListPage = components['schemas']['Page_CardSummary'];
+export type BoardCardListItem = components['schemas']['BoardCardListItem'];
+export type BoardCardListPage = components['schemas']['Page_BoardCardListItem'];
 
 export type { ApiResponse };
 
@@ -64,8 +66,40 @@ export type CreateCardData = components['schemas']['CreateCardInput'];
 export type UpdateCardData = components['schemas']['UpdateCardInput'];
 
 export const CARD_LIST_DEFAULT_PAGE = 1;
-export const CARD_LIST_DEFAULT_LIMIT = 50;
+export const CARD_LIST_DEFAULT_LIMIT = 20;
 export const CARD_LIST_MAX_LIMIT = 100;
+
+export interface CardListFilters {
+  search?: string;
+  labels?: number[];
+  due_date?: 'overdue' | 'today' | 'this_week' | 'no_date';
+  checklist?: 'with' | 'complete' | 'incomplete';
+}
+
+export type BoardCardSortKey = 'created_at' | 'updated_at' | 'due_date' | 'title';
+export type SortOrder = 'asc' | 'desc';
+
+export interface BoardCardListParams extends CardListFilters {
+  page?: number;
+  limit?: number;
+  sort?: BoardCardSortKey;
+  order?: SortOrder;
+}
+
+export function buildCardFilterParams(filters?: CardListFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (!filters) return params;
+  const search = filters.search?.trim();
+  if (search) params.set('search', search);
+  if (filters.labels?.length) {
+    for (const id of [...new Set(filters.labels)].filter((n) => Number.isInteger(n) && n > 0)) {
+      params.append('labels', String(id));
+    }
+  }
+  if (filters.due_date) params.set('due_date', filters.due_date);
+  if (filters.checklist) params.set('checklist', filters.checklist);
+  return params;
+}
 
 /**
  * Newly-strict input audit (T41d): the rewrite validates `page`/`limit`
@@ -118,10 +152,29 @@ export async function fetchCards(
   columnId: number,
   page?: number,
   limit?: number,
+  filters?: CardListFilters,
 ): Promise<Page<CardSummary>> {
-  const params = sanitizeCardListParams(page, limit);
+  const safe = sanitizeCardListParams(page, limit);
+  const params = buildCardFilterParams(filters);
+  params.set('page', String(safe.page));
+  params.set('limit', String(safe.limit));
   return apiFetch<Page<CardSummary>>(
-    `/api/v1/columns/${columnId}/cards?page=${params.page}&limit=${params.limit}`,
+    `/api/v1/columns/${columnId}/cards?${params.toString()}`,
+  );
+}
+
+export async function fetchBoardCards(
+  boardId: number,
+  params: BoardCardListParams = {},
+): Promise<BoardCardListPage> {
+  const safe = sanitizeCardListParams(params.page, params.limit);
+  const query = buildCardFilterParams(params);
+  query.set('page', String(safe.page));
+  query.set('limit', String(safe.limit));
+  if (params.sort) query.set('sort', params.sort);
+  if (params.order) query.set('order', params.order);
+  return apiFetch<BoardCardListPage>(
+    `/api/v1/boards/${boardId}/cards?${query.toString()}`,
   );
 }
 

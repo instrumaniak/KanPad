@@ -105,6 +105,8 @@ export async function deleteNote(id: number): Promise<void> {
   });
 }
 
+export const BOARD_NOTES_PAGE_SIZE = 20;
+
 /**
  * Board-scoped list via the supported `?board_id=` filter (the old
  * `GET /boards/:boardId/notes` duplicate route is deleted server-side —
@@ -112,6 +114,10 @@ export async function deleteNote(id: number): Promise<void> {
  * endpoint instead). `boardId` passes through verbatim: garbage surfaces
  * the backend 400 rather than silently listing another scope's notes.
  */
-export async function fetchBoardNotes(boardId: number): Promise<Page<NoteSummary>> {
-  return apiFetch<Page<NoteSummary>>(`/api/v1/notes?board_id=${boardId}`);
+export async function fetchBoardNotes(
+  boardId: number,
+  page = 1,
+  limit = BOARD_NOTES_PAGE_SIZE,
+): Promise<Page<NoteSummary>> {
+  return fetchNotes({ board_id: boardId, page, limit });
 }

@@ -18,7 +18,7 @@ const renderWithProviders = (ui: React.ReactElement) => {
   );
 };
 
-const mockBoardNotesData = {
+const mockNotesPage = {
   data: [
     {
       id: 1,
@@ -41,7 +41,12 @@ const mockBoardNotesData = {
       updated_at: '2024-06-15T00:00:00Z',
     },
   ],
+  page: 1,
+  limit: 20,
+  total: 2,
 };
+
+const mockBoardNotesData = { pages: [mockNotesPage], pageParams: [1] };
 
 const mockUseBoardNotes = vi.fn();
 const mockUseDeleteNote = vi.fn();
@@ -52,6 +57,8 @@ vi.mock('./use-notes', () => ({
   useBoardNotes: () => mockUseBoardNotes(),
   useDeleteNote: () => mockUseDeleteNote(),
   useNote: (id: number) => mockUseNote(id),
+  flattenNotePages: (pages: Array<{ data: Array<{ id: number }> }> | undefined) =>
+    pages?.flatMap((p) => p.data) ?? [],
 }));
 
 vi.mock('./board-notes-sidebar-item', () => ({
@@ -84,12 +91,23 @@ vi.mock('@/components/ui/use-toast', () => ({
 describe('BoardNotesSidebar', () => {
   const onToggle = vi.fn();
 
+  const defaultBoardNotes = () => ({
+    data: mockBoardNotesData,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+    isFetchingNextPage: false,
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseBoardNotes.mockReturnValue({ data: mockBoardNotesData, isLoading: false });
+    mockUseBoardNotes.mockReturnValue(defaultBoardNotes());
     mockUseDeleteNote.mockReturnValue({ mutateAsync: mockMutateAsync });
     mockUseNote.mockImplementation((id: number) => {
-      const note = mockBoardNotesData.data.find((n) => n.id === id);
+      const note = mockNotesPage.data.find((n) => n.id === id);
       return { data: note ? { data: note } : null, isLoading: false };
     });
   });
@@ -106,14 +124,32 @@ describe('BoardNotesSidebar', () => {
   });
 
   it('shows loading state', () => {
-    mockUseBoardNotes.mockReturnValue({ data: undefined, isLoading: true });
+    mockUseBoardNotes.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+    });
     renderWithProviders(<BoardNotesSidebar boardId={1} collapsed={false} onToggle={onToggle} />);
     const skeletons = document.querySelectorAll('.animate-pulse');
     expect(skeletons.length).toBe(3);
   });
 
   it('shows empty state when no notes', () => {
-    mockUseBoardNotes.mockReturnValue({ data: { data: [] }, isLoading: false });
+    mockUseBoardNotes.mockReturnValue({
+      data: { pages: [{ data: [], page: 1, limit: 20, total: 0 }], pageParams: [1] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+    });
     renderWithProviders(<BoardNotesSidebar boardId={1} collapsed={false} onToggle={onToggle} />);
     expect(screen.getByText('No notes for this board')).toBeInTheDocument();
   });
@@ -166,10 +202,36 @@ describe('BoardNotesSidebar', () => {
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-06-15T00:00:00Z',
     };
-    mockUseBoardNotes.mockReturnValue({ data: { data: [mockNote] }, isLoading: false });
+    mockUseBoardNotes.mockReturnValue({
+      data: { pages: [{ data: [mockNote], page: 1, limit: 20, total: 1 }], pageParams: [1] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+    });
     renderWithProviders(<BoardNotesSidebar boardId={1} collapsed={false} onToggle={onToggle} />);
     const card = screen.getByRole('article', { name: 'Note: Board Note 1' });
     fireEvent.click(card);
     expect(screen.getByTestId('note-editor')).toBeInTheDocument();
+  });
+
+  it('shows load more notes and calls fetchNextPage', () => {
+    const fetchNextPage = vi.fn();
+    mockUseBoardNotes.mockReturnValue({
+      data: mockBoardNotesData,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      hasNextPage: true,
+      fetchNextPage,
+      isFetchingNextPage: false,
+    });
+    renderWithProviders(<BoardNotesSidebar boardId={1} collapsed={false} onToggle={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notes' }));
+    expect(fetchNextPage).toHaveBeenCalled();
   });
 });

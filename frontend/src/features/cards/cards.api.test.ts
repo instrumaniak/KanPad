@@ -119,7 +119,7 @@ describe('cards.api', () => {
 
       await fetchCards(1, Number.NaN, 500);
       expect(mockApiFetch).toHaveBeenCalledWith(
-        `${BASE}/api/v1/columns/1/cards?page=1&limit=50`,
+        `${BASE}/api/v1/columns/1/cards?page=1&limit=20`,
       );
     });
   });

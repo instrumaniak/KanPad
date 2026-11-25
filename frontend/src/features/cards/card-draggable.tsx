@@ -4,6 +4,7 @@ import type { CSSProperties } from 'react';
 import { type Card as CardType, type DragData } from './use-cards';
 import { useState } from 'react';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
+import { useDragDisabled } from './drag-disabled-context';
 
 interface CardDraggableProps {
   card: CardType;
@@ -21,6 +22,8 @@ interface CardDraggableProps {
 export function CardDraggable({ card, index, isDragDisabled = false, children }: CardDraggableProps) {
   const [isHovered, setIsHovered] = useState(false);
   const prefersReducedMotion = usePrefersReducedMotion();
+  const dragDisabledByContext = useDragDisabled();
+  const disabled = isDragDisabled || dragDisabledByContext;
   const {
     attributes,
     listeners,
@@ -30,7 +33,7 @@ export function CardDraggable({ card, index, isDragDisabled = false, children }:
     isDragging,
   } = useSortable({
     id: `card-${card.id}`,
-    disabled: isDragDisabled,
+    disabled,
     data: {
       cardId: card.id,
       sourceColumnId: card.column_id ?? undefined,
@@ -63,10 +66,10 @@ export function CardDraggable({ card, index, isDragDisabled = false, children }:
           : isHovered
           ? '0 4px 6px rgba(0,0,0,0.1)'
           : '0 1px 3px rgba(0,0,0,0.1)',
-        cursor: isDragDisabled ? 'default' : isDragging ? 'grabbing' : isHovered ? 'grab' : 'pointer',
+        cursor: disabled ? 'default' : isDragging ? 'grabbing' : isHovered ? 'grab' : 'pointer',
       }}
-      {...(isDragDisabled ? {} : listeners)}
-      {...(isDragDisabled ? {} : { ...attributes })}
+      {...(disabled ? {} : listeners)}
+      {...(disabled ? {} : { ...attributes })}
     >
       {children({
         isDragging,

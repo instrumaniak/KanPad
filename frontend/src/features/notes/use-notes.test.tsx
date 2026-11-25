@@ -22,6 +22,7 @@ vi.mock('./notes.api', () => ({
   createNote: vi.fn(),
   updateNote: vi.fn(),
   deleteNote: vi.fn(),
+  BOARD_NOTES_PAGE_SIZE: 20,
 }));
 
 import { fetchNotes, fetchNote, fetchBoardNotes, createNote, updateNote, deleteNote } from './notes.api';
@@ -91,13 +92,13 @@ describe('useBoardNotes', () => {
   });
 
   it('fetches notes for a board', async () => {
-    mockFetchBoardNotes.mockResolvedValue({ data: [{ id: 1, title: 'Board Note' }] });
+    mockFetchBoardNotes.mockResolvedValue({ data: [{ id: 1, title: 'Board Note' }], page: 1, limit: 20, total: 1 });
 
     const { result } = renderHook(() => useBoardNotes(1), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ data: [{ id: 1, title: 'Board Note' }] });
-    expect(mockFetchBoardNotes).toHaveBeenCalledWith(1);
+    expect(result.current.data?.pages[0]).toEqual({ data: [{ id: 1, title: 'Board Note' }], page: 1, limit: 20, total: 1 });
+    expect(mockFetchBoardNotes).toHaveBeenCalledWith(1, 1, 20);
   });
 
   it('does not fetch when boardId is falsy', async () => {

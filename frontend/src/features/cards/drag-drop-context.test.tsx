@@ -378,4 +378,15 @@ describe('DragDropContext', () => {
     expect(dragOverlayProps.dropAnimation).toBeDefined();
     expect(dragOverlayProps.dropAnimation.duration).toBe(1);
   });
+
+  it('disables drag handlers when disabled', () => {
+    renderWithProviders(
+      <DragDropContext boardId={1} disabled>
+        <div>Content</div>
+      </DragDropContext>
+    );
+    expect(screen.getByText('Content')).toBeInTheDocument();
+    expect(dndHandlers.current?.onDragStart).toBeUndefined();
+    expect(dndHandlers.current?.onDragEnd).toBeUndefined();
+  });
 });

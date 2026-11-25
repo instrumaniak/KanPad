@@ -17,9 +17,10 @@ interface ColumnHeaderProps {
   column: Column;
   moveTargets?: Array<Pick<Column, 'id' | 'name'>>;
   onDeleted?: () => void;
+  filterActive?: boolean;
 }
 
-export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHeaderProps) {
+export function ColumnHeader({ column, moveTargets = [], onDeleted, filterActive = false }: ColumnHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(column.name);
   const [showMenu, setShowMenu] = useState(false);
@@ -171,8 +172,11 @@ export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHead
             </button>
             <div className="relative">
               <button
-                onClick={() => setShowSortMenu(!showSortMenu)}
-                className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
+                onClick={() => !filterActive && setShowSortMenu(!showSortMenu)}
+                disabled={filterActive}
+                aria-disabled={filterActive}
+                title={filterActive ? 'Clear search and filters to sort cards' : undefined}
+                className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm ${filterActive ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent'} ${isMobile ? 'min-h-[48px]' : ''}`}
               >
                 <span className="flex items-center gap-2">
                   <ArrowUpDown className="h-4 w-4" />
@@ -180,7 +184,7 @@ export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHead
                 </span>
                 <ChevronRight className="h-4 w-4" />
               </button>
-              {showSortMenu && (
+              {!filterActive && showSortMenu && (
                 <div ref={sortMenuRef} className={`absolute z-20 w-40 rounded-md border bg-popover p-1 shadow-md ${isMobile ? 'top-full left-0 mt-1' : 'left-full top-0 ml-1'}`}>
                   <button
                     onClick={() => handleSort('asc')}
@@ -202,8 +206,11 @@ export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHead
             {otherColumns.length > 0 && (
               <div className="relative">
                 <button
-                  onClick={() => setShowMoveMenu(!showMoveMenu)}
-                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-accent ${isMobile ? 'min-h-[48px]' : ''}`}
+                  onClick={() => !filterActive && setShowMoveMenu(!showMoveMenu)}
+                  disabled={filterActive}
+                  aria-disabled={filterActive}
+                  title={filterActive ? 'Clear search and filters to move all cards' : undefined}
+                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-sm ${filterActive ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent'} ${isMobile ? 'min-h-[48px]' : ''}`}
                 >
                   <span className="flex items-center gap-2">
                     <MoveHorizontal className="h-4 w-4" />
@@ -211,7 +218,7 @@ export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHead
                   </span>
                   <ChevronRight className="h-4 w-4" />
                 </button>
-                {showMoveMenu && (
+                {!filterActive && showMoveMenu && (
                   <div ref={moveMenuRef} className={`absolute z-20 w-40 rounded-md border bg-popover p-1 shadow-md ${isMobile ? 'top-full left-0 mt-1' : 'left-full top-0 ml-1'}`}>
                     {otherColumns.map((col) => (
                       <button
@@ -225,6 +232,11 @@ export function ColumnHeader({ column, moveTargets = [], onDeleted }: ColumnHead
                   </div>
                 )}
               </div>
+            )}
+            {filterActive && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground" role="status">
+                Clear search and filters to sort or move cards.
+              </p>
             )}
             <button
               onClick={() => {

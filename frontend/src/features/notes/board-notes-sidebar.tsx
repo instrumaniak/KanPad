@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FileText, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { NoteEditor } from './note-editor';
 import { BoardNotesSidebarItem } from './board-notes-sidebar-item';
 import { useBoardNotes, useDeleteNote, useNote } from './use-notes';
+import { flattenNotePages } from './use-notes';
 
 interface BoardNotesSidebarProps {
   boardId: number;
@@ -28,7 +29,16 @@ interface BoardNotesSidebarProps {
 }
 
 export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = false }: BoardNotesSidebarProps) {
-  const { data: notesData, isLoading } = useBoardNotes(boardId);
+  const {
+    data: notesData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useBoardNotes(boardId);
   const deleteNote = useDeleteNote();
   const { toast } = useToast();
   const { showSuccess, showError } = useToastHelpers();
@@ -39,12 +49,31 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
   const [isCreating, setIsCreating] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  const notes = notesData?.data ?? [];
+  const notes = flattenNotePages(notesData?.pages);
 
   useEffect(() => {
     return () => clearTimeout(deleteTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    const root = sentinel.closest('[data-radix-scroll-area-viewport]') as Element | null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && hasNextPage && !isFetchingNextPage) {
+          void fetchNextPage();
+        }
+      },
+      { root, rootMargin: '200px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, notes.length, isMobile, collapsed]);
 
   const handleCreate = () => {
     setIsCreating(false);
@@ -78,6 +107,69 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
     });
   };
 
+  const notesList = (
+    <ScrollArea className="flex-1 px-2 py-2">
+      {isLoading ? (
+        <div className="space-y-2 px-2" role="status" aria-label="Loading notes">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-16 animate-pulse rounded-md bg-muted" />
+          ))}
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center gap-2 px-4 py-8 text-center" role="status">
+          <p className="text-sm text-muted-foreground">
+            {error instanceof Error ? error.message : 'Failed to load notes'}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : notes.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+          <FileText className="h-8 w-8 text-muted-foreground/50" />
+          <p className="text-sm text-muted-foreground">No notes for this board</p>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {notes.map((note) => (
+            <div key={note.id} className="group relative">
+              <div className="relative">
+                <BoardNotesSidebarItem
+                  note={note}
+                  onClick={() => setEditingNoteId(note.id)}
+                  onEdit={() => setEditingNoteId(note.id)}
+                  onDelete={() => setDeleteConfirmId(note.id)}
+                />
+              </div>
+            </div>
+          ))}
+          <div ref={sentinelRef} data-testid="board-notes-sentinel" />
+          {hasNextPage ? (
+            <div className="px-1 pb-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => void fetchNextPage()}
+                disabled={isFetchingNextPage}
+                aria-label="Load more notes"
+              >
+                {isFetchingNextPage ? 'Loading more notes...' : 'Load more notes'}
+              </Button>
+            </div>
+          ) : null}
+          <p className="sr-only" role="status" aria-live="polite">
+            {isFetchingNextPage
+              ? 'Loading more notes'
+              : hasNextPage
+                ? 'More notes available'
+                : 'End of notes'}
+          </p>
+        </div>
+      )}
+    </ScrollArea>
+  );
+
   if (isMobile) {
     return (
       <>
@@ -90,35 +182,7 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
           </div>
         </div>
 
-        <ScrollArea className="flex-1 px-2 py-2">
-          {isLoading ? (
-            <div className="space-y-2 px-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-16 animate-pulse rounded-md bg-muted" />
-              ))}
-            </div>
-          ) : notes.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-              <FileText className="h-8 w-8 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">No notes for this board</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {notes.map((note) => (
-                <div key={note.id} className="group relative">
-                  <div className="relative">
-                    <BoardNotesSidebarItem
-                      note={note}
-                      onClick={() => setEditingNoteId(note.id)}
-                      onEdit={() => setEditingNoteId(note.id)}
-                      onDelete={() => setDeleteConfirmId(note.id)}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
+        {notesList}
 
         {editingNoteId && (
           <Sheet
@@ -223,35 +287,7 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
           </Button>
         </div>
 
-        <ScrollArea className="flex-1 px-2 py-2">
-          {isLoading ? (
-            <div className="space-y-2 px-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-16 animate-pulse rounded-md bg-muted" />
-              ))}
-            </div>
-          ) : notes.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-              <FileText className="h-8 w-8 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">No notes for this board</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {notes.map((note) => (
-                <div key={note.id} className="group relative">
-                  <div className="relative">
-                    <BoardNotesSidebarItem
-                      note={note}
-                      onClick={() => setEditingNoteId(note.id)}
-                      onEdit={() => setEditingNoteId(note.id)}
-                      onDelete={() => setDeleteConfirmId(note.id)}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
+        {notesList}
       </aside>
 
       {collapsed && (

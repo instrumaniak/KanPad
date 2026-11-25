@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +9,8 @@ import {
   useDeleteColumn,
   useSortCards,
   useMoveAllCards,
+  useLoadMoreColumnCards,
+  columnQueryKey,
 } from './use-columns';
 
 vi.mock('./columns.api', () => ({
@@ -19,6 +22,10 @@ vi.mock('./columns.api', () => ({
   moveAllCards: vi.fn(),
 }));
 
+vi.mock('../cards/cards.api', () => ({
+  fetchCards: vi.fn(),
+}));
+
 import {
   fetchColumns,
   createColumn,
@@ -27,6 +34,7 @@ import {
   sortCards,
   moveAllCards,
 } from './columns.api';
+import { fetchCards } from '../cards/cards.api';
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -44,7 +52,7 @@ describe('useColumns', () => {
     (fetchColumns as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ data: [] });
     const { result } = renderHook(() => useColumns(1), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(fetchColumns).toHaveBeenCalledWith(1);
+    expect(fetchColumns).toHaveBeenCalledWith(1, { embedLimit: 10, filters: undefined });
   });
 
   it('does not fetch when boardId is falsy', async () => {
@@ -129,5 +137,42 @@ describe('useMoveAllCards', () => {
     result.current.mutate({ sourceColumnId: 1, targetColumnId: 2 });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(moveAllCards).toHaveBeenCalledWith(1, 2);
+  });
+});
+
+describe('columnQueryKey', () => {
+  it('includes filters when active and stays canonical when unfiltered', () => {
+    expect(columnQueryKey(1)).toEqual(['columns', 1]);
+    expect(columnQueryKey(1, { search: 'foo', labels: [2, 1] })).toEqual([
+      'columns',
+      1,
+      { search: 'foo', labels: [1, 2] },
+    ]);
+  });
+});
+
+describe('useLoadMoreColumnCards', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('dedupes merged cards and appends new ones', async () => {
+    (fetchCards as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: [{ id: 2, title: 'B' }, { id: 3, title: 'C' }],
+      page: 2,
+      limit: 20,
+      total: 3,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(['columns', 1], [
+      { id: 10, board_id: 1, name: 'Col', position: 0, total_cards: 3, matching_cards: 3, cards: [{ id: 1, title: 'A' }, { id: 2, title: 'B' }] },
+    ]);
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useLoadMoreColumnCards(1, 10), { wrapper });
+    await result.current.loadMore();
+    await waitFor(() => {
+      const cols = queryClient.getQueryData<any[]>(['columns', 1]);
+      expect(cols?.[0].cards.map((c: any) => c.id)).toEqual([1, 2, 3]);
+    });
   });
 });

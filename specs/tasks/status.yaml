@@ -310,7 +310,7 @@ tasks:
     critical: false
   T050:
     name: "Frontend: board infinite scroll and server-driven filters"
-    status: pending
+    status: done
     depends:
       - T048
       - T049

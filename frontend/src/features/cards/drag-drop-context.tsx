@@ -1,7 +1,7 @@
 import { DndContext, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import type { DragEndEvent, DragOverEvent, DragStartEvent, DropAnimation } from '@dnd-kit/core';
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { createPortal } from 'react-dom';
 import { useMoveCard, useReorderCard, type Card } from './use-cards';
@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { Column } from '../columns/columns.api';
 import { CardPreview } from './card-preview';
 import { moveCardToColumn } from './drag-over-cache';
+import { DragDisabledContext } from './drag-disabled-context';
 
 // rAF coalescing helpers (T021 / P4). Kept behind globalThis lookups so tests can
 // stub requestAnimationFrame/cancelAnimationFrame deterministically, with a
@@ -54,9 +55,10 @@ function getColumnIdFromDndId(id: string | number): number | undefined {
 interface DragDropContextProps {
   boardId: number;
   children: React.ReactNode;
+  disabled?: boolean;
 }
 
-export function DragDropContext({ boardId, children }: DragDropContextProps) {
+export function DragDropContext({ boardId, children, disabled = false }: DragDropContextProps) {
   const moveCardMutation = useMoveCard();
   const reorderCardMutation = useReorderCard();
   const queryClient = useQueryClient();
@@ -385,10 +387,12 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
 
       try {
         await moveCardMutation.mutateAsync({ id: cardId, data: { column_id: targetColumnId, position: insertIndex } });
+        queryClient.invalidateQueries({ queryKey: ['board-cards', boardId] });
         toast({ title: 'Card moved', type: 'success' });
       } catch {
         toast({ title: 'Failed to move card', type: 'error' });
         queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+        queryClient.invalidateQueries({ queryKey: ['board-cards', boardId] });
       }
     }
   }, [dragSource, moveCardMutation, reorderCardMutation, queryClient, toast, boardId, getColumns, setColumns, prefersReducedMotion, cancelPendingDragOver]);
@@ -401,24 +405,26 @@ export function DragDropContext({ boardId, children }: DragDropContextProps) {
   }, [queryClient, boardId, cancelPendingDragOver]);
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
-      {children}
-      {createPortal(
-        <DragOverlay dropAnimation={dropAnimation}>
-          {activeCard ? (
-            <div className="rounded border bg-card p-3 text-sm shadow-xl opacity-90 scale-105 cursor-grabbing w-full max-w-[280px]">
-              <CardPreview card={activeCard} />
-            </div>
-          ) : null}
-        </DragOverlay>,
-        document.body
-      )}
-    </DndContext>
+    <DragDisabledContext.Provider value={disabled}>
+      <DndContext
+        sensors={disabled ? [] : sensors}
+        onDragStart={disabled ? undefined : handleDragStart}
+        onDragOver={disabled ? undefined : handleDragOver}
+        onDragEnd={disabled ? undefined : handleDragEnd}
+        onDragCancel={disabled ? undefined : handleDragCancel}
+      >
+        {children}
+        {createPortal(
+          <DragOverlay dropAnimation={dropAnimation}>
+            {activeCard ? (
+              <div className="rounded border bg-card p-3 text-sm shadow-xl opacity-90 scale-105 cursor-grabbing w-full max-w-[280px]">
+                <CardPreview card={activeCard} />
+              </div>
+            ) : null}
+          </DragOverlay>,
+          document.body
+        )}
+      </DndContext>
+    </DragDisabledContext.Provider>
   );
 }

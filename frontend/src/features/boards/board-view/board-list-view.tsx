@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, Plus, Trash2, Letters } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
-import { fetchCards } from '../../cards/cards.api';
-import { COLUMN_CARD_PAGE_SIZE } from '../../columns/use-columns';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,22 +23,20 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { useToastHelpers } from '@/lib/toast-helpers';
-import type { Column as BoardColumn, Card } from '../../columns/columns.api';
-import {
-  sortFlatCards,
-  type BoardListSortKey,
-  type FlatCard,
-  type SortDir,
-} from './board-list-sort';
-import { useCreateCard, useDeleteCard, useUpdateCard } from '../../cards/use-cards';
+import type { Card } from '../../columns/columns.api';
+import type { CardListFilters, BoardCardListItem } from '../../cards/cards.api';
+import { useBoardCards, flattenBoardCardPages, useCreateCard, useDeleteCard, useUpdateCard } from '../../cards/use-cards';
+import { useColumns } from '../../columns/use-columns';
 import { CardDetailPanel } from '../../cards/card-detail-panel';
 import { LabelBadge } from '../../labels/label-badge';
 import { getDueDateBadge } from '../../cards/date-utils';
 import { ProgressBar } from '../../checklists/progress-bar';
+import type { BoardListSortKey, SortDir } from './board-list-sort';
 
 interface BoardListViewProps {
   boardId: number;
-  columns: BoardColumn[];
+  filters: CardListFilters;
+  filterActive: boolean;
 }
 
 const SORT_OPTIONS: { key: BoardListSortKey; label: string }[] = [
@@ -51,12 +46,25 @@ const SORT_OPTIONS: { key: BoardListSortKey; label: string }[] = [
   { key: 'title', label: 'Title' },
 ];
 
-// Upper bound of a list-row height (py-2 + title line + badge row + optional
-// checklist-progress row). Dynamic rows are measured per-row via measureElement.
 const ESTIMATED_ROW_HEIGHT = 96;
 const ROW_OVERSCAN = 5;
 
-export function BoardListView({ boardId, columns }: BoardListViewProps) {
+function toCard(item: BoardCardListItem): Card {
+  return {
+    id: item.id,
+    title: item.title,
+    has_description: item.has_description,
+    column_id: item.column_id,
+    position: item.position,
+    due_date: item.due_date,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    labels: item.labels,
+    checklist_progress: item.checklist_progress,
+  } as Card;
+}
+
+export function BoardListView({ boardId, filters, filterActive }: BoardListViewProps) {
   const [sortKey, setSortKey] = useState<BoardListSortKey>('created_at');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [editingCardId, setEditingCardId] = useState<number | null>(null);
@@ -67,11 +75,9 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const [newTitle, setNewTitle] = useState('');
   const [targetColumnId, setTargetColumnId] = useState<string>('');
   const titleCommitGuard = useRef<number | null>(null);
-  // Focused row pinned in the virtual window — a focused, non-editing row that
-  // scrolls out of the window would otherwise unmount underneath the user and
-  // drop focus to <body> (WCAG 2.4.3 focus order).
   const [focusedCardId, setFocusedCardId] = useState<number | null>(null);
   const pendingFocusRestoreRef = useRef<number | null>(null);
+
   useEffect(() => () => {
     pendingFocusRestoreRef.current = null;
   }, []);
@@ -81,76 +87,55 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   const updateCard = useUpdateCard();
   const deleteCardMutation = useDeleteCard();
   const createCardMutation = useCreateCard();
-  const queryClient = useQueryClient();
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const hasUnloadedCards = useMemo(
-    () =>
-      columns.some(
-        (c) => ((c as BoardColumn & { total_cards?: number }).total_cards ?? c.cards.length) > c.cards.length,
-      ),
-    [columns],
-  );
 
-  const loadMoreCards = useCallback(async () => {
-    if (isLoadingMore) return;
-    setIsLoadingMore(true);
-    try {
-      const targets = columns.filter(
-        (c) => ((c as BoardColumn & { total_cards?: number }).total_cards ?? c.cards.length) > c.cards.length,
-      );
-      for (const col of targets) {
-        const total = (col as BoardColumn & { total_cards?: number }).total_cards ?? col.cards.length;
-        if (col.cards.length >= total) continue;
-        const nextPage = Math.floor(col.cards.length / COLUMN_CARD_PAGE_SIZE) + 1;
-        const res = await fetchCards(col.id, nextPage, COLUMN_CARD_PAGE_SIZE);
-        queryClient.setQueryData<BoardColumn[]>(['columns', boardId], (old) => {
-          if (!old) return old;
-          return old.map((c) => {
-            if (c.id !== col.id) return c;
-            const seen = new Set(c.cards.map((card) => card.id));
-            const merged = [...c.cards];
-            for (const card of res.data) {
-              if (seen.has(card.id)) continue;
-              seen.add(card.id);
-              merged.push(card as BoardColumn['cards'][number]);
-            }
-            return { ...c, cards: merged };
-          });
-        });
-      }
-    } catch (err) {
-      showError('Failed to load more cards', err instanceof Error ? err.message : 'Something went wrong');
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }, [boardId, columns, isLoadingMore, queryClient]);
-
+  const { data: columnsData } = useColumns(boardId);
   const sortedColumns = useMemo(
-    () => [...columns].sort((a, b) => a.position - b.position),
-    [columns],
+    () => [...(columnsData ?? [])].sort((a, b) => a.position - b.position),
+    [columnsData],
   );
 
-  const flatCards = useMemo<FlatCard[]>(
-    () => columns.flatMap((c) => (c.cards ?? []).map((card) => ({ ...card, columnName: c.name }))),
-    [columns],
-  );
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useBoardCards(boardId, { ...filters, sort: sortKey, order: sortDir });
 
-  const sortedCards = useMemo(
-    () => sortFlatCards(flatCards, sortKey, sortDir),
-    [flatCards, sortKey, sortDir],
-  );
+  const items = useMemo(() => flattenBoardCardPages(data?.pages), [data?.pages]);
+  const total = data?.pages?.[0]?.total ?? 0;
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Keep the inline-edit row AND the focused row mounted even when they scroll
-  // out of the virtual window — unmounting either mid-interaction destroys
-  // the input/button and drops focus.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    const root = scrollRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && hasNextPage && !isFetchingNextPage) {
+          void fetchNextPage();
+        }
+      },
+      { root, rootMargin: '200px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, items.length]);
+
   const editingIndex = useMemo(
-    () => sortedCards.findIndex((c) => c.id === editingCardId),
-    [sortedCards, editingCardId],
+    () => items.findIndex((c) => c.id === editingCardId),
+    [items, editingCardId],
   );
   const focusedIndex = useMemo(
-    () => sortedCards.findIndex((c) => c.id === focusedCardId),
-    [sortedCards, focusedCardId],
+    () => items.findIndex((c) => c.id === focusedCardId),
+    [items, focusedCardId],
   );
   const rangeExtractor = useCallback(
     (range: Range) => {
@@ -165,13 +150,13 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
   );
   const getItemKey = useCallback(
     (index: number) => {
-      const card = sortedCards[index];
+      const card = items[index];
       return card ? `${card.id}` : `__i_${index}`;
     },
-    [sortedCards],
+    [items],
   );
   const virtualizer = useVirtualizer({
-    count: sortedCards.length,
+    count: items.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
     overscan: ROW_OVERSCAN,
@@ -195,21 +180,19 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
     }
   };
 
-  const startTitleEdit = (card: Card) => {
+  const startTitleEdit = (card: BoardCardListItem) => {
     titleCommitGuard.current = null;
     setFocusedCardId(card.id);
     setEditingCardId(card.id);
     setEditTitle(card.title);
   };
 
-  const restoreFocusAfterEdit = (card: Card) => {
-    // Keep the row pinned and restore focus to its rename button once it
-    // remounts — committing/cancelling must not strand the user on <body>.
+  const restoreFocusAfterEdit = (card: BoardCardListItem) => {
     pendingFocusRestoreRef.current = card.id;
     setFocusedCardId(card.id);
   };
 
-  const commitTitleEdit = (card: Card) => {
+  const commitTitleEdit = (card: BoardCardListItem) => {
     if (titleCommitGuard.current === card.id || updateCard.isPending) return;
     const trimmed = editTitle.trim();
     if (!trimmed || trimmed === card.title) {
@@ -237,7 +220,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
     );
   };
 
-  const cancelTitleEdit = (card: Card) => {
+  const cancelTitleEdit = (card: BoardCardListItem) => {
     titleCommitGuard.current = card.id;
     setEditingCardId(null);
     restoreFocusAfterEdit(card);
@@ -336,7 +319,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
               variant={active ? 'default' : 'ghost'}
               size="sm"
               aria-pressed={active}
-              disabled={sortedCards.length === 0}
+              disabled={items.length === 0 && !isLoading}
               onClick={() => handleSort(key)}
             >
               {label}
@@ -351,28 +334,27 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
           </Button>
         </div>
       </div>
-      {hasUnloadedCards ? (
-        <div className="flex items-center gap-2 px-6 py-1 text-xs text-muted-foreground" role="status">
-          <span>Showing loaded cards only. Some columns have more cards.</span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadMoreCards()}
-            disabled={isLoadingMore}
-          >
-            {isLoadingMore ? 'Loading...' : 'Load more cards'}
-          </Button>
-        </div>
+      {filterActive ? (
+        <p className="px-6 pb-1 text-xs text-muted-foreground" role="status">
+          Drag and drop is disabled while search or filters are active.
+        </p>
       ) : null}
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-6 pb-6" data-testid="board-list-scroll">
-        {sortedCards.length === 0 ? (
+        {isLoading ? (
+          <p className="py-8 text-center text-muted-foreground" role="status">Loading cards...</p>
+        ) : isError ? (
+          <div className="flex flex-col items-center gap-2 py-8 text-center" role="status">
+            <p className="text-sm text-muted-foreground">
+              {error instanceof Error ? error.message : 'Failed to load cards'}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void refetch()}>Retry</Button>
+          </div>
+        ) : items.length === 0 ? (
           <p className="py-8 text-center text-muted-foreground">No cards yet</p>
         ) : (
-          <div role="table" aria-label="Board cards list" aria-rowcount={sortedCards.length + 1}>
+          <div role="table" aria-label="Board cards list" aria-rowcount={items.length + 1}>
             <div role="row" aria-rowindex={1} className="sr-only">
-              {/* Header row mirrors the two data cells: the card column carries
-                  the active sort (aria-sort), the actions column is labelled. */}
               <div
                 role="columnheader"
                 aria-sort={sortDir === 'asc' ? 'ascending' : 'descending'}
@@ -383,9 +365,10 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
             </div>
             <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              const card = sortedCards[virtualRow.index];
-              if (!card) return null;
-              const dueBadge = getDueDateBadge(card.due_date);
+              const item = items[virtualRow.index];
+              if (!item) return null;
+              const card = toCard(item);
+              const dueBadge = getDueDateBadge(item.due_date);
               return (
                 <div
                   key={virtualRow.key}
@@ -396,7 +379,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                   data-testid="board-list-row"
                   className="absolute left-0 top-0 flex w-full items-center gap-3 border-b py-2"
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
-                  onFocusCapture={() => setFocusedCardId(card.id)}
+                  onFocusCapture={() => setFocusedCardId(item.id)}
                   onBlurCapture={(e) => {
                     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
                       setFocusedCardId(null);
@@ -404,7 +387,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                   }}
                 >
                   <div role="cell" className="flex min-w-0 flex-1 flex-col gap-1">
-                    {editingCardId === card.id ? (
+                    {editingCardId === item.id ? (
                       <Input
                         value={editTitle}
                         autoFocus
@@ -413,24 +396,24 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => {
                           e.stopPropagation();
-                          if (e.key === 'Enter') commitTitleEdit(card);
-                          if (e.key === 'Escape') cancelTitleEdit(card);
+                          if (e.key === 'Enter') commitTitleEdit(item);
+                          if (e.key === 'Escape') cancelTitleEdit(item);
                         }}
-                        onBlur={() => commitTitleEdit(card)}
+                        onBlur={() => commitTitleEdit(item)}
                       />
                     ) : (
                       <button
-                        ref={titleRestoreRef(card.id)}
+                        ref={titleRestoreRef(item.id)}
                         type="button"
-                        aria-label={`Edit title of card: ${card.title}`}
+                        aria-label={`Edit title of card: ${item.title}`}
                         className="flex items-center gap-1 break-words text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          startTitleEdit(card);
+                          startTitleEdit(item);
                         }}
                       >
-                        <span className="flex-1">{card.title}</span>
-                        {card.has_description && (
+                        <span className="flex-1">{item.title}</span>
+                        {item.has_description && (
                           <Letters
                             role="img"
                             className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -442,7 +425,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                     )}
                     <button
                       type="button"
-                      aria-label={`Open card details: ${card.title}`}
+                      aria-label={`Open card details: ${item.title}`}
                       className="flex cursor-pointer flex-col gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                       onClick={() => setDetailCard(card)}
                       onKeyDown={(e) => {
@@ -453,8 +436,8 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                       }}
                     >
                       <span className="flex flex-wrap items-center gap-1">
-                        <Badge variant="secondary">{card.columnName}</Badge>
-                        {(card.labels ?? []).map((label) => (
+                        <Badge variant="secondary">{item.column_name}</Badge>
+                        {(item.labels ?? []).map((label) => (
                           <LabelBadge key={label.id} label={label} />
                         ))}
                         {dueBadge && (
@@ -465,16 +448,16 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                           </span>
                         )}
                       </span>
-                      {card.checklist_progress && (
+                      {item.checklist_progress && (
                         <span className="flex items-center gap-2">
                           <ProgressBar
-                            completed={card.checklist_progress.completed}
-                            total={card.checklist_progress.total}
+                            completed={item.checklist_progress.completed}
+                            total={item.checklist_progress.total}
                             className="flex-1"
                           />
                           <span className="whitespace-nowrap text-xs text-muted-foreground">
-                            {card.checklist_progress.completed}/{card.checklist_progress.total} (
-                            {card.checklist_progress.percent}%)
+                            {item.checklist_progress.completed}/{item.checklist_progress.total} (
+                            {item.checklist_progress.percent}%)
                           </span>
                         </span>
                       )}
@@ -484,7 +467,7 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label={`Delete card ${card.title}`}
+                      aria-label={`Delete card ${item.title}`}
                       onClick={() => setDeleteCard(card)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -494,6 +477,23 @@ export function BoardListView({ boardId, columns }: BoardListViewProps) {
               );
             })}
             </div>
+            <div ref={sentinelRef} data-testid="board-list-sentinel" />
+            {hasNextPage ? (
+              <div className="flex justify-center py-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  aria-label="Load more cards"
+                >
+                  {isFetchingNextPage ? 'Loading more cards...' : 'Load more cards'}
+                </Button>
+              </div>
+            ) : null}
+            <p className="sr-only" role="status" aria-live="polite">
+              {isFetchingNextPage ? 'Loading more cards' : hasNextPage ? 'More cards available' : `End of list, ${items.length} of ${total} cards`}
+            </p>
           </div>
         )}
       </div>

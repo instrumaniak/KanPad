@@ -1,10 +1,11 @@
-import type { Column } from '../../columns/columns.api';
+import type { CardListFilters } from '../../cards/cards.api';
 
 export type DueDateFilter = 'Overdue' | 'Today' | 'This Week' | 'No Date';
 export type ChecklistFilter = 'All' | 'With Checklist' | 'Complete' | 'Incomplete';
 
 export interface FilterState {
-  labels: string[];
+  /** Selected label IDs (server expects label IDs). */
+  labels: number[];
   dueDate: DueDateFilter | null;
   checklist: ChecklistFilter;
 }
@@ -15,86 +16,39 @@ export const DEFAULT_FILTER_STATE: FilterState = {
   checklist: 'All',
 };
 
-function matchesLabels(cardLabels: { name: string }[] | undefined, selectedLabels: string[]): boolean {
-  if (selectedLabels.length === 0) return true;
-  const names = new Set((cardLabels ?? []).map((l) => l.name));
-  return selectedLabels.every((label) => names.has(label));
+export function hasActiveFilters(filters: FilterState): boolean {
+  return filters.labels.length > 0 || filters.dueDate !== null || filters.checklist !== 'All';
 }
 
-function matchesDueDate(
-  dueDate: string | null | undefined,
-  filter: DueDateFilter | null,
-): boolean {
-  if (!filter) return true;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+const DUE_DATE_TO_SERVER: Record<DueDateFilter, NonNullable<CardListFilters['due_date']>> = {
+  Overdue: 'overdue',
+  Today: 'today',
+  'This Week': 'this_week',
+  'No Date': 'no_date',
+};
 
-  switch (filter) {
-    case 'No Date':
-      // The generated contract types `due_date` as optional-and-nullable
-      // (`string | null | undefined`); both "absent" and "null" mean no due
-      // date on the wire.
-      return dueDate === null || dueDate === undefined;
-    case 'Overdue': {
-      if (!dueDate) return false;
-      return new Date(dueDate) < today;
-    }
-    case 'Today': {
-      if (!dueDate) return false;
-      const d = new Date(dueDate);
-      return (
-        d.getFullYear() === today.getFullYear() &&
-        d.getMonth() === today.getMonth() &&
-        d.getDate() === today.getDate()
-      );
-    }
-    case 'This Week': {
-      if (!dueDate) return false;
-      const d = new Date(dueDate);
-      const windowEnd = new Date(today);
-      windowEnd.setDate(today.getDate() + 7);
-      return d >= today && d < windowEnd;
-    }
-    default:
-      return true;
-  }
+const CHECKLIST_TO_SERVER: Record<Exclude<ChecklistFilter, 'All'>, NonNullable<CardListFilters['checklist']>> = {
+  'With Checklist': 'with',
+  Complete: 'complete',
+  Incomplete: 'incomplete',
+};
+
+export function toServerCardFilters(filters: FilterState, search?: string): CardListFilters {
+  const out: CardListFilters = {};
+  const trimmed = search?.trim();
+  if (trimmed) out.search = trimmed;
+  if (filters.labels.length > 0) out.labels = [...filters.labels];
+  if (filters.dueDate) out.due_date = DUE_DATE_TO_SERVER[filters.dueDate];
+  if (filters.checklist !== 'All') out.checklist = CHECKLIST_TO_SERVER[filters.checklist];
+  return out;
 }
 
-function matchesChecklist(
-  checklistProgress: { completed: number; total: number } | null | undefined,
-  filter: ChecklistFilter,
-): boolean {
-  if (filter === 'All') return true;
-
-  const total = checklistProgress?.total ?? 0;
-  const completed = checklistProgress?.completed ?? 0;
-
-  switch (filter) {
-    case 'With Checklist':
-      return total > 0;
-    case 'Complete':
-      return total > 0 && completed === total;
-    case 'Incomplete':
-      return total > 0 && completed < total;
-    default:
-      return true;
-  }
-}
-
-export function filterColumnsByFilters(columns: Column[], filters: FilterState): Column[] {
-  const { labels, dueDate, checklist } = filters;
-  const hasFilters = labels.length > 0 || dueDate !== null || checklist !== 'All';
-  if (!hasFilters) return columns;
-
-  return columns.map((column) => {
-    const cards = column.cards ?? [];
-    const filtered = cards.filter((card) => {
-      if (!matchesLabels(card.labels, labels)) return false;
-      if (!matchesDueDate(card.due_date, dueDate)) return false;
-      if (!matchesChecklist(card.checklist_progress, checklist)) return false;
-      return true;
-    });
-    if (filtered.length === cards.length) return column;
-    return { ...column, cards: filtered };
-  });
+export function cardFiltersEqual(a: CardListFilters, b: CardListFilters): boolean {
+  if (a.search !== b.search) return false;
+  if (a.due_date !== b.due_date) return false;
+  if (a.checklist !== b.checklist) return false;
+  const al = a.labels ?? [];
+  const bl = b.labels ?? [];
+  if (al.length !== bl.length) return false;
+  return al.every((v, i) => v === bl[i]);
 }

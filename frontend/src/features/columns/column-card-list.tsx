@@ -5,7 +5,7 @@ import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/rea
 import type { Card } from '../cards/use-cards';
 import { PerfProfiler } from '@/lib/perf-profiler';
 import { Card as CardComponent } from '../cards/card';
-import { useLoadMoreColumnCards } from './use-columns';
+import { useLoadMoreColumnCards, type BoardColumnFilters } from './use-columns';
 
 // Upper bound of a typical card face height (p-3 padding + title line + up to
 // two badge rows + a checklist row). Only used until the row is measured —
@@ -23,9 +23,10 @@ interface ColumnCardListProps {
   boardId?: number;
   totalCards?: number;
   newCardId?: number;
+  filters?: BoardColumnFilters;
 }
 
-export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, boardId, totalCards, newCardId }: ColumnCardListProps) {
+export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, boardId, totalCards, newCardId, filters }: ColumnCardListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Track only the active drag id. useDndContext() re-renders on every
   // drag move/over; useDndMonitor fires callbacks without subscribing to
@@ -41,7 +42,7 @@ export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, bo
   // drop focus to <body> (WCAG 2.4.3 focus order).
   const [focusedCardId, setFocusedCardId] = useState<number | null>(null);
   const cardList = cards ?? EMPTY_CARDS;
-  const { loadMore, isFetching: isFetchingMore, error: loadMoreError } = useLoadMoreColumnCards(boardId ?? 0, columnId ?? 0);
+  const { loadMore, isFetching: isFetchingMore, error: loadMoreError } = useLoadMoreColumnCards(boardId ?? 0, columnId ?? 0, filters);
   const hasMore = (totalCards ?? cardList.length) > cardList.length;
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -170,6 +171,9 @@ export const ColumnCardList = memo(function ColumnCardList({ cards, columnId, bo
           {loadMoreError ? (
             <p className="mt-1 text-xs text-destructive" role="status">Failed to load more cards.</p>
           ) : null}
+          <p className="sr-only" role="status" aria-live="polite">
+            {isFetchingMore ? 'Loading more cards' : hasMore ? 'More cards available' : 'End of cards'}
+          </p>
         </div>
       ) : null}
     </div>

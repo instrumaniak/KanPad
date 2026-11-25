@@ -12,7 +12,7 @@ const CHECKLIST_OPTIONS: ChecklistFilter[] = ['All', 'With Checklist', 'Complete
 interface FilterDropdownProps {
   filters: FilterState;
   onFiltersChange: (filters: FilterState) => void;
-  availableLabels: { name: string; color: string }[];
+  availableLabels: { id: number; name: string; color: string }[];
 }
 
 export function FilterDropdown({ filters, onFiltersChange, availableLabels }: FilterDropdownProps) {
@@ -20,10 +20,10 @@ export function FilterDropdown({ filters, onFiltersChange, availableLabels }: Fi
     filters.labels.length > 0 || filters.dueDate !== null || filters.checklist !== 'All';
 
   const toggleLabel = useCallback(
-    (labelName: string) => {
-      const next = filters.labels.includes(labelName)
-        ? filters.labels.filter((l) => l !== labelName)
-        : [...filters.labels, labelName];
+    (labelId: number) => {
+      const next = filters.labels.includes(labelId)
+        ? filters.labels.filter((l) => l !== labelId)
+        : [...filters.labels, labelId];
       onFiltersChange({ ...filters, labels: next });
     },
     [filters, onFiltersChange],
@@ -75,12 +75,12 @@ export function FilterDropdown({ filters, onFiltersChange, availableLabels }: Fi
               <h4 id="filter-labels-heading" className="text-xs font-medium text-muted-foreground mb-2">Labels</h4>
               <div className="flex flex-wrap gap-1.5">
                 {availableLabels.map((label) => {
-                  const isSelected = filters.labels.includes(label.name);
+                  const isSelected = filters.labels.includes(label.id);
                   return (
                     <button
-                      key={label.name}
+                      key={label.id}
                       type="button"
-                      onClick={() => toggleLabel(label.name)}
+                      onClick={() => toggleLabel(label.id)}
                       className={cn(
                         'inline-flex items-center rounded px-2 py-0.5 text-xs font-medium transition-opacity',
                         getLabelColorClass(label.color),

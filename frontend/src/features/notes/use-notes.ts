@@ -6,6 +6,7 @@ import {
   updateNote,
   deleteNote,
   fetchBoardNotes,
+  BOARD_NOTES_PAGE_SIZE,
 } from './notes.api';
 import type {
   CreateNoteData,
@@ -24,6 +25,7 @@ export const noteKeys = {
 
 export function useNotes(filters?: NoteFilters) {
   const { page: _page, ...rest } = filters ?? {};
+  void _page;
   return useInfiniteQuery({
     queryKey: noteKeys.list(rest),
     queryFn: ({ pageParam }) => fetchNotes({ ...rest, page: pageParam }),
@@ -58,9 +60,14 @@ export function useNote(id: number) {
 }
 
 export function useBoardNotes(boardId: number) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: noteKeys.byBoard(boardId),
-    queryFn: () => fetchBoardNotes(boardId),
+    queryFn: ({ pageParam }) => fetchBoardNotes(boardId, pageParam, BOARD_NOTES_PAGE_SIZE),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const loaded = lastPage.page * lastPage.limit;
+      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
+    },
     enabled: !!boardId,
   });
 }

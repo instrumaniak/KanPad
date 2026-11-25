@@ -1,13 +1,17 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   createCard,
   updateCard,
   deleteCard,
   fetchCards,
+  fetchBoardCards,
   fetchCard,
   assignLabelToCard,
   removeLabelFromCard,
   sanitizeCardListParams,
+  type BoardCardListItem,
+  type BoardCardListParams,
+  type CardListFilters,
   type CreateCardData,
   type UpdateCardData,
   type Card,
@@ -24,6 +28,70 @@ const cardKeys = {
   byId: (cardId: number) => ['card', cardId] as const,
   all: () => ['cards'] as const,
 };
+
+export const BOARD_CARDS_PAGE_SIZE = 20;
+
+function normalizeBoardCardFilters(filters?: CardListFilters) {
+  if (!filters) return undefined;
+  const search = filters.search?.trim();
+  const labels = filters.labels?.length ? [...new Set(filters.labels)].sort((a, b) => a - b) : undefined;
+  const due_date = filters.due_date;
+  const checklist = filters.checklist;
+  if (!search && !labels?.length && !due_date && !checklist) return undefined;
+  return {
+    ...(search ? { search } : {}),
+    ...(labels?.length ? { labels } : {}),
+    ...(due_date ? { due_date } : {}),
+    ...(checklist ? { checklist } : {}),
+  };
+}
+
+export function boardCardsQueryKey(
+  boardId: number,
+  params?: Omit<BoardCardListParams, 'page' | 'limit'>,
+) {
+  const normalized = normalizeBoardCardFilters(params);
+  const sort = params?.sort ?? 'created_at';
+  const order = params?.order ?? 'asc';
+  return ['board-cards', boardId, { ...normalized, sort, order }] as const;
+}
+
+export function useBoardCards(boardId: number, params?: Omit<BoardCardListParams, 'page' | 'limit'>) {
+  const normalized = normalizeBoardCardFilters(params);
+  const sort = params?.sort ?? 'created_at';
+  const order = params?.order ?? 'asc';
+  return useInfiniteQuery({
+    queryKey: boardCardsQueryKey(boardId, { ...normalized, sort, order }),
+    queryFn: ({ pageParam }) =>
+      fetchBoardCards(boardId, {
+        ...normalized,
+        sort,
+        order,
+        page: pageParam,
+        limit: BOARD_CARDS_PAGE_SIZE,
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const loaded = lastPage.page * lastPage.limit;
+      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
+    },
+    enabled: !!boardId,
+  });
+}
+
+export function flattenBoardCardPages(pages: Array<{ data: BoardCardListItem[] }> | undefined): BoardCardListItem[] {
+  if (!pages) return [];
+  const seen = new Set<number>();
+  const out: BoardCardListItem[] = [];
+  for (const page of pages) {
+    for (const item of page.data) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
+}
 
 export function useCards(columnId: number, page?: number, limit?: number) {
   const params = sanitizeCardListParams(page, limit);
@@ -49,6 +117,7 @@ export function useCreateCard() {
     onSuccess: (_, { column_id }) => {
       queryClient.invalidateQueries({ queryKey: cardKeys.byColumn(column_id) });
       queryClient.invalidateQueries({ queryKey: ['columns'] });
+      queryClient.invalidateQueries({ queryKey: ['board-cards'] });
     },
   });
 }
@@ -67,6 +136,7 @@ export function useUpdateCard() {
         queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.id) });
       }
       queryClient.invalidateQueries({ queryKey: ['columns'] });
+      queryClient.invalidateQueries({ queryKey: ['board-cards'] });
     },
   });
 }
@@ -138,6 +208,7 @@ export function useMoveCard() {
       queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.id) });
       if (err) {
         queryClient.invalidateQueries({ queryKey: ['columns'] });
+        queryClient.invalidateQueries({ queryKey: ['board-cards'] });
       }
     },
   });
@@ -192,6 +263,7 @@ export function useReorderCard() {
     },
     onSettled: (_data, _err, variables) => {
       queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.id) });
+      queryClient.invalidateQueries({ queryKey: ['board-cards'] });
     },
   });
 }
@@ -230,6 +302,7 @@ export function useDeleteCard() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['columns'] });
+      queryClient.invalidateQueries({ queryKey: ['board-cards'] });
     },
   });
 }
@@ -242,6 +315,7 @@ export function useAssignCardLabel() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.cardId) });
       queryClient.invalidateQueries({ queryKey: ['columns'] });
+      queryClient.invalidateQueries({ queryKey: ['board-cards'] });
     },
   });
 }
@@ -254,6 +328,7 @@ export function useRemoveCardLabel() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.cardId) });
       queryClient.invalidateQueries({ queryKey: ['columns'] });
+      queryClient.invalidateQueries({ queryKey: ['board-cards'] });
     },
   });
 }

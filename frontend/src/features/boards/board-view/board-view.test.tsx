@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { BoardView } from './board-view';
@@ -22,7 +23,7 @@ vi.mock('../use-boards', () => ({
 }));
 
 vi.mock('../../columns/use-columns', () => ({
-  useColumns: () => mockUseColumns(),
+  useColumns: (...args: unknown[]) => mockUseColumns(...args),
   useCreateColumn: () => ({ mutateAsync: mockMutateAsync }),
 }));
 
@@ -56,7 +57,7 @@ vi.mock('../../columns/add-column-button', () => ({
 }));
 
 vi.mock('../../cards/drag-drop-context', () => ({
-  DragDropContext: ({ children }: { children: React.ReactNode }) => (
+  DragDropContext: ({ children }: { children: React.ReactNode; disabled?: boolean }) => (
     <div data-testid="drag-context">{children}</div>
   ),
 }));
@@ -72,14 +73,8 @@ vi.mock('../../cards/use-cards', () => ({
 }));
 
 vi.mock('./board-list-view', () => ({
-  BoardListView: ({ columns }: { columns: { cards?: { title: string }[] }[] }) => (
-    <div data-testid="board-list-view">
-      {(columns ?? [])
-        .flatMap((c) => c.cards ?? [])
-        .map((card, i) => (
-          <span key={i}>{card.title}</span>
-        ))}
-    </div>
+  BoardListView: ({ filterActive }: { filterActive?: boolean }) => (
+    <div data-testid="board-list-view">{filterActive ? 'filtered' : 'unfiltered'}</div>
   ),
 }));
 
@@ -88,8 +83,8 @@ vi.mock('./filter-dropdown', () => ({
     filters,
     onFiltersChange,
   }: {
-    filters: { labels: string[]; dueDate: string | null; checklist: string };
-    onFiltersChange: (f: { labels: string[]; dueDate: string | null; checklist: string }) => void;
+    filters: { labels: number[]; dueDate: string | null; checklist: string };
+    onFiltersChange: (f: { labels: number[]; dueDate: string | null; checklist: string }) => void;
   }) => (
     <div data-testid="filter-dropdown">
       <button
@@ -97,9 +92,9 @@ vi.mock('./filter-dropdown', () => ({
         onClick={() =>
           onFiltersChange({
             ...filters,
-            labels: filters.labels.includes('Red')
-              ? filters.labels.filter((l: string) => l !== 'Red')
-              : [...filters.labels, 'Red'],
+            labels: filters.labels.includes(1)
+              ? filters.labels.filter((l: number) => l !== 1)
+              : [...filters.labels, 1],
           })
         }
       >
@@ -118,17 +113,13 @@ vi.mock('./filter-dropdown', () => ({
       </button>
       <button
         data-testid="filter-checklist-complete"
-        onClick={() =>
-          onFiltersChange({ ...filters, checklist: 'Complete' })
-        }
+        onClick={() => onFiltersChange({ ...filters, checklist: 'Complete' })}
       >
         Set Complete
       </button>
       <button
         data-testid="filter-checklist-incomplete"
-        onClick={() =>
-          onFiltersChange({ ...filters, checklist: 'Incomplete' })
-        }
+        onClick={() => onFiltersChange({ ...filters, checklist: 'Incomplete' })}
       >
         Set Incomplete
       </button>
@@ -142,7 +133,7 @@ vi.mock('./filter-chips', () => ({
     onClearFilter,
     onClearAll,
   }: {
-    filters: { labels: string[]; dueDate: string | null; checklist: string };
+    filters: { labels: number[]; dueDate: string | null; checklist: string };
     onClearFilter: (type: 'labels' | 'dueDate' | 'checklist') => void;
     onClearAll: () => void;
   }) => {
@@ -152,7 +143,7 @@ vi.mock('./filter-chips', () => ({
     return (
       <div data-testid="filter-chips">
         <span data-testid="filter-chips-text">
-          {filters.labels.length > 0 && `Labels: ${filters.labels.join(', ')}`}
+          {filters.labels.length > 0 && `Labels: ${filters.labels.map((id: number) => ({1:'Red',2:'Blue'} as any)[id] ?? id).join(', ')}`}
           {filters.dueDate && ` Due: ${filters.dueDate}`}
           {filters.checklist !== 'All' && ` Checklist: ${filters.checklist}`}
         </span>
@@ -431,7 +422,33 @@ describe('BoardView', () => {
     ];
 
     function renderWithSearchData() {
-      mockUseColumns.mockReturnValue({ isLoading: false, data: searchColumns });
+      mockUseColumns.mockImplementation((_id: number, filters?: any) => {
+        let data = searchColumns;
+        if (filters?.search) {
+          const q = filters.search.toLowerCase();
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => card.title.toLowerCase().includes(q)) }));
+        }
+        if (filters?.labels?.length) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => filters.labels.every((l: number) => (card.labels ?? []).some((x: any) => x.id === l))) }));
+        }
+        if (filters?.due_date) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => {
+            if (filters.due_date === 'no_date') return !card.due_date;
+            return !!card.due_date;
+          }) }));
+        }
+        if (filters?.checklist) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => {
+            const total = card.checklist_progress?.total ?? 0;
+            const completed = card.checklist_progress?.completed ?? 0;
+            if (filters.checklist === 'with') return total > 0;
+            if (filters.checklist === 'complete') return total > 0 && completed === total;
+            if (filters.checklist === 'incomplete') return total > 0 && completed < total;
+            return true;
+          }) }));
+        }
+        return { isLoading: false, data };
+      });
       vi.useFakeTimers();
       render(<BoardView />);
     }
@@ -498,13 +515,19 @@ describe('BoardView', () => {
       renderWithSearchData();
       typeSearch('Beta');
       fireEvent.click(screen.getByRole('button', { name: /list/i }));
-      expect(screen.getByTestId('board-list-view')).toHaveTextContent('Beta task');
-      expect(screen.getByTestId('board-list-view')).not.toHaveTextContent('Alpha task');
+      expect(screen.getByTestId('board-list-view')).toHaveTextContent('filtered');
       expect(screen.getByLabelText('Search cards')).toHaveValue('Beta');
     });
 
     it('resets search on boardId change', () => {
-      mockUseColumns.mockReturnValue({ isLoading: false, data: searchColumns });
+      mockUseColumns.mockImplementation((_id: number, filters?: any) => {
+        let data = searchColumns;
+        if (filters?.search) {
+          const q = filters.search.toLowerCase();
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => card.title.toLowerCase().includes(q)) }));
+        }
+        return { isLoading: false, data };
+      });
       vi.useFakeTimers();
       const { rerender } = render(<BoardView />);
       typeSearch('Beta');
@@ -549,7 +572,34 @@ describe('BoardView', () => {
     ];
 
     function renderWithFilterData() {
-      mockUseColumns.mockReturnValue({ isLoading: false, data: filterColumns });
+      mockUseColumns.mockImplementation((_id: number, filters?: any) => {
+        let data = filterColumns;
+        if (filters?.search) {
+          const q = filters.search.toLowerCase();
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => card.title.toLowerCase().includes(q)) }));
+        }
+        if (filters?.labels?.length) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => filters.labels.every((l: number) => (card.labels ?? []).some((x: any) => x.id === l))) }));
+        }
+        if (filters?.due_date) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => {
+            if (filters.due_date === 'no_date') return !card.due_date;
+            if (filters.due_date === 'overdue') return !!card.due_date;
+            return !!card.due_date;
+          }) }));
+        }
+        if (filters?.checklist) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => {
+            const total = card.checklist_progress?.total ?? 0;
+            const completed = card.checklist_progress?.completed ?? 0;
+            if (filters.checklist === 'with') return total > 0;
+            if (filters.checklist === 'complete') return total > 0 && completed === total;
+            if (filters.checklist === 'incomplete') return total > 0 && completed < total;
+            return true;
+          }) }));
+        }
+        return { isLoading: false, data };
+      });
       render(<BoardView />);
     }
 
@@ -591,16 +641,22 @@ describe('BoardView', () => {
     });
 
     it('composes search and filter independently', () => {
-      mockUseColumns.mockReturnValue({ isLoading: false, data: filterColumns });
+      mockUseColumns.mockImplementation((_id: number, filters?: any) => {
+        let data = filterColumns;
+        if (filters?.search) {
+          const q = filters.search.toLowerCase();
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => card.title.toLowerCase().includes(q)) }));
+        }
+        if (filters?.labels?.length) {
+          data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => filters.labels.every((l: number) => (card.labels ?? []).some((x: any) => x.id === l))) }));
+        }
+        return { isLoading: false, data };
+      });
       vi.useFakeTimers();
       render(<BoardView />);
-      // Apply label filter
       fireEvent.click(screen.getByTestId('filter-label-red'));
-      // Type search
       fireEvent.change(screen.getByLabelText('Search cards'), { target: { value: 'Red' } });
-      act(() => {
-        vi.advanceTimersByTime(300);
-      });
+      act(() => { vi.advanceTimersByTime(300); });
       expect(screen.getByText('Red card')).toBeInTheDocument();
       expect(screen.queryByText('Blue card')).not.toBeInTheDocument();
     });
@@ -656,7 +712,14 @@ describe('BoardView', () => {
           ],
         },
       ];
-      mockUseColumns.mockReturnValue({ isLoading: false, data: dueDateColumns });
+      mockUseColumns.mockImplementation((_id: number, filters?: any) => {
+        let data = dueDateColumns;
+        if (filters?.search) { const q = filters.search.toLowerCase(); data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => card.title.toLowerCase().includes(q)) })); }
+        if (filters?.labels?.length) { data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => filters.labels.every((l: number) => (card.labels ?? []).some((x: any) => x.id === l))) })); }
+        if (filters?.due_date) { data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => { if (filters.due_date === 'no_date') return !card.due_date; return !!card.due_date; }) })); }
+        if (filters?.checklist) { data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => { const total = card.checklist_progress?.total ?? 0; const completed = card.checklist_progress?.completed ?? 0; if (filters.checklist === 'with') return total > 0; if (filters.checklist === 'complete') return total > 0 && completed === total; if (filters.checklist === 'incomplete') return total > 0 && completed < total; return true; }) })); }
+        return { isLoading: false, data };
+      });
       render(<BoardView />);
       fireEvent.click(screen.getByTestId('filter-due-overdue'));
       expect(screen.getByText('Overdue task')).toBeInTheDocument();
@@ -693,7 +756,14 @@ describe('BoardView', () => {
           ],
         },
       ];
-      mockUseColumns.mockReturnValue({ isLoading: false, data: checklistColumns });
+      mockUseColumns.mockImplementation((_id: number, filters?: any) => {
+        let data = checklistColumns;
+        if (filters?.search) { const q = filters.search.toLowerCase(); data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => card.title.toLowerCase().includes(q)) })); }
+        if (filters?.labels?.length) { data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => filters.labels.every((l: number) => (card.labels ?? []).some((x: any) => x.id === l))) })); }
+        if (filters?.due_date) { data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => { if (filters.due_date === 'no_date') return !card.due_date; return !!card.due_date; }) })); }
+        if (filters?.checklist) { data = data.map((c: any) => ({ ...c, cards: c.cards.filter((card: any) => { const total = card.checklist_progress?.total ?? 0; const completed = card.checklist_progress?.completed ?? 0; if (filters.checklist === 'with') return total > 0; if (filters.checklist === 'complete') return total > 0 && completed === total; if (filters.checklist === 'incomplete') return total > 0 && completed < total; return true; }) })); }
+        return { isLoading: false, data };
+      });
       render(<BoardView />);
       fireEvent.click(screen.getByTestId('filter-checklist-complete'));
       expect(screen.getByText('Complete task')).toBeInTheDocument();

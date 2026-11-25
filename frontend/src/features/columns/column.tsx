@@ -3,7 +3,7 @@ import { ColumnCardList } from './column-card-list';
 import { ColumnHeader } from './column-header';
 import { ColumnDroppable } from './column-droppable';
 import { AddCardInput } from '../cards/add-card-input';
-import { type Column as ColumnType } from './use-columns';
+import { type Column as ColumnType, type BoardColumnFilters } from './use-columns';
 import type { Card as CardType2 } from '../cards/use-cards';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 
@@ -13,9 +13,11 @@ interface ColumnProps {
   nextColumnId?: number;
   moveTargets?: Array<Pick<ColumnType, 'id' | 'name'>>;
   onDeleted?: () => void;
+  filterActive?: boolean;
+  filters?: BoardColumnFilters;
 }
 
-export const Column = memo(function Column({ column, boardId, nextColumnId, moveTargets = [], onDeleted }: ColumnProps) {
+export const Column = memo(function Column({ column, boardId, nextColumnId, moveTargets = [], onDeleted, filterActive = false, filters }: ColumnProps) {
   const [newCardId, setNewCardId] = useState<number | undefined>();
   const breakpoint = useBreakpoint();
 
@@ -31,7 +33,7 @@ export const Column = memo(function Column({ column, boardId, nextColumnId, move
       className={`flex h-full shrink-0 flex-col rounded-lg ${isMobile ? 'w-[17rem] max-w-[calc(100vw-2rem)]' : 'min-w-[320px] max-w-[320px]'}`}
       data-column-id={column.id}
     >
-      <ColumnHeader column={column} moveTargets={moveTargets} onDeleted={onDeleted} />
+      <ColumnHeader column={column} moveTargets={moveTargets} onDeleted={onDeleted} filterActive={filterActive} />
 
       {/* Layout contract (button placement): the scroller is content-sized —
           NO flex-1 — so it only takes as much height as the cards need and
@@ -52,8 +54,13 @@ export const Column = memo(function Column({ column, boardId, nextColumnId, move
                 cards={column.cards}
                 columnId={column.id}
                 boardId={boardId}
-                totalCards={(column as ColumnType & { total_cards?: number }).total_cards}
+                totalCards={
+                  filterActive
+                    ? (column as ColumnType & { matching_cards?: number }).matching_cards ?? column.cards.length
+                    : (column as ColumnType & { total_cards?: number }).total_cards
+                }
                 newCardId={newCardId}
+                filters={filters}
               />
             </div>
             <div className="p-2">

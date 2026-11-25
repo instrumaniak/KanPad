@@ -6,13 +6,15 @@ interface FilterChipsProps {
   filters: FilterState;
   onClearFilter: (type: 'labels' | 'dueDate' | 'checklist') => void;
   onClearAll: () => void;
+  availableLabels?: { id: number; name: string }[];
 }
 
-export function FilterChips({ filters, onClearFilter, onClearAll }: FilterChipsProps) {
+export function FilterChips({ filters, onClearFilter, onClearAll, availableLabels = [] }: FilterChipsProps) {
   const chips: { key: string; label: string; onClear: () => void }[] = [];
 
   if (filters.labels.length > 0) {
-    const labelNames = filters.labels.join(', ');
+    const nameById = new Map(availableLabels.map((l) => [l.id, l.name]));
+    const labelNames = filters.labels.map((id) => nameById.get(id) ?? `Label ${id}`).join(', ');
     chips.push({
       key: 'labels',
       label: `Labels: ${labelNames}`,

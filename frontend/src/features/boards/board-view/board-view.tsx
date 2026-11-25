@@ -12,11 +12,10 @@ import { DragDropContext } from '../../cards/drag-drop-context';
 import { BoardViewToggle } from './board-view-toggle';
 import { BoardListView } from './board-list-view';
 import { CardSearchInput } from './card-search-input';
-import { filterColumnsByTitle } from './filter-cards-by-title';
 import { FilterDropdown } from './filter-dropdown';
 import { FilterChips } from './filter-chips';
 import { useLabels } from '../../labels/use-labels';
-import { DEFAULT_FILTER_STATE, type FilterState, filterColumnsByFilters } from './filter-columns-by-filters';
+import { DEFAULT_FILTER_STATE, hasActiveFilters, toServerCardFilters, type FilterState } from './filter-columns-by-filters';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
@@ -39,7 +38,6 @@ export function BoardView() {
   const id = boardId ? parseInt(boardId, 10) : 0;
 
   const { data: boardResponse, isLoading: boardLoading, isError: boardQueryError, error: boardError, refetch: refetchBoard } = useBoard(id);
-  const { data: columns, isLoading: columnsLoading, isError: columnsQueryError, error: columnsError, refetch: refetchColumns } = useColumns(id);
   const { data: allLabels } = useLabels();
 
   const board = boardResponse?.data;
@@ -98,8 +96,6 @@ export function BoardView() {
     setDebouncedSearch('');
   }, []);
 
-
-
   // Reset search on board change — inline body (do NOT call handler) to satisfy exhaustive-deps.
   // Stale query must not leak across boards; cascading render here is intentional and cheap.
   useEffect(() => {
@@ -112,14 +108,16 @@ export function BoardView() {
 
   const activeQuery = debouncedSearch.trim();
   const isSearching = activeQuery.length >= 2;
-  const hasActiveFilters = filters.labels.length > 0 || filters.dueDate !== null || filters.checklist !== 'All';
-  // 5-2: compose filterColumnsByFilters here (single derivation point).
-  const filteredColumns = useMemo(() => {
-    let result = columns ?? EMPTY_COLUMNS;
-    if (isSearching) result = filterColumnsByTitle(result, activeQuery);
-    if (hasActiveFilters) result = filterColumnsByFilters(result, filters);
-    return result;
-  }, [columns, activeQuery, isSearching, hasActiveFilters, filters]);
+  const filterActive = hasActiveFilters(filters) || isSearching;
+  const serverFilters = useMemo(
+    () => toServerCardFilters(filters, isSearching ? activeQuery : ''),
+    [filters, isSearching, activeQuery],
+  );
+
+  const { data: columns, isLoading: columnsLoading, isError: columnsQueryError, error: columnsError, refetch: refetchColumns } = useColumns(id, serverFilters);
+
+  // Server-driven: columns already contain authoritative filtered results.
+  const filteredColumns = columns ?? EMPTY_COLUMNS;
 
   // Stable column metadata for child props. Drag commits create new column arrays
   // but rarely change column names/positions; keying on metadata keeps
@@ -143,33 +141,28 @@ export function BoardView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columnMetaKey]);
 
-  // Memoized counts — a double flatMap per render defeated identity stability on
-  // every dragOver cache write (T021 / P4).
   const columnsForCounts = columns ?? EMPTY_COLUMNS;
-  const hasUnloadedCards = useMemo(
-    () =>
-      columnsForCounts.some(
-        (c) => ((c as typeof c & { total_cards?: number }).total_cards ?? c.cards.length) > c.cards.length,
-      ),
-    [columnsForCounts],
-  );
   const visibleCount = useMemo(
     () => filteredColumns.reduce((n, c) => n + (c.cards ?? []).length, 0),
     [filteredColumns],
   );
   const totalCount = useMemo(
     () =>
-      columnsForCounts.reduce(
-        (n, c) => n + ((c as typeof c & { total_cards?: number }).total_cards ?? c.cards.length),
-        0,
-      ),
-    [columnsForCounts],
+      columnsForCounts.reduce((n, c) => {
+        const total = filterActive
+          ? (c as typeof c & { matching_cards?: number }).matching_cards ?? c.cards.length
+          : (c as typeof c & { total_cards?: number }).total_cards ?? c.cards.length;
+        return n + total;
+      }, 0),
+    [columnsForCounts, filterActive],
   );
   const isFilteredEmpty =
-    !boardLoading && !columnsLoading && !!board && hasActiveFilters && filteredColumns.every((c) => (c.cards ?? []).length === 0);
+    !boardLoading && !columnsLoading && !!board && hasActiveFilters(filters) && filteredColumns.every((c) => ((c as typeof c & { matching_cards?: number }).matching_cards ?? (c.cards ?? []).length) === 0);
   const isSearchEmpty =
-    !boardLoading && !columnsLoading && !!board && isSearching && filteredColumns.every((c) => (c.cards ?? []).length === 0);
-  const isEmpty = isSearchEmpty || isFilteredEmpty;
+    !boardLoading && !columnsLoading && !!board && isSearching && !hasActiveFilters(filters) && filteredColumns.every((c) => ((c as typeof c & { matching_cards?: number }).matching_cards ?? (c.cards ?? []).length) === 0);
+  const isSearchAndFilterEmpty =
+    !boardLoading && !columnsLoading && !!board && isSearching && hasActiveFilters(filters) && filteredColumns.every((c) => ((c as typeof c & { matching_cards?: number }).matching_cards ?? (c.cards ?? []).length) === 0);
+  const isEmpty = isSearchEmpty || isFilteredEmpty || isSearchAndFilterEmpty;
 
   const getListScroller = (): Element | null =>
     listScrollRef.current?.querySelector('[data-testid="board-list-scroll"]') ?? null;
@@ -304,14 +297,15 @@ export function BoardView() {
           else if (type === 'checklist') setFilters((prev) => ({ ...prev, checklist: 'All' }));
         }}
         onClearAll={() => setFilters(DEFAULT_FILTER_STATE)}
+        availableLabels={allLabels?.data ?? []}
       />
-      {(isSearching || hasActiveFilters) && hasUnloadedCards ? (
+      {filterActive ? (
         <p className="px-4 text-xs text-muted-foreground sm:px-6" role="status">
-          Searching loaded cards only. Load more cards to include remaining results.
+          Drag and drop, sorting, and move-all are disabled while search or filters are active. Clear them to reorder cards.
         </p>
       ) : null}
       <p aria-live="polite" aria-atomic="true" className="sr-only">
-        {isSearching || hasActiveFilters ? `${visibleCount} of ${totalCount} cards` : ''}
+        {filterActive ? `${visibleCount} of ${totalCount} matching cards` : ''}
       </p>
 
       <div className={cn(
@@ -322,21 +316,19 @@ export function BoardView() {
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16">
             <h2 className="text-lg font-semibold">No cards found</h2>
             <p className="text-sm text-muted-foreground">
-              {isSearchEmpty
-                ? hasUnloadedCards
-                  ? 'No loaded cards match your search. Load more cards in columns or clear the search.'
-                  : 'No cards match your search. Try a different term or clear the search.'
-                : hasUnloadedCards
-                  ? 'No loaded cards match your filters. Load more cards in columns or clear filters.'
+              {isSearching && hasActiveFilters(filters)
+                ? 'No cards match your search and filters. Try different terms or clear them.'
+                : isSearching
+                  ? 'No cards match your search. Try a different term or clear the search.'
                   : 'No cards match your filters. Try different filters or clear them.'}
             </p>
             <div className="flex gap-2">
-              {isSearchEmpty && (
+              {isSearching && (
                 <Button variant="secondary" onClick={handleClearSearch}>
                   Clear search
                 </Button>
               )}
-              {isFilteredEmpty && (
+              {hasActiveFilters(filters) && (
                 <Button variant="secondary" onClick={() => setFilters(DEFAULT_FILTER_STATE)}>
                   Clear filters
                 </Button>
@@ -347,7 +339,7 @@ export function BoardView() {
           isMobile ? (
             <div className="flex min-h-0 flex-1 overflow-hidden">
               <div className="flex h-full min-h-0 flex-1 overflow-x-auto touch-pan-x" ref={boardScrollRef}>
-                <DragDropContext boardId={id}>
+                <DragDropContext boardId={id} disabled={filterActive}>
                   <div className="flex h-full min-w-max gap-4 p-4 pb-4">
                     {filteredColumns.map((column) => (
                       <Column
@@ -356,6 +348,8 @@ export function BoardView() {
                         boardId={id}
                         nextColumnId={nextColumnIdById.get(column.id)}
                         moveTargets={moveTargets}
+                        filterActive={filterActive}
+                        filters={serverFilters}
                       />
                     ))}
                     <AddColumnButton onClick={handleAddColumn} />
@@ -366,7 +360,7 @@ export function BoardView() {
           ) : (
             <div className="flex min-h-0 flex-1 overflow-hidden">
               <div className="flex h-full min-h-0 flex-1 overflow-x-auto" ref={boardScrollRef}>
-                <DragDropContext boardId={id}>
+                <DragDropContext boardId={id} disabled={filterActive}>
                   <div className="flex h-full gap-6 p-6 pb-6">
                     {filteredColumns.map((column) => (
                       <Column
@@ -375,6 +369,8 @@ export function BoardView() {
                         boardId={id}
                         nextColumnId={nextColumnIdById.get(column.id)}
                         moveTargets={moveTargets}
+                        filterActive={filterActive}
+                        filters={serverFilters}
                       />
                     ))}
                     <AddColumnButton onClick={handleAddColumn} />
@@ -385,7 +381,7 @@ export function BoardView() {
           )
         ) : (
           <div ref={listScrollRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <BoardListView boardId={id} columns={filteredColumns} />
+            <BoardListView boardId={id} filters={serverFilters} filterActive={filterActive} />
           </div>
         )}
       </div>

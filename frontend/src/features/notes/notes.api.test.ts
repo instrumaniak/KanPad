@@ -196,11 +196,11 @@ describe('notes.api', () => {
 
   describe('fetchBoardNotes', () => {
     it('fetches board notes via the ?board_id= filter (deleted nested route retired)', async () => {
-      const page = { data: [], page: 1, limit: 50, total: 0 };
+      const page = { data: [], page: 1, limit: 20, total: 0 };
       mockApiFetch.mockResolvedValueOnce(page);
 
       const result = await fetchBoardNotes(1);
-      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/notes?board_id=1`);
+      expect(mockApiFetch).toHaveBeenCalledWith(`${BASE}/api/v1/notes?board_id=1&page=1&limit=20`);
       expect(result).toEqual(page);
     });
 

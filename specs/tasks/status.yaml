@@ -302,7 +302,7 @@ tasks:
     critical: false
   T049:
     name: "Backend: server-side board card search and filters"
-    status: pending
+    status: done
     depends:
       - T022
       - T048

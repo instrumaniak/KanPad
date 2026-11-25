@@ -44,6 +44,7 @@ use sqlx::{MySql, MySqlExecutor, QueryBuilder};
 
 use crate::{
     common::{
+        card_filters::{CardFilters, DueDateBoundaries, push_card_filters},
         card_summary::{
             CardLabelRef, CardSummary, ChecklistProgress, format_timestamp as summary_timestamp,
         },
@@ -186,22 +187,30 @@ where
     Ok(pairs)
 }
 
-/// Total cards in a column (the list `Page.total` — plain `COUNT(*)`, no join
-/// fanout; the caller proves ownership first via
-/// [`crate::common::ownership::check_column_owned`]).
-#[tracing::instrument(skip(ex))]
-pub async fn count_cards_in_column<'e, E>(ex: E, column_id: i32) -> Result<u64, AppError>
+/// Total cards in a column matching filters (`Page.total` when filtered).
+/// Caller proves ownership first via [`crate::common::ownership::check_column_owned`].
+#[tracing::instrument(skip(ex, filters))]
+pub async fn count_cards_in_column<'e, E>(
+    ex: E,
+    column_id: i32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
+) -> Result<u64, AppError>
 where
     E: MySqlExecutor<'e>,
 {
-    let total = sqlx::query!(
-        "SELECT COUNT(*) AS \"total: i64\" FROM `cards` WHERE `column_id` = ?",
-        column_id
-    )
-    .fetch_one(ex)
-    .await
-    .map_err(AppError::Db)?;
-    u64::try_from(total.total).map_err(|_| AppError::Internal(Internal))
+    let mut builder =
+        QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM `cards` k WHERE k.`column_id` = ");
+    builder.push_bind(column_id);
+    if !filters.is_empty() {
+        push_card_filters(&mut builder, "k", filters, due);
+    }
+    let total: i64 = builder
+        .build_query_scalar()
+        .fetch_one(ex)
+        .await
+        .map_err(AppError::Db)?;
+    u64::try_from(total).map_err(|_| AppError::Internal(Internal))
 }
 
 /// Insert a card row; returns the new id (`last_insert_id` as `u64` →
@@ -678,17 +687,16 @@ pub type PageLabelTuple = (i32, i32, String, String);
 pub type PageProgressTuple = (i32, i64, i64);
 
 /// Page `SELECT` for a column's cards (`sort_key ASC, id ASC`, TEXT-free).
-/// Wire positions are `offset + index` (computed). The caller proves
-/// ownership first via [`crate::common::ownership::check_column_owned`].
-/// Built with
-/// `QueryBuilder` (shared-filter discipline per `30-db-schema.md`; user text
-/// is never `push`ed — only bound ids/limits).
-#[tracing::instrument(skip(ex))]
+/// Wire positions are `offset + index` over the returned (filtered) page.
+/// Caller proves ownership first via [`crate::common::ownership::check_column_owned`].
+#[tracing::instrument(skip(ex, filters))]
 pub async fn fetch_card_page<'e, E>(
     ex: E,
     column_id: i32,
     limit: u32,
     offset: u32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
 ) -> Result<Vec<CardPageTuple>, AppError>
 where
     E: MySqlExecutor<'e>,
@@ -701,6 +709,9 @@ where
           FROM `cards` k WHERE k.`column_id` = ",
     );
     builder.push_bind(column_id);
+    if !filters.is_empty() {
+        push_card_filters(&mut builder, "k", filters, due);
+    }
     builder.push(" ORDER BY k.`sort_key` ASC, k.`id` ASC LIMIT ");
     builder.push_bind(limit);
     builder.push(" OFFSET ");
@@ -877,11 +888,19 @@ struct BoardCardPageRow {
     updated_at: NaiveDateTime,
 }
 
-/// Shared board-scope WHERE for board card count/page queries. T049 extends
-/// this builder with filter/search clauses while keeping count/page drift-free.
-fn push_board_cards_filter(builder: &mut QueryBuilder<MySql>, board_id: i32) {
+/// Shared board-scope WHERE for board card count/page queries. Applies T049
+/// filters so count and page queries cannot drift.
+fn push_board_cards_filter(
+    builder: &mut QueryBuilder<MySql>,
+    board_id: i32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
+) {
     builder.push(" WHERE c.`board_id` = ");
     builder.push_bind(board_id);
+    if !filters.is_empty() {
+        push_card_filters(builder, "k", filters, due);
+    }
 }
 
 /// Static ORDER BY fragment for board cards list. User input is never
@@ -901,16 +920,21 @@ fn board_cards_ordering(sort: &str, order: &str) -> &'static str {
     }
 }
 
-/// `SELECT COUNT(*)` for board-scoped card list `Page.total`.
-#[tracing::instrument(skip(ex))]
-pub async fn count_board_cards<'e, E>(ex: E, board_id: i32) -> Result<u64, AppError>
+/// `SELECT COUNT(*)` for board-scoped card list `Page.total` (filtered).
+#[tracing::instrument(skip(ex, filters))]
+pub async fn count_board_cards<'e, E>(
+    ex: E,
+    board_id: i32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
+) -> Result<u64, AppError>
 where
     E: MySqlExecutor<'e>,
 {
     let mut builder = QueryBuilder::new(
         "SELECT COUNT(*) FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id`",
     );
-    push_board_cards_filter(&mut builder, board_id);
+    push_board_cards_filter(&mut builder, board_id, filters, due);
     let total: i64 = builder
         .build_query_scalar()
         .fetch_one(ex)
@@ -921,7 +945,7 @@ where
 
 /// Page `SELECT` for board-scoped card list. TEXT-free; `position` is the
 /// per-column computed position in stable column sort-key order (0-based).
-#[tracing::instrument(skip(ex))]
+#[tracing::instrument(skip(ex, filters))]
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_board_card_page<'e, E>(
     ex: E,
@@ -930,6 +954,8 @@ pub async fn fetch_board_card_page<'e, E>(
     order: &str,
     limit: u32,
     offset: u32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
 ) -> Result<Vec<BoardCardListItem>, AppError>
 where
     E: MySqlExecutor<'e>,
@@ -945,7 +971,7 @@ where
           k.`due_date`, k.`created_at`, k.`updated_at` \
           FROM `cards` k JOIN `columns` c ON c.`id` = k.`column_id`",
     );
-    push_board_cards_filter(&mut builder, board_id);
+    push_board_cards_filter(&mut builder, board_id, filters, due);
     builder.push(" ORDER BY ");
     builder.push(ordering);
     builder.push(" LIMIT ");

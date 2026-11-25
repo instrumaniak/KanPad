@@ -10,12 +10,13 @@ use axum::{
 
 use crate::{
     common::{
+        card_filters::{check_labels_visible_to_user, due_date_boundaries_now},
         card_summary::CardSummary,
         ownership::{check_board_owned, check_column_owned, check_label_owned},
         pagination::Page,
     },
     error::{AppError, Internal},
-    extract::{AuthSession, PaginationParams, ValidJson, ValidPath, ValidQuery},
+    extract::{AuthSession, ValidJson, ValidPath},
     state::AppState,
 };
 
@@ -29,8 +30,8 @@ use super::{
         point_move_card, to_detail, to_summaries,
     },
     types::{
-        AttachLabelInput, BoardCardListItem, BoardCardsListQuery, CardBody, CreateCardInput,
-        UpdateCardInput, parse_due_date,
+        AttachLabelInput, BoardCardListItem, BoardCardsListQuery, CardBody, ColumnCardsListQuery,
+        CreateCardInput, UpdateCardInput, parse_due_date,
     },
 };
 use crate::common::{
@@ -500,55 +501,62 @@ pub async fn delete_card(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /api/v1/columns/{colId}/cards?page&limit → 200 Page<CardSummary>`
+/// `GET /api/v1/columns/{colId}/cards?page&limit&search&labels&due_date&checklist → 200 Page<CardSummary>`
 /// (sort-key order; never selects TEXT — no `description` key, only the
 /// `has_description` flag; `checklist_progress` only when the card owns
-/// checklists). Foreign/missing column → 404 (no oracle, never 403).
+/// checklists). Filters are server-authoritative; `Page.total` is filtered.
+/// Foreign/missing column → 404 (no oracle, never 403).
 #[utoipa::path(
     get,
     path = "/api/v1/columns/{colId}/cards",
+    params(
+        ("colId" = i32, Path, description = "Column id"),
+        ColumnCardsListQuery
+    ),
     responses(
-        (status = 200, description = "Column cards page"),
-        (status = 400, description = "Invalid column id or pagination"),
+        (status = 200, description = "Column cards page", body = Page<CardSummary>),
+        (status = 400, description = "Invalid column id, pagination, or query"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Column not found")
     )
 )]
-#[tracing::instrument(skip(state, auth))]
+#[tracing::instrument(skip(state, auth, query))]
 pub async fn list_cards(
     State(state): State<AppState>,
     auth: AuthSession,
     ValidPath(column_id): ValidPath<crate::common::ids::ColumnId>,
-    pagination: PaginationParams,
+    query: ColumnCardsListQuery,
 ) -> Result<Json<Page<CardSummary>>, AppError> {
     let user_id = auth.user_id.get();
     let column_id = column_id.get();
+    let (page, limit) = query.resolved_pagination().map_err(AppError::from)?;
+    let filters = query.resolved_filters().map_err(AppError::from)?;
     check_column_owned(&state.pool, user_id, column_id).await?;
-    let total = count_cards_in_column(&state.pool, column_id).await?;
+    check_labels_visible_to_user(&state.pool, user_id, &filters.labels).await?;
+    let due = due_date_boundaries_now();
+    let total = count_cards_in_column(&state.pool, column_id, &filters, due).await?;
     if total == 0 {
-        return Ok(Json(Page::empty(pagination.page, pagination.limit)));
+        return Ok(Json(Page::empty(page, limit)));
     }
-    let offset = pagination
-        .page
-        .saturating_sub(1)
-        .saturating_mul(pagination.limit);
-    let rows = fetch_card_page(&state.pool, column_id, pagination.limit, offset).await?;
+    let offset = page.saturating_sub(1).saturating_mul(limit);
+    let rows = fetch_card_page(&state.pool, column_id, limit, offset, &filters, due).await?;
     let card_ids: Vec<i32> = rows.iter().map(|row| row.0).collect();
     let labels = fetch_page_labels(&state.pool, &card_ids).await?;
     let progress = fetch_page_progress(&state.pool, &card_ids).await?;
     Ok(Json(Page::new(
         to_summaries(rows, labels, progress)?,
-        pagination.page,
-        pagination.limit,
+        page,
+        limit,
         total,
     )))
 }
 
-/// `GET /api/v1/boards/{boardId}/cards?page&limit&sort&order → 200 Page<BoardCardListItem>`
+/// `GET /api/v1/boards/{boardId}/cards?page&limit&sort&order&search&labels&due_date&checklist → 200 Page<BoardCardListItem>`
 /// (board-scoped list view; never selects TEXT — no `description` key, only
 /// `has_description`; `checklist_progress` only when the card owns checklists).
 /// `position` is the per-column computed position in stable column sort-key
 /// order (0-based). `due_date` NULLs sort last in both directions (locked).
+/// Filters are server-authoritative; `Page.total` is filtered.
 /// Foreign/missing board → 404 (no oracle, never 403).
 #[utoipa::path(
     get,
@@ -564,19 +572,22 @@ pub async fn list_cards(
         (status = 404, description = "Board not found")
     )
 )]
-#[tracing::instrument(skip(state, auth, filters))]
+#[tracing::instrument(skip(state, auth, query))]
 pub async fn list_board_cards(
     State(state): State<AppState>,
     auth: AuthSession,
     ValidPath(board_id): ValidPath<crate::common::ids::BoardId>,
-    ValidQuery(filters): ValidQuery<BoardCardsListQuery>,
+    query: BoardCardsListQuery,
 ) -> Result<Json<Page<BoardCardListItem>>, AppError> {
     let user_id = auth.user_id.get();
     let board_id = board_id.get();
-    let (page, limit) = filters.resolved_pagination().map_err(AppError::from)?;
+    let (page, limit) = query.resolved_pagination().map_err(AppError::from)?;
+    let filters = query.resolved_filters().map_err(AppError::from)?;
     check_board_owned(&state.pool, user_id, board_id).await?;
+    check_labels_visible_to_user(&state.pool, user_id, &filters.labels).await?;
+    let due = due_date_boundaries_now();
 
-    let total = count_board_cards(&state.pool, board_id).await?;
+    let total = count_board_cards(&state.pool, board_id, &filters, due).await?;
     if total == 0 {
         return Ok(Json(Page::empty(page, limit)));
     }
@@ -585,10 +596,12 @@ pub async fn list_board_cards(
     let mut items = fetch_board_card_page(
         &state.pool,
         board_id,
-        filters.resolved_sort(),
-        filters.resolved_order(),
+        query.resolved_sort(),
+        query.resolved_order(),
         limit,
         offset,
+        &filters,
+        due,
     )
     .await?;
     hydrate_board_card_items(&state.pool, &mut items).await?;

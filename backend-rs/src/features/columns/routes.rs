@@ -10,14 +10,18 @@ use axum::{
 
 use crate::{
     common::{
+        card_filters::{
+            CardFilters, DueDateBoundaries, check_labels_visible_to_user, due_date_boundaries_now,
+        },
         card_summary::{
-            CardSummary, assemble_summaries, fetch_board_card_totals, fetch_board_cards_limited,
-            fetch_card_labels_for_ids, fetch_card_progress_for_ids,
+            CardSummary, assemble_summaries, fetch_board_card_matching_totals,
+            fetch_board_card_totals, fetch_board_cards_limited, fetch_card_labels_for_ids,
+            fetch_card_progress_for_ids,
         },
         ownership::check_board_owned,
     },
     error::{AppError, Internal},
-    extract::{AuthSession, ValidJson, ValidPath, ValidQuery},
+    extract::{AuthSession, ValidJson, ValidPath},
     state::AppState,
 };
 
@@ -41,29 +45,42 @@ use crate::common::{
 };
 
 /// Load a board's card summaries grouped by column id (limited embed) plus
-/// authoritative per-column totals. Single owner for the fetch-assemble sequence.
+/// authoritative unfiltered totals and filtered matching totals.
 async fn load_summaries(
     pool: &sqlx::MySqlPool,
     board_id: i32,
     embed_limit: u32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
 ) -> Result<
     (
         std::collections::HashMap<i32, Vec<CardSummary>>,
         std::collections::HashMap<i32, u64>,
+        std::collections::HashMap<i32, u64>,
     ),
     AppError,
 > {
-    let (rows, totals) = tokio::try_join!(
-        fetch_board_cards_limited(pool, board_id, embed_limit),
-        fetch_board_card_totals(pool, board_id),
-    )?;
+    let (rows, totals, matching_totals) = if filters.is_empty() {
+        let (rows, totals) = tokio::try_join!(
+            fetch_board_cards_limited(pool, board_id, embed_limit, filters, due),
+            fetch_board_card_totals(pool, board_id),
+        )?;
+        let matching_totals = totals.clone();
+        (rows, totals, matching_totals)
+    } else {
+        tokio::try_join!(
+            fetch_board_cards_limited(pool, board_id, embed_limit, filters, due),
+            fetch_board_card_totals(pool, board_id),
+            fetch_board_card_matching_totals(pool, board_id, filters, due),
+        )?
+    };
     let card_ids: Vec<i32> = rows.iter().map(|r| r.id).collect();
     let (labels, progress) = tokio::try_join!(
         fetch_card_labels_for_ids(pool, &card_ids),
         fetch_card_progress_for_ids(pool, &card_ids),
     )?;
     let summaries = assemble_summaries(rows, labels, progress)?;
-    Ok((summaries, totals))
+    Ok((summaries, totals, matching_totals))
 }
 
 /// Feature router (no `with_state` inside; the caller applies state once).
@@ -85,13 +102,12 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         .route("/columns/{id}/move-cards", post(move_cards))
 }
 
-/// `GET /api/v1/boards/{boardId}/columns?embed_limit=n → 200 {data[]}`
-/// (nested unpaginated, sort-key order, embeds first `embed_limit` card
-/// summaries per column — never `description` TEXT; `total_cards` remains
-/// authoritative). `embed_limit` defaults to 10 (min 1, max 100); invalid
-/// values return 400 `validation-error` with `errors[]`.
-/// Foreign/missing board id → 404 (no oracle, never 403); garbage id → 400
-/// `invalid-path` via `ValidPath`.
+/// `GET /api/v1/boards/{boardId}/columns?embed_limit=n&search=&labels=&due_date=&checklist= → 200 {data[]}`
+/// (nested unpaginated, sort-key order, embeds first `embed_limit` matching
+/// card summaries per column — never `description` TEXT; `total_cards` remains
+/// authoritative unfiltered; `matching_cards` is filtered authoritative).
+/// Invalid query values return 400 `validation-error` with `errors[]`.
+/// Foreign/missing board id → 404 (no oracle, never 403).
 #[utoipa::path(
     get,
     path = "/api/v1/boards/{boardId}/columns",
@@ -111,16 +127,20 @@ pub async fn list_columns(
     State(state): State<AppState>,
     auth: AuthSession,
     ValidPath(board_id): ValidPath<crate::common::ids::BoardId>,
-    ValidQuery(query): ValidQuery<ColumnListQuery>,
+    query: ColumnListQuery,
 ) -> Result<Json<ColumnListBody>, AppError> {
     let user_id = auth.user_id.get();
     let board_id = board_id.get();
     let embed_limit = query.resolved_embed_limit().map_err(AppError::from)?;
+    let filters = query.resolved_filters().map_err(AppError::from)?;
     check_board_owned(&state.pool, user_id, board_id).await?;
+    check_labels_visible_to_user(&state.pool, user_id, &filters.labels).await?;
     let rows = fetch_columns(&state.pool, board_id).await?;
-    let (summaries, totals) = load_summaries(&state.pool, board_id, embed_limit).await?;
+    let due = due_date_boundaries_now();
+    let (summaries, totals, matching_totals) =
+        load_summaries(&state.pool, board_id, embed_limit, &filters, due).await?;
     Ok(Json(ColumnListBody {
-        data: to_response(rows, &summaries, &totals),
+        data: to_response(rows, &summaries, &totals, &matching_totals),
     }))
 }
 
@@ -171,13 +191,21 @@ pub async fn create_column(
     .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
-    let (summaries, totals) = load_summaries(&state.pool, board_id, DEFAULT_EMBED_LIMIT).await?;
+    let due = due_date_boundaries_now();
+    let (summaries, totals, matching_totals) = load_summaries(
+        &state.pool,
+        board_id,
+        DEFAULT_EMBED_LIMIT,
+        &CardFilters::default(),
+        due,
+    )
+    .await?;
     let location = format!("/api/v1/columns/{id}");
     Ok((
         StatusCode::CREATED,
         [(header::LOCATION, location)],
         Json(ColumnBody {
-            data: to_response_one(row, &summaries, &totals),
+            data: to_response_one(row, &summaries, &totals, &matching_totals),
         }),
     ))
 }
@@ -255,10 +283,17 @@ pub async fn rename_column_handler(
     .await?;
     // DB re-read: the response reflects the stored row, never echoes.
     let row = fetch_column_owned(&state.pool, user_id, id).await?;
-    let (summaries, totals) =
-        load_summaries(&state.pool, row.board_id.get(), DEFAULT_EMBED_LIMIT).await?;
+    let due = due_date_boundaries_now();
+    let (summaries, totals, matching_totals) = load_summaries(
+        &state.pool,
+        row.board_id.get(),
+        DEFAULT_EMBED_LIMIT,
+        &CardFilters::default(),
+        due,
+    )
+    .await?;
     Ok(Json(ColumnBody {
-        data: to_response_one(row, &summaries, &totals),
+        data: to_response_one(row, &summaries, &totals, &matching_totals),
     }))
 }
 

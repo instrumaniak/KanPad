@@ -26,7 +26,10 @@ use sqlx::{MySql, MySqlExecutor, QueryBuilder, Row};
 use utoipa::ToSchema;
 
 use crate::{
-    common::ids::{CardId, ColumnId, LabelId},
+    common::{
+        card_filters::{CardFilters, DueDateBoundaries, push_card_filters},
+        ids::{CardId, ColumnId, LabelId},
+    },
     error::{AppError, Internal},
 };
 
@@ -236,7 +239,7 @@ where
         .collect())
 }
 
-/// Authoritative per-column card totals for a board (all cards, not just embedded).
+/// Authoritative per-column card totals for a board (all cards, unfiltered).
 #[tracing::instrument(skip(ex))]
 pub async fn fetch_board_card_totals<'e, E>(
     ex: E,
@@ -265,21 +268,55 @@ where
     Ok(out)
 }
 
-/// Board cards for the summary embed, limited to first `limit_per_column` per
-/// column by stable card order (`sort_key ASC, id ASC`). TEXT-free.
-/// Wire `position` is assigned per column in [`assemble_summaries`].
-#[tracing::instrument(skip(ex))]
+/// Filtered per-column matching card counts for a board.
+#[tracing::instrument(skip(ex, filters))]
+pub async fn fetch_board_card_matching_totals<'e, E>(
+    ex: E,
+    board_id: i32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
+) -> Result<std::collections::HashMap<i32, u64>, AppError>
+where
+    E: MySqlExecutor<'e>,
+{
+    if filters.is_empty() {
+        return fetch_board_card_totals(ex, board_id).await;
+    }
+    let mut builder = QueryBuilder::<MySql>::new(
+        "SELECT k.`column_id` AS `column_id`, COUNT(*) AS `total` \
+          FROM `cards` k \
+          WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ",
+    );
+    builder.push_bind(board_id);
+    builder.push(")");
+    push_card_filters(&mut builder, "k", filters, due);
+    builder.push(" GROUP BY k.`column_id`");
+    let rows = builder.build().fetch_all(ex).await.map_err(AppError::Db)?;
+    let mut out = std::collections::HashMap::new();
+    for row in rows {
+        let column_id: i32 = row.try_get("column_id").map_err(AppError::Db)?;
+        let total: i64 = row.try_get("total").map_err(AppError::Db)?;
+        let total = u64::try_from(total).map_err(|_| AppError::Internal(Internal))?;
+        out.insert(column_id, total);
+    }
+    Ok(out)
+}
+
+/// Board cards for the summary embed, limited to first `limit_per_column`
+/// matching cards per column by stable card order (`sort_key ASC, id ASC`).
+/// Filters apply before windowing. TEXT-free.
+#[tracing::instrument(skip(ex, filters))]
 pub async fn fetch_board_cards_limited<'e, E>(
     ex: E,
     board_id: i32,
     limit_per_column: u32,
+    filters: &CardFilters,
+    due: DueDateBoundaries,
 ) -> Result<Vec<SummaryRow>, AppError>
 where
     E: MySqlExecutor<'e>,
 {
-    // Runtime query: window function keeps SQL portable (MySQL 8.4 / MariaDB 11.4)
-    // and avoids N+1 per-column fetches.
-    let rows = sqlx::query(
+    let mut builder = QueryBuilder::<MySql>::new(
         "SELECT ranked.`id`, ranked.`title`, ranked.`column_id`, ranked.`has_description`, \
                 ranked.`due_date`, ranked.`created_at`, ranked.`updated_at` \
          FROM ( \
@@ -289,16 +326,18 @@ where
              k.`due_date`, k.`created_at`, k.`updated_at`, \
              ROW_NUMBER() OVER (PARTITION BY k.`column_id` ORDER BY k.`sort_key` ASC, k.`id` ASC) AS `rn` \
            FROM `cards` k \
-           WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ?) \
-         ) ranked \
-         WHERE ranked.`rn` <= ? \
-         ORDER BY ranked.`column_id` ASC, ranked.`rn` ASC",
-    )
-    .bind(board_id)
-    .bind(limit_per_column)
-    .fetch_all(ex)
-    .await
-    .map_err(AppError::Db)?;
+           WHERE k.`column_id` IN (SELECT c.`id` FROM `columns` c WHERE c.`board_id` = ",
+    );
+    builder.push_bind(board_id);
+    builder.push(")");
+    if !filters.is_empty() {
+        push_card_filters(&mut builder, "k", filters, due);
+    }
+    builder.push(" ) ranked WHERE ranked.`rn` <= ");
+    builder.push_bind(limit_per_column);
+    builder.push(" ORDER BY ranked.`column_id` ASC, ranked.`rn` ASC");
+
+    let rows = builder.build().fetch_all(ex).await.map_err(AppError::Db)?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {

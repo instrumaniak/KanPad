@@ -131,6 +131,7 @@ pub struct ReadyResponse {
         crate::features::cards::types::UpdateCardInput,
         crate::features::cards::types::AttachLabelInput,
         crate::features::cards::types::BoardCardsListQuery,
+        crate::features::cards::types::ColumnCardsListQuery,
         crate::features::cards::types::BoardCardListItem,
         crate::features::cards::types::CardBody,
         Page<crate::common::card_summary::CardSummary>,

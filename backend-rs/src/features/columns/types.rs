@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::common::{
+    card_filters::{
+        self, CardFilters, validate_labels_filter, validate_optional_checklist_filter,
+        validate_optional_due_date_filter, validate_optional_search,
+    },
     card_summary::CardSummary,
     ids::{BoardId, ColumnId},
     validation::{validate_optional_not_blank, validate_sort_order},
@@ -24,6 +28,22 @@ pub struct ColumnListQuery {
     /// Max cards embedded per column (default 10, min 1, max 100).
     #[garde(custom(validate_embed_limit))]
     pub embed_limit: Option<String>,
+    /// Case-insensitive title search (trimmed; empty/whitespace = no filter).
+    #[garde(custom(validate_optional_search))]
+    pub search: Option<String>,
+    /// Repeated label IDs (AND semantics). `?labels=1&labels=2`.
+    #[serde(
+        default,
+        deserialize_with = "crate::common::card_filters::deserialize_string_or_seq"
+    )]
+    #[garde(custom(validate_labels_filter))]
+    pub labels: Vec<String>,
+    /// Due-date filter (`overdue` | `today` | `this_week` | `no_date`).
+    #[garde(custom(validate_optional_due_date_filter))]
+    pub due_date: Option<String>,
+    /// Checklist filter (`with` | `complete` | `incomplete`).
+    #[garde(custom(validate_optional_checklist_filter))]
+    pub checklist: Option<String>,
 }
 
 impl ColumnListQuery {
@@ -37,6 +57,16 @@ impl ColumnListQuery {
                 report
             }),
         }
+    }
+
+    /// Resolved/validated card filters.
+    pub fn resolved_filters(&self) -> Result<CardFilters, garde::Report> {
+        card_filters::parse_card_filters(
+            self.search.as_deref(),
+            &self.labels,
+            self.due_date.as_deref(),
+            self.checklist.as_deref(),
+        )
     }
 }
 
@@ -152,8 +182,10 @@ pub struct ColumnResponse {
     pub board_id: BoardId,
     /// Nested card summaries (sort-key order; first N embedded, rest via pagination).
     pub cards: Vec<CardSummary>,
-    /// Total cards in this column (authoritative; may exceed `cards.len()`).
+    /// Total cards in this column (authoritative, unfiltered; may exceed `cards.len()`).
     pub total_cards: u64,
+    /// Matching cards in this column under active filters (equals `total_cards` when no filter).
+    pub matching_cards: u64,
     /// `created_at` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (server pinned UTC).
     pub created_at: String,
     /// `updated_at`, same shape.
@@ -177,3 +209,52 @@ pub struct ColumnListBody {
 }
 
 pub use crate::common::time::format_timestamp;
+
+impl<S> axum::extract::FromRequestParts<S> for ColumnListQuery
+where
+    S: Send + Sync,
+{
+    type Rejection = crate::error::AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let query = parts.uri.query().unwrap_or("");
+        let pairs = crate::common::card_filters::parse_query_pairs(query);
+        let mut embed_limit = None;
+        let mut search = None;
+        let mut labels = Vec::new();
+        let mut due_date = None;
+        let mut checklist = None;
+        for (k, v) in pairs {
+            match k.as_str() {
+                "embed_limit" => embed_limit = Some(v),
+                "search" => search = Some(v),
+                "labels" => labels.push(v),
+                "due_date" => due_date = Some(v),
+                "checklist" => checklist = Some(v),
+                other => {
+                    let mut report = garde::Report::new();
+                    report.append(
+                        garde::Path::new(other),
+                        garde::Error::new("unknown query parameter"),
+                    );
+                    return Err(crate::error::AppError::from(report));
+                }
+            }
+        }
+        let value = Self {
+            embed_limit,
+            search,
+            labels,
+            due_date,
+            checklist,
+        };
+        {
+            use garde::Validate;
+            value.validate().map_err(crate::error::AppError::from)?;
+        }
+        Ok(value)
+    }
+}

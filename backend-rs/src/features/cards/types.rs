@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::common::{
+    card_filters::{
+        self, CHECKLIST_FILTERS, CardFilters, DUE_DATE_FILTERS, MAX_LABEL_IDS, MAX_SEARCH_LEN,
+    },
     card_summary::{CardLabelRef, ChecklistProgress},
     ids::{CardId, ChecklistId, ColumnId},
     validation::{SORT_ORDERS, validate_due_date, validate_not_blank, validate_optional_not_blank},
@@ -310,8 +313,73 @@ fn validate_optional_board_card_limit(value: &Option<String>, _context: &()) -> 
     Ok(())
 }
 
-/// `GET /api/v1/boards/{boardId}/cards` query. Single validated DTO so T049 can
-/// extend with filters without extractor composition friction.
+fn validate_optional_search(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() && trimmed.chars().count() > MAX_SEARCH_LEN {
+            return Err(garde::Error::new(format!(
+                "length must be at most {MAX_SEARCH_LEN} characters"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_due_date_filter(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value
+        && card_filters::DueDateFilter::parse(raw).is_none()
+    {
+        return Err(garde::Error::new(format!(
+            "due_date must be one of: {}",
+            DUE_DATE_FILTERS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn validate_optional_checklist_filter(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value
+        && card_filters::ChecklistFilter::parse(raw).is_none()
+    {
+        return Err(garde::Error::new(format!(
+            "checklist must be one of: {}",
+            CHECKLIST_FILTERS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn validate_labels_filter(value: &Vec<String>, _context: &()) -> garde::Result {
+    if value.is_empty() {
+        return Ok(());
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut distinct = 0usize;
+    for raw in value {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let parsed = raw
+            .parse::<i32>()
+            .map_err(|_| garde::Error::new("must be an integer"))?;
+        if parsed < 1 {
+            return Err(garde::Error::new("must be at least 1"));
+        }
+        if seen.insert(parsed) {
+            distinct += 1;
+        }
+    }
+    if distinct > MAX_LABEL_IDS {
+        return Err(garde::Error::new(format!(
+            "must have at most {MAX_LABEL_IDS} distinct values"
+        )));
+    }
+    Ok(())
+}
+
+/// `GET /api/v1/boards/{boardId}/cards` query. Single validated DTO combining
+/// pagination, sort, and T049 filters.
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct BoardCardsListQuery {
@@ -327,6 +395,22 @@ pub struct BoardCardsListQuery {
     /// Sort direction (`asc` | `desc`).
     #[garde(custom(validate_optional_board_card_order))]
     pub order: Option<String>,
+    /// Case-insensitive title search (trimmed; empty/whitespace = no filter).
+    #[garde(custom(validate_optional_search))]
+    pub search: Option<String>,
+    /// Repeated label IDs (AND semantics). `?labels=1&labels=2`.
+    #[serde(
+        default,
+        deserialize_with = "crate::common::card_filters::deserialize_string_or_seq"
+    )]
+    #[garde(custom(validate_labels_filter))]
+    pub labels: Vec<String>,
+    /// Due-date filter (`overdue` | `today` | `this_week` | `no_date`).
+    #[garde(custom(validate_optional_due_date_filter))]
+    pub due_date: Option<String>,
+    /// Checklist filter (`with` | `complete` | `incomplete`).
+    #[garde(custom(validate_optional_checklist_filter))]
+    pub checklist: Option<String>,
 }
 
 impl BoardCardsListQuery {
@@ -389,6 +473,124 @@ impl BoardCardsListQuery {
     pub fn resolved_order(&self) -> &str {
         self.order.as_deref().unwrap_or(DEFAULT_BOARD_CARD_ORDER)
     }
+
+    /// Resolved/validated card filters.
+    pub fn resolved_filters(&self) -> Result<CardFilters, garde::Report> {
+        card_filters::parse_card_filters(
+            self.search.as_deref(),
+            &self.labels,
+            self.due_date.as_deref(),
+            self.checklist.as_deref(),
+        )
+    }
+}
+
+/// `GET /api/v1/columns/{colId}/cards` query. Single validated DTO combining
+/// pagination and T049 filters (avoids extractor composition friction).
+#[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ColumnCardsListQuery {
+    /// 1-based page number (default 1).
+    #[garde(custom(validate_optional_board_card_page))]
+    pub page: Option<String>,
+    /// Items per page (default 50, min 1, max 100).
+    #[garde(custom(validate_optional_column_card_limit))]
+    pub limit: Option<String>,
+    /// Case-insensitive title search (trimmed; empty/whitespace = no filter).
+    #[garde(custom(validate_optional_search))]
+    pub search: Option<String>,
+    /// Repeated label IDs (AND semantics). `?labels=1&labels=2`.
+    #[serde(
+        default,
+        deserialize_with = "crate::common::card_filters::deserialize_string_or_seq"
+    )]
+    #[garde(custom(validate_labels_filter))]
+    pub labels: Vec<String>,
+    /// Due-date filter (`overdue` | `today` | `this_week` | `no_date`).
+    #[garde(custom(validate_optional_due_date_filter))]
+    pub due_date: Option<String>,
+    /// Checklist filter (`with` | `complete` | `incomplete`).
+    #[garde(custom(validate_optional_checklist_filter))]
+    pub checklist: Option<String>,
+}
+
+fn validate_optional_column_card_limit(value: &Option<String>, _context: &()) -> garde::Result {
+    if let Some(raw) = value {
+        parse_u32_query_field(raw, "limit", 1, crate::extract::PaginationParams::MAX_LIMIT)
+            .map_err(|report| {
+                garde::Error::new(
+                    report
+                        .iter()
+                        .next()
+                        .map(|(_, err)| err.to_string())
+                        .unwrap_or_else(|| "invalid limit".to_string()),
+                )
+            })?;
+    }
+    Ok(())
+}
+
+impl ColumnCardsListQuery {
+    /// Resolved page/limit with shared window ceiling validation. Defaults
+    /// match `PaginationParams` (page 1, limit 50).
+    pub fn resolved_pagination(&self) -> Result<(u32, u32), garde::Report> {
+        let mut report = garde::Report::new();
+        let page = match self.page.as_deref() {
+            None => crate::extract::PaginationParams::DEFAULT_PAGE,
+            Some(raw) => match parse_u32_query_field(raw, "page", 1, u32::MAX) {
+                Ok(value) => value,
+                Err(field_report) => {
+                    for (path, err) in field_report.iter() {
+                        report.append(path.clone(), err.clone());
+                    }
+                    crate::extract::PaginationParams::DEFAULT_PAGE
+                }
+            },
+        };
+        let limit = match self.limit.as_deref() {
+            None => crate::extract::PaginationParams::DEFAULT_LIMIT,
+            Some(raw) => match parse_u32_query_field(
+                raw,
+                "limit",
+                1,
+                crate::extract::PaginationParams::MAX_LIMIT,
+            ) {
+                Ok(value) => value,
+                Err(field_report) => {
+                    for (path, err) in field_report.iter() {
+                        report.append(path.clone(), err.clone());
+                    }
+                    crate::extract::PaginationParams::DEFAULT_LIMIT
+                }
+            },
+        };
+
+        if report.is_empty()
+            && u64::from(page).saturating_mul(u64::from(limit))
+                > crate::extract::PaginationParams::MAX_PAGE_WINDOW
+        {
+            report.append(
+                garde::Path::new("page"),
+                garde::Error::new("page is outside the allowed window"),
+            );
+        }
+
+        if report.is_empty() {
+            Ok((page, limit))
+        } else {
+            Err(report)
+        }
+    }
+
+    /// Resolved/validated card filters.
+    pub fn resolved_filters(&self) -> Result<CardFilters, garde::Report> {
+        card_filters::parse_card_filters(
+            self.search.as_deref(),
+            &self.labels,
+            self.due_date.as_deref(),
+            self.checklist.as_deref(),
+        )
+    }
 }
 
 /// Wire board-card list item: card summary fields plus `column_name`.
@@ -419,4 +621,114 @@ pub struct BoardCardListItem {
     /// Checklist rollup (`None` = the card owns no checklist).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checklist_progress: Option<ChecklistProgress>,
+}
+
+impl<S> axum::extract::FromRequestParts<S> for BoardCardsListQuery
+where
+    S: Send + Sync,
+{
+    type Rejection = crate::error::AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let query = parts.uri.query().unwrap_or("");
+        let pairs = crate::common::card_filters::parse_query_pairs(query);
+        let mut page = None;
+        let mut limit = None;
+        let mut sort = None;
+        let mut order = None;
+        let mut search = None;
+        let mut labels = Vec::new();
+        let mut due_date = None;
+        let mut checklist = None;
+        for (k, v) in pairs {
+            match k.as_str() {
+                "page" => page = Some(v),
+                "limit" => limit = Some(v),
+                "sort" => sort = Some(v),
+                "order" => order = Some(v),
+                "search" => search = Some(v),
+                "labels" => labels.push(v),
+                "due_date" => due_date = Some(v),
+                "checklist" => checklist = Some(v),
+                other => {
+                    let mut report = garde::Report::new();
+                    report.append(
+                        garde::Path::new(other),
+                        garde::Error::new("unknown query parameter"),
+                    );
+                    return Err(crate::error::AppError::from(report));
+                }
+            }
+        }
+        let value = Self {
+            page,
+            limit,
+            sort,
+            order,
+            search,
+            labels,
+            due_date,
+            checklist,
+        };
+        {
+            use garde::Validate;
+            value.validate().map_err(crate::error::AppError::from)?;
+        }
+        Ok(value)
+    }
+}
+
+impl<S> axum::extract::FromRequestParts<S> for ColumnCardsListQuery
+where
+    S: Send + Sync,
+{
+    type Rejection = crate::error::AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let query = parts.uri.query().unwrap_or("");
+        let pairs = crate::common::card_filters::parse_query_pairs(query);
+        let mut page = None;
+        let mut limit = None;
+        let mut search = None;
+        let mut labels = Vec::new();
+        let mut due_date = None;
+        let mut checklist = None;
+        for (k, v) in pairs {
+            match k.as_str() {
+                "page" => page = Some(v),
+                "limit" => limit = Some(v),
+                "search" => search = Some(v),
+                "labels" => labels.push(v),
+                "due_date" => due_date = Some(v),
+                "checklist" => checklist = Some(v),
+                other => {
+                    let mut report = garde::Report::new();
+                    report.append(
+                        garde::Path::new(other),
+                        garde::Error::new("unknown query parameter"),
+                    );
+                    return Err(crate::error::AppError::from(report));
+                }
+            }
+        }
+        let value = Self {
+            page,
+            limit,
+            search,
+            labels,
+            due_date,
+            checklist,
+        };
+        {
+            use garde::Validate;
+            value.validate().map_err(crate::error::AppError::from)?;
+        }
+        Ok(value)
+    }
 }

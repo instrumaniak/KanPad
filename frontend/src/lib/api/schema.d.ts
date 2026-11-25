@@ -157,11 +157,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * `GET /api/v1/boards/{boardId}/cards?page&limit&sort&order → 200 Page<BoardCardListItem>`
+         * `GET /api/v1/boards/{boardId}/cards?page&limit&sort&order&search&labels&due_date&checklist → 200 Page<BoardCardListItem>`
          *     (board-scoped list view; never selects TEXT — no `description` key, only
          *     `has_description`; `checklist_progress` only when the card owns checklists).
          *     `position` is the per-column computed position in stable column sort-key
          *     order (0-based). `due_date` NULLs sort last in both directions (locked).
+         *     Filters are server-authoritative; `Page.total` is filtered.
          *     Foreign/missing board → 404 (no oracle, never 403).
          */
         get: operations["list_board_cards"];
@@ -181,13 +182,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * `GET /api/v1/boards/{boardId}/columns?embed_limit=n → 200 {data[]}`
-         *     (nested unpaginated, sort-key order, embeds first `embed_limit` card
-         *     summaries per column — never `description` TEXT; `total_cards` remains
-         *     authoritative). `embed_limit` defaults to 10 (min 1, max 100); invalid
-         *     values return 400 `validation-error` with `errors[]`.
-         *     Foreign/missing board id → 404 (no oracle, never 403); garbage id → 400
-         *     `invalid-path` via `ValidPath`.
+         * `GET /api/v1/boards/{boardId}/columns?embed_limit=n&search=&labels=&due_date=&checklist= → 200 {data[]}`
+         *     (nested unpaginated, sort-key order, embeds first `embed_limit` matching
+         *     card summaries per column — never `description` TEXT; `total_cards` remains
+         *     authoritative unfiltered; `matching_cards` is filtered authoritative).
+         *     Invalid query values return 400 `validation-error` with `errors[]`.
+         *     Foreign/missing board id → 404 (no oracle, never 403).
          */
         get: operations["list_columns"];
         put?: never;
@@ -497,10 +497,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * `GET /api/v1/columns/{colId}/cards?page&limit → 200 Page<CardSummary>`
+         * `GET /api/v1/columns/{colId}/cards?page&limit&search&labels&due_date&checklist → 200 Page<CardSummary>`
          *     (sort-key order; never selects TEXT — no `description` key, only the
          *     `has_description` flag; `checklist_progress` only when the card owns
-         *     checklists). Foreign/missing column → 404 (no oracle, never 403).
+         *     checklists). Filters are server-authoritative; `Page.total` is filtered.
+         *     Foreign/missing column → 404 (no oracle, never 403).
          */
         get: operations["list_cards"];
         put?: never;
@@ -911,16 +912,24 @@ export interface components {
             updated_at: string;
         };
         /**
-         * @description `GET /api/v1/boards/{boardId}/cards` query. Single validated DTO so T049 can
-         *     extend with filters without extractor composition friction.
+         * @description `GET /api/v1/boards/{boardId}/cards` query. Single validated DTO combining
+         *     pagination, sort, and T049 filters.
          */
         BoardCardsListQuery: {
+            /** @description Checklist filter (`with` | `complete` | `incomplete`). */
+            checklist?: string | null;
+            /** @description Due-date filter (`overdue` | `today` | `this_week` | `no_date`). */
+            due_date?: string | null;
+            /** @description Repeated label IDs (AND semantics). `?labels=1&labels=2`. */
+            labels?: string[];
             /** @description Items per page (default 20, min 1, max 100). */
             limit?: string | null;
             /** @description Sort direction (`asc` | `desc`). */
             order?: string | null;
             /** @description 1-based page number (default 1). */
             page?: string | null;
+            /** @description Case-insensitive title search (trimmed; empty/whitespace = no filter). */
+            search?: string | null;
             /** @description Sort key allowlist (`created_at` | `updated_at` | `due_date` | `title`). */
             sort?: string | null;
         };
@@ -1175,6 +1184,24 @@ export interface components {
             data: components["schemas"]["ColumnResponse"];
         };
         /**
+         * @description `GET /api/v1/columns/{colId}/cards` query. Single validated DTO combining
+         *     pagination and T049 filters (avoids extractor composition friction).
+         */
+        ColumnCardsListQuery: {
+            /** @description Checklist filter (`with` | `complete` | `incomplete`). */
+            checklist?: string | null;
+            /** @description Due-date filter (`overdue` | `today` | `this_week` | `no_date`). */
+            due_date?: string | null;
+            /** @description Repeated label IDs (AND semantics). `?labels=1&labels=2`. */
+            labels?: string[];
+            /** @description Items per page (default 50, min 1, max 100). */
+            limit?: string | null;
+            /** @description 1-based page number (default 1). */
+            page?: string | null;
+            /** @description Case-insensitive title search (trimmed; empty/whitespace = no filter). */
+            search?: string | null;
+        };
+        /**
          * Format: int32
          * @description Primary key of `columns`.
          */
@@ -1189,8 +1216,16 @@ export interface components {
         };
         /** @description `GET /api/v1/boards/{boardId}/columns` query. */
         ColumnListQuery: {
+            /** @description Checklist filter (`with` | `complete` | `incomplete`). */
+            checklist?: string | null;
+            /** @description Due-date filter (`overdue` | `today` | `this_week` | `no_date`). */
+            due_date?: string | null;
             /** @description Max cards embedded per column (default 10, min 1, max 100). */
             embed_limit?: string | null;
+            /** @description Repeated label IDs (AND semantics). `?labels=1&labels=2`. */
+            labels?: string[];
+            /** @description Case-insensitive title search (trimmed; empty/whitespace = no filter). */
+            search?: string | null;
         };
         /**
          * @description Wire column: scalars + nested card summaries (sort-key order, never
@@ -1205,6 +1240,11 @@ export interface components {
             created_at: string;
             /** @description `columns.id` (`INT` ↔ `i32` newtype). */
             id: components["schemas"]["ColumnId"];
+            /**
+             * Format: int64
+             * @description Matching cards in this column under active filters (equals `total_cards` when no filter).
+             */
+            matching_cards: number;
             /** @description Column name. */
             name: string;
             /**
@@ -1214,7 +1254,7 @@ export interface components {
             position: number;
             /**
              * Format: int64
-             * @description Total cards in this column (authoritative; may exceed `cards.len()`).
+             * @description Total cards in this column (authoritative, unfiltered; may exceed `cards.len()`).
              */
             total_cards: number;
             /** @description `updated_at`, same shape. */
@@ -2259,6 +2299,14 @@ export interface operations {
                 sort?: string;
                 /** @description Sort direction (`asc` | `desc`). */
                 order?: string;
+                /** @description Case-insensitive title search (trimmed; empty/whitespace = no filter). */
+                search?: string;
+                /** @description Repeated label IDs (AND semantics). `?labels=1&labels=2`. */
+                labels?: string[];
+                /** @description Due-date filter (`overdue` | `today` | `this_week` | `no_date`). */
+                due_date?: string;
+                /** @description Checklist filter (`with` | `complete` | `incomplete`). */
+                checklist?: string;
             };
             header?: never;
             path: {
@@ -2306,6 +2354,14 @@ export interface operations {
             query?: {
                 /** @description Max cards embedded per column (default 10, min 1, max 100). */
                 embed_limit?: string;
+                /** @description Case-insensitive title search (trimmed; empty/whitespace = no filter). */
+                search?: string;
+                /** @description Repeated label IDs (AND semantics). `?labels=1&labels=2`. */
+                labels?: string[];
+                /** @description Due-date filter (`overdue` | `today` | `this_week` | `no_date`). */
+                due_date?: string;
+                /** @description Checklist filter (`with` | `complete` | `incomplete`). */
+                checklist?: string;
             };
             header?: never;
             path: {
@@ -3160,9 +3216,25 @@ export interface operations {
     };
     list_cards: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1-based page number (default 1). */
+                page?: string;
+                /** @description Items per page (default 50, min 1, max 100). */
+                limit?: string;
+                /** @description Case-insensitive title search (trimmed; empty/whitespace = no filter). */
+                search?: string;
+                /** @description Repeated label IDs (AND semantics). `?labels=1&labels=2`. */
+                labels?: string[];
+                /** @description Due-date filter (`overdue` | `today` | `this_week` | `no_date`). */
+                due_date?: string;
+                /** @description Checklist filter (`with` | `complete` | `incomplete`). */
+                checklist?: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /** @description Column id */
+                colId: number;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -3172,9 +3244,11 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Page_CardSummary"];
+                };
             };
-            /** @description Invalid column id or pagination */
+            /** @description Invalid column id, pagination, or query */
             400: {
                 headers: {
                     [name: string]: unknown;

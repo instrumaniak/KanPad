@@ -91,22 +91,7 @@ pub fn check_single_link(
     Ok(())
 }
 
-/// Escape a raw `?search=` substring for `LIKE`: `\` → `\\`, `%` → `\%`,
-/// `_` → `\_` (backslash first so the introduced escapes are not re-escaped),
-/// then wrapped in `%…%` for substring matching. The pattern rides `push_bind`
-/// only (never `push`ed) alongside an explicit `ESCAPE` clause, so `%`/`_`/`'`
-/// payloads match literally and `'` never breaks out of the string. Pure: no
-/// SQL.
-pub fn escape_like_pattern(raw: &str) -> String {
-    let mut escaped = String::with_capacity(raw.len() + 2);
-    for ch in raw.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    format!("%{escaped}%")
-}
+pub use crate::common::card_filters::escape_like_pattern;
 
 /// Dedup tag ids in Rust (stable order): the `note_tags` composite PK would
 /// 409 on a repeated id, so callers normalize before linking. Pure: no SQL.

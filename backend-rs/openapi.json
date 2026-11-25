@@ -234,7 +234,7 @@
         "tags": [
           "crate::features::cards::routes"
         ],
-        "summary": "`GET /api/v1/boards/{boardId}/cards?page&limit&sort&order → 200 Page<BoardCardListItem>`\n(board-scoped list view; never selects TEXT — no `description` key, only\n`has_description`; `checklist_progress` only when the card owns checklists).\n`position` is the per-column computed position in stable column sort-key\norder (0-based). `due_date` NULLs sort last in both directions (locked).\nForeign/missing board → 404 (no oracle, never 403).",
+        "summary": "`GET /api/v1/boards/{boardId}/cards?page&limit&sort&order&search&labels&due_date&checklist → 200 Page<BoardCardListItem>`\n(board-scoped list view; never selects TEXT — no `description` key, only\n`has_description`; `checklist_progress` only when the card owns checklists).\n`position` is the per-column computed position in stable column sort-key\norder (0-based). `due_date` NULLs sort last in both directions (locked).\nFilters are server-authoritative; `Page.total` is filtered.\nForeign/missing board → 404 (no oracle, never 403).",
         "operationId": "list_board_cards",
         "parameters": [
           {
@@ -282,6 +282,45 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive title search (trimmed; empty/whitespace = no filter).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "labels",
+            "in": "query",
+            "description": "Repeated label IDs (AND semantics). `?labels=1&labels=2`.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "due_date",
+            "in": "query",
+            "description": "Due-date filter (`overdue` | `today` | `this_week` | `no_date`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "checklist",
+            "in": "query",
+            "description": "Checklist filter (`with` | `complete` | `incomplete`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -312,7 +351,7 @@
         "tags": [
           "crate::features::columns::routes"
         ],
-        "summary": "`GET /api/v1/boards/{boardId}/columns?embed_limit=n → 200 {data[]}`\n(nested unpaginated, sort-key order, embeds first `embed_limit` card\nsummaries per column — never `description` TEXT; `total_cards` remains\nauthoritative). `embed_limit` defaults to 10 (min 1, max 100); invalid\nvalues return 400 `validation-error` with `errors[]`.\nForeign/missing board id → 404 (no oracle, never 403); garbage id → 400\n`invalid-path` via `ValidPath`.",
+        "summary": "`GET /api/v1/boards/{boardId}/columns?embed_limit=n&search=&labels=&due_date=&checklist= → 200 {data[]}`\n(nested unpaginated, sort-key order, embeds first `embed_limit` matching\ncard summaries per column — never `description` TEXT; `total_cards` remains\nauthoritative unfiltered; `matching_cards` is filtered authoritative).\nInvalid query values return 400 `validation-error` with `errors[]`.\nForeign/missing board id → 404 (no oracle, never 403).",
         "operationId": "list_columns",
         "parameters": [
           {
@@ -329,6 +368,45 @@
             "name": "embed_limit",
             "in": "query",
             "description": "Max cards embedded per column (default 10, min 1, max 100).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive title search (trimmed; empty/whitespace = no filter).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "labels",
+            "in": "query",
+            "description": "Repeated label IDs (AND semantics). `?labels=1&labels=2`.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "due_date",
+            "in": "query",
+            "description": "Due-date filter (`overdue` | `today` | `this_week` | `no_date`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "checklist",
+            "in": "query",
+            "description": "Checklist filter (`with` | `complete` | `incomplete`).",
             "required": false,
             "schema": {
               "type": "string"
@@ -964,14 +1042,90 @@
         "tags": [
           "crate::features::cards::routes"
         ],
-        "summary": "`GET /api/v1/columns/{colId}/cards?page&limit → 200 Page<CardSummary>`\n(sort-key order; never selects TEXT — no `description` key, only the\n`has_description` flag; `checklist_progress` only when the card owns\nchecklists). Foreign/missing column → 404 (no oracle, never 403).",
+        "summary": "`GET /api/v1/columns/{colId}/cards?page&limit&search&labels&due_date&checklist → 200 Page<CardSummary>`\n(sort-key order; never selects TEXT — no `description` key, only the\n`has_description` flag; `checklist_progress` only when the card owns\nchecklists). Filters are server-authoritative; `Page.total` is filtered.\nForeign/missing column → 404 (no oracle, never 403).",
         "operationId": "list_cards",
+        "parameters": [
+          {
+            "name": "colId",
+            "in": "path",
+            "description": "Column id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page number (default 1).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page (default 50, min 1, max 100).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive title search (trimmed; empty/whitespace = no filter).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "labels",
+            "in": "query",
+            "description": "Repeated label IDs (AND semantics). `?labels=1&labels=2`.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "due_date",
+            "in": "query",
+            "description": "Due-date filter (`overdue` | `today` | `this_week` | `no_date`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "checklist",
+            "in": "query",
+            "description": "Checklist filter (`with` | `complete` | `incomplete`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Column cards page"
+            "description": "Column cards page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_CardSummary"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Invalid column id or pagination"
+            "description": "Invalid column id, pagination, or query"
           },
           "401": {
             "description": "Not authenticated"
@@ -1788,8 +1942,29 @@
       },
       "BoardCardsListQuery": {
         "type": "object",
-        "description": "`GET /api/v1/boards/{boardId}/cards` query. Single validated DTO so T049 can\nextend with filters without extractor composition friction.",
+        "description": "`GET /api/v1/boards/{boardId}/cards` query. Single validated DTO combining\npagination, sort, and T049 filters.",
         "properties": {
+          "checklist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Checklist filter (`with` | `complete` | `incomplete`)."
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Due-date filter (`overdue` | `today` | `this_week` | `no_date`)."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Repeated label IDs (AND semantics). `?labels=1&labels=2`."
+          },
           "limit": {
             "type": [
               "string",
@@ -1810,6 +1985,13 @@
               "null"
             ],
             "description": "1-based page number (default 1)."
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Case-insensitive title search (trimmed; empty/whitespace = no filter)."
           },
           "sort": {
             "type": [
@@ -2343,6 +2525,54 @@
           }
         }
       },
+      "ColumnCardsListQuery": {
+        "type": "object",
+        "description": "`GET /api/v1/columns/{colId}/cards` query. Single validated DTO combining\npagination and T049 filters (avoids extractor composition friction).",
+        "properties": {
+          "checklist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Checklist filter (`with` | `complete` | `incomplete`)."
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Due-date filter (`overdue` | `today` | `this_week` | `no_date`)."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Repeated label IDs (AND semantics). `?labels=1&labels=2`."
+          },
+          "limit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Items per page (default 50, min 1, max 100)."
+          },
+          "page": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1-based page number (default 1)."
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Case-insensitive title search (trimmed; empty/whitespace = no filter)."
+          }
+        }
+      },
       "ColumnId": {
         "type": "integer",
         "format": "int32",
@@ -2368,12 +2598,40 @@
         "type": "object",
         "description": "`GET /api/v1/boards/{boardId}/columns` query.",
         "properties": {
+          "checklist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Checklist filter (`with` | `complete` | `incomplete`)."
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Due-date filter (`overdue` | `today` | `this_week` | `no_date`)."
+          },
           "embed_limit": {
             "type": [
               "string",
               "null"
             ],
             "description": "Max cards embedded per column (default 10, min 1, max 100)."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Repeated label IDs (AND semantics). `?labels=1&labels=2`."
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Case-insensitive title search (trimmed; empty/whitespace = no filter)."
           }
         }
       },
@@ -2387,6 +2645,7 @@
           "board_id",
           "cards",
           "total_cards",
+          "matching_cards",
           "created_at",
           "updated_at"
         ],
@@ -2410,6 +2669,12 @@
             "$ref": "#/components/schemas/ColumnId",
             "description": "`columns.id` (`INT` ↔ `i32` newtype)."
           },
+          "matching_cards": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Matching cards in this column under active filters (equals `total_cards` when no filter).",
+            "minimum": 0
+          },
           "name": {
             "type": "string",
             "description": "Column name."
@@ -2422,7 +2687,7 @@
           "total_cards": {
             "type": "integer",
             "format": "int64",
-            "description": "Total cards in this column (authoritative; may exceed `cards.len()`).",
+            "description": "Total cards in this column (authoritative, unfiltered; may exceed `cards.len()`).",
             "minimum": 0
           },
           "updated_at": {

@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
 import { E2E_API } from './api-base';
-import { monitoringTest } from './test-utils';
+import { monitoringTest, assertNoErrors } from './test-utils';
 
 const API_BASE_URL = E2E_API;
 const TEST_EMAIL = 'e2e-cardsearch@test.local';
@@ -19,7 +19,7 @@ monitoringTest.describe('Card Search E2E', () => {
 
   monitoringTest(
     'searches cards by title, clears, shows empty state, preserves across list toggle',
-    async ({ page, request }) => {
+    async ({ page, request, monitoring }) => {
       const loginRes = await request.post(`${API_BASE_URL}/api/v1/auth/login`, {
         data: { email: TEST_EMAIL, password: TEST_PASSWORD },
       });
@@ -67,21 +67,38 @@ monitoringTest.describe('Card Search E2E', () => {
       await expect(page.getByText('Beta task')).toBeVisible();
       await expect(page.getByText('Zulu task')).toBeVisible();
 
+      const searchResp = (q: string) =>
+        page.waitForResponse(
+          (r) =>
+            r.request().method() === 'GET' &&
+            r.url().includes(`/api/v1/boards/${boardId}/columns`) &&
+            r.status() === 200 &&
+            (q ? r.url().includes(`search=${encodeURIComponent(q)}`) : !r.url().includes('search=')),
+          { timeout: 15000 },
+        );
+
+      let resp = searchResp('Al');
       await search.fill('Al');
+      await resp;
       await expect(page.getByText('Alpha task')).toBeVisible({ timeout: 5000 });
       await expect(page.getByText('Beta task')).not.toBeVisible({ timeout: 5000 });
       await expect(page.getByText('Zulu task')).not.toBeVisible({ timeout: 5000 });
 
+      // "A" is < 2 chars: server filter not applied; may resolve from fresh cache (staleTime 5min).
       await search.fill('A');
       await expect(page.getByText('Alpha task')).toBeVisible({ timeout: 5000 });
       await expect(page.getByText('Beta task')).toBeVisible({ timeout: 5000 });
       await expect(page.getByText('Zulu task')).toBeVisible({ timeout: 5000 });
 
+      // Clear to empty: default unfiltered key may be served from fresh cache.
       await search.fill('');
       await expect(page.getByText('Alpha task')).toBeVisible({ timeout: 5000 });
 
+      resp = searchResp('zzz-no-match');
       await search.fill('zzz-no-match');
+      await resp;
       await expect(page.getByText('No cards found')).toBeVisible({ timeout: 5000 });
+      // Clear search button: default unfiltered key may be served from fresh cache.
       await page.getByText('Clear search', { exact: true }).click();
       await expect(page.getByText('Alpha task')).toBeVisible({ timeout: 5000 });
       await expect(page.getByText('Beta task')).toBeVisible({ timeout: 5000 });
@@ -90,11 +107,25 @@ monitoringTest.describe('Card Search E2E', () => {
       await expect(page.getByRole('table', { name: 'Board cards list' })).toBeVisible({
         timeout: 15000,
       });
+      const listSearchResp = (q: string) =>
+        page.waitForResponse(
+          (r) =>
+            r.request().method() === 'GET' &&
+            r.url().includes(`/api/v1/boards/${boardId}/cards`) &&
+            r.status() === 200 &&
+            (q ? r.url().includes(`search=${encodeURIComponent(q)}`) : !r.url().includes('search=')),
+          { timeout: 15000 },
+        );
+      resp = listSearchResp('Beta');
       await search.fill('Beta');
+      await resp;
       await expect(page.getByText('Beta task')).toBeVisible({ timeout: 5000 });
       await expect(page.getByText('Alpha task')).not.toBeVisible({ timeout: 5000 });
+      // Clear in list view: default unfiltered list key may be served from fresh cache.
       await search.fill('');
       await expect(page.getByText('Alpha task')).toBeVisible({ timeout: 5000 });
+
+      assertNoErrors(monitoring);
     },
   );
 });

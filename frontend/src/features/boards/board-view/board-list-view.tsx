@@ -477,19 +477,21 @@ export function BoardListView({ boardId, filters, filterActive }: BoardListViewP
               );
             })}
             </div>
-            <div ref={sentinelRef} data-testid="board-list-sentinel" />
             {hasNextPage ? (
-              <div className="flex justify-center py-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void fetchNextPage()}
-                  disabled={isFetchingNextPage}
-                  aria-label="Load more cards"
-                >
-                  {isFetchingNextPage ? 'Loading more cards...' : 'Load more cards'}
-                </Button>
-              </div>
+              <>
+                <div ref={sentinelRef} data-testid="board-list-sentinel" />
+                <div className="flex justify-center py-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                    aria-label="Load more cards"
+                  >
+                    {isFetchingNextPage ? 'Loading more cards...' : 'Load more cards'}
+                  </Button>
+                </div>
+              </>
             ) : null}
             <p className="sr-only" role="status" aria-live="polite">
               {isFetchingNextPage ? 'Loading more cards' : hasNextPage ? 'More cards available' : `End of list, ${items.length} of ${total} cards`}

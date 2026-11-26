@@ -318,7 +318,7 @@ tasks:
     critical: false
   T051:
     name: "E2E: board pagination and server-side filter coverage"
-    status: pending
+    status: done
     depends:
       - T050
     phase: 1

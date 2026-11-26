@@ -143,20 +143,22 @@ export function BoardNotesSidebar({ boardId, collapsed, onToggle, isMobile = fal
               </div>
             </div>
           ))}
-          <div ref={sentinelRef} data-testid="board-notes-sentinel" />
           {hasNextPage ? (
-            <div className="px-1 pb-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => void fetchNextPage()}
-                disabled={isFetchingNextPage}
-                aria-label="Load more notes"
-              >
-                {isFetchingNextPage ? 'Loading more notes...' : 'Load more notes'}
-              </Button>
-            </div>
+            <>
+              <div ref={sentinelRef} data-testid="board-notes-sentinel" />
+              <div className="px-1 pb-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  aria-label="Load more notes"
+                >
+                  {isFetchingNextPage ? 'Loading more notes...' : 'Load more notes'}
+                </Button>
+              </div>
+            </>
           ) : null}
           <p className="sr-only" role="status" aria-live="polite">
             {isFetchingNextPage

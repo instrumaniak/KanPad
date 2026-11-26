@@ -17,9 +17,11 @@ import { monitoringTest, assertNoErrors } from './test-utils';
  *   to sort cards" / "Clear search and filters to move all cards"; board banner "Sorting and move-all are
  *   disabled while search or filters are active. Card drag and drop is available for visible cards.";
  *   list view shows "Drag and drop is disabled while search or filters are active." (list view remains no-DnD);
- *   card DnD allowed for visible anchors under filter with blocked-drop feedback via
- *   data-testid="dnd-blocked-status" (role="status", aria-live="polite") and toast title
- *   "Can't drop here while filters are active."; ambiguous drops issue no mutation.
+ *   card DnD allowed for visible anchors under filter. Ambiguous drops (no visible anchor, unloaded matching tail,
+ *   hidden-only target, unknown matching_cards for ambiguous end/container) show neutral/default non-assertive
+ *   toast title "Can't drop here while filters are active." + persistently mounted polite feedback via
+ *   data-testid="dnd-blocked-status" (role="status", aria-live="polite", repeated announcements for identical
+ *   drops), no focus steal, no mutation. Guarded mutations (sort, move-all, blocked drop) must not be sent.
  * - A11y/testids: column-cards-sentinel, board-list-sentinel, board-notes-sentinel, virtual-card-row,
  *   board-list-row, board-list-scroll, column-card-list-scroll, role=search aria-label="Search cards",
  *   aria-label="Filter cards", aria-label="Clear search", table aria-label="Board cards list",

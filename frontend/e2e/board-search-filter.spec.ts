@@ -3,7 +3,7 @@ import { E2E_API } from './api-base';
 import { monitoringTest, assertNoErrors } from './test-utils';
 
 /**
- * T051 pre-dev contract checklist (locked against T048/T049/T050 implementation):
+ * T051/T053 pre-dev contract checklist (locked against T048/T049/T050/T053 implementation):
  * - Endpoints: GET /api/v1/boards/:id/columns?embed_limit=&search=&labels=&due_date=&checklist=
  *              GET /api/v1/columns/:id/cards?page=&limit=&search=&labels=&due_date=&checklist=
  *              GET /api/v1/boards/:id/cards?page=&limit=&sort=&order=&search=&labels=&due_date=&checklist=
@@ -13,11 +13,13 @@ import { monitoringTest, assertNoErrors } from './test-utils';
  *   board notes 20/page, list view 20/page.
  * - Totals semantics: paginated card endpoints return filtered authoritative Page.total;
  *   column embed keeps total_cards unfiltered authoritative and matching_cards filtered authoritative.
- * - DnD guard: when any search/filter active, board DragDropContext disabled; column header sort/move-all
- *   buttons disabled aria-disabled with titles "Clear search and filters to sort cards" /
- *   "Clear search and filters to move all cards"; board shows "Drag and drop, sorting, and move-all are
- *   disabled while search or filters are active. Clear them to reorder cards."; list view shows
- *   "Drag and drop is disabled while search or filters are active." No guarded mutation request sent.
+ * - DnD under filter (T050/T053): sort/move-all disabled aria-disabled with titles "Clear search and filters
+ *   to sort cards" / "Clear search and filters to move all cards"; board banner "Sorting and move-all are
+ *   disabled while search or filters are active. Card drag and drop is available for visible cards.";
+ *   list view shows "Drag and drop is disabled while search or filters are active." (list view remains no-DnD);
+ *   card DnD allowed for visible anchors under filter with blocked-drop feedback via
+ *   data-testid="dnd-blocked-status" (role="status", aria-live="polite") and toast title
+ *   "Can't drop here while filters are active."; ambiguous drops issue no mutation.
  * - A11y/testids: column-cards-sentinel, board-list-sentinel, board-notes-sentinel, virtual-card-row,
  *   board-list-row, board-list-scroll, column-card-list-scroll, role=search aria-label="Search cards",
  *   aria-label="Filter cards", aria-label="Clear search", table aria-label="Board cards list",

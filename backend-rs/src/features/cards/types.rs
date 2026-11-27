@@ -46,20 +46,30 @@ pub struct CreateCardInput {
 }
 
 /// `PATCH /api/v1/cards/{id}` body (T24a scalars-only handler; T24b adds
-/// move semantics for `column_id`/`position`).
+/// move semantics for `column_id`/`position`; T053 adds anchor-based move
+/// semantics via `before_card_id`/`after_card_id`).
 #[derive(Debug, Clone, Deserialize, garde::Validate, ToSchema)]
 pub struct UpdateCardInput {
     /// Card title: present means non-blank, `<= 255` chars.
     #[garde(length(max = 255), custom(validate_optional_not_blank))]
     pub title: Option<String>,
-    /// Target column id for cross-column moves (`>= 1`; T24b owns it —
-    /// the T24a handler ignores it).
+    /// Target column id for cross-column moves (`>= 1`). Required for
+    /// cross-column anchor/append moves; backend does not infer target from
+    /// anchor id.
     #[garde(range(min = 1))]
     pub column_id: Option<i32>,
-    /// Target position (clamped in store, never 400; T24b owns it — the T24a
-    /// handler ignores it).
+    /// Target position (clamped in store, never 400). Mutually exclusive with
+    /// `before_card_id`/`after_card_id`; `null` is treated as absent.
     #[garde(skip)]
     pub position: Option<i32>,
+    /// Place moving card immediately before this anchor card in the resolved
+    /// target column. Mutually exclusive with `position`/`after_card_id`.
+    #[garde(range(min = 1))]
+    pub before_card_id: Option<i32>,
+    /// Place moving card immediately after this anchor card in the resolved
+    /// target column. Mutually exclusive with `position`/`before_card_id`.
+    #[garde(range(min = 1))]
+    pub after_card_id: Option<i32>,
     /// Card description (`<= 10_000` chars); explicit `null` clears.
     #[serde(default, deserialize_with = "deserialize_some_string")]
     #[garde(custom(validate_nullable_description))]

@@ -78,23 +78,25 @@ separate static build, see [Frontend setup](#frontend-setup).
 
 Run tests:
 
+The test suites create their own per-test databases, so point `DATABASE_URL` at
+a throwaway server — the query macros also read it at compile time, `backend-rs/docker-compose.test.yml` starts a MySQL and a MariaDB instance for
+local testing.
+
+
 ```bash
 # unit + integration tests (needs a reachable database)
+$ export DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci'
+
+# for offline 
+# export SQLX_OFFLINE=true
+
+$ sqlx migrate run --source migrations --database-url $DATABASE_URL
+
 $ cargo test
 
 # coverage (85% line floor, same gate as CI)
 $ cargo llvm-cov --workspace --all-targets --fail-under-lines 85
 ```
-
-The test suites create their own per-test databases, so point `DATABASE_URL` at
-a throwaway server — the query macros also read it at compile time:
-
-```bash
-$ export DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci'
-```
-
-`backend-rs/docker-compose.test.yml` starts a MySQL and a MariaDB instance for
-local testing.
 
 ## Frontend setup
 

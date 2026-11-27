@@ -228,6 +228,29 @@ pub async fn update_card(
                 .transpose()
         })
         .transpose()?;
+
+    // T053: anchor/position mutual exclusivity — evaluate before any DB work.
+    let move_field_names: Vec<&str> = [
+        input.position.is_some().then_some("position"),
+        input.before_card_id.is_some().then_some("before_card_id"),
+        input.after_card_id.is_some().then_some("after_card_id"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if move_field_names.len() > 1 {
+        return Err(AppError::Validation(
+            move_field_names
+                .into_iter()
+                .map(|field| crate::error::FieldError {
+                    field: field.to_string(),
+                    message: "position, before_card_id, and after_card_id are mutually exclusive"
+                        .to_string(),
+                })
+                .collect(),
+        ));
+    }
+
     let patch = CardPatch {
         title: input.title.as_deref(),
         description: input
@@ -236,15 +259,20 @@ pub async fn update_card(
             .map(|nullable| nullable.as_deref()),
         due_date,
     };
-    // Any `column_id`/`position` key (even explicit same-column/same-position)
-    // takes the move path; scalars-only bodies keep the T24a short path.
-    if input.column_id.is_some() || input.position.is_some() {
+    // Any move key takes the move path; scalars-only bodies keep the short path.
+    let has_move = input.column_id.is_some()
+        || input.position.is_some()
+        || input.before_card_id.is_some()
+        || input.after_card_id.is_some();
+    if has_move {
         move_card(
             &state.pool,
             user_id,
             id,
             input.column_id,
             input.position,
+            input.before_card_id,
+            input.after_card_id,
             patch,
         )
         .await?;
@@ -261,32 +289,32 @@ pub async fn update_card(
     Ok(Json(load_detail(&state.pool, row).await?))
 }
 
+fn anchor_scope_error(field: &'static str) -> AppError {
+    AppError::Validation(vec![crate::error::FieldError {
+        field: field.to_string(),
+        message: "must be a card in the target column".to_string(),
+    }])
+}
+
 /// Move/reorder worker for [`update_card`]: single-row writes + point update
 /// in a short tx (the moving row re-reads under `FOR UPDATE` so a same-card
 /// race restarts the tx instead of writing unlocked — see store docs).
-/// `target_column` is `None` for same-column reorders; `requested` is `None`
-/// for cross-column appends (the end of the target). Scalar `patch` applies
-/// in the same tx after the move. The tx runs at `READ COMMITTED` (set
-/// before `BEGIN` — MySQL rejects the statement inside a transaction with
-/// error 1568) and transient lock failures (`1213` deadlock / `1205`
-/// lock-wait timeout / scoped `1062` on a `UQ_*_sort_key` unique index) are
-/// retried up to [`MAX_ATTEMPTS`] inside the shared `with_tx_retry` kernel —
-/// exhaustion surfaces at the boundary as 503 + `Retry-After: 2`. A
-/// same-card race returns `Restart`, which the kernel passes through
-/// UNRETRIED (after rollback); the bounded worker loop restarts the tx with
-/// fresh reads instead of burning the lock-retry budget on a logical
-/// conflict.
+/// `target_column` is `None` for same-column reorders. Anchor fields resolve
+/// against the target column's `others` snapshot in the same tx (no-oracle).
+/// Scalar `patch` applies in the same tx after the move. The tx runs at
+/// `READ COMMITTED` and transient lock failures (`1213`/`1205`/scoped `1062`)
+/// are retried by the shared kernel; same-card race returns `Restart`.
+#[allow(clippy::too_many_arguments)]
 async fn move_card(
     pool: &sqlx::MySqlPool,
     user_id: i32,
     id: i32,
     target_column: Option<i32>,
     requested: Option<i32>,
+    before_card_id: Option<i32>,
+    after_card_id: Option<i32>,
     patch: CardPatch<'_>,
 ) -> Result<(), AppError> {
-    // A same-card race (the card changed columns between our read and our
-    // locks) restarts the whole tx; bounded — exhaustion is unreachable in
-    // practice (it needs a concurrent move of the SAME card on every try).
     for _attempt in 0..MAX_ATTEMPTS {
         match with_tx_retry_restartable(pool, TxRetryOpts::default(), |mut tx| async move {
             let owned = fetch_card_owned(&mut *tx, user_id, id).await?;
@@ -298,28 +326,35 @@ async fn move_card(
             let (fresh_column, fresh_sort_key) =
                 fetch_card_spot_for_update(&mut *tx, user_id, id).await?;
             if fresh_column != source {
-                // Same-card race: the card left `source` after our read, so
-                // our lock covers the wrong column — roll back and restart
-                // with fresh values rather than writing against an unlocked
-                // column.
                 return Ok((tx, TxOutcome::Restart));
             }
-            // Sibling keys of the TARGET (excluding the moving card). Neighbor
-            // reads stay unlocked (D3: last-write-wins for concurrent same-gap
-            // drops; the unique index breaks true same-key races).
             let others = fetch_card_keys_in_column(&mut *tx, target, Some(id)).await?;
             let others_len =
                 i32::try_from(others.len()).map_err(|_| AppError::Internal(Internal))?;
-            let others_keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
-            let fresh_index = others_keys
-                .iter()
-                .filter(|key| **key < fresh_sort_key.as_str())
-                .count();
-            let target_index = match requested {
-                Some(requested) => clamp_position(requested, others_len) as usize,
-                None if target == source => fresh_index,
-                None => others.len(),
+            let target_index = if let Some(anchor_id) = before_card_id {
+                others
+                    .iter()
+                    .position(|(card_id, _)| *card_id == anchor_id)
+                    .ok_or_else(|| anchor_scope_error("before_card_id"))?
+            } else if let Some(anchor_id) = after_card_id {
+                others
+                    .iter()
+                    .position(|(card_id, _)| *card_id == anchor_id)
+                    .ok_or_else(|| anchor_scope_error("after_card_id"))?
+                    + 1
+            } else if let Some(requested) = requested {
+                clamp_position(requested, others_len) as usize
+            } else if target == source {
+                let others_keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
+                others_keys
+                    .iter()
+                    .filter(|key| **key < fresh_sort_key.as_str())
+                    .count()
+            } else {
+                others.len()
             };
+
+            let others_keys: Vec<&str> = others.iter().map(|(_, key)| key.as_str()).collect();
             let sort_key = key_for_index(&others_keys, target_index)?;
             point_move_card(&mut *tx, id, target, &sort_key).await?;
             if needs_rebalance(&sort_key) {
@@ -332,9 +367,6 @@ async fn move_card(
         {
             TxOutcome::Done(()) => return Ok(()),
             TxOutcome::Restart => {
-                // The kernel already rolled the tx back. A logical conflict
-                // is not a lock conflict — no backoff, no lock-retry budget;
-                // just restart with fresh values.
                 continue;
             }
         }

@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { E2E_API } from './api-base';
 import { monitoringTest, assertNoErrors } from './test-utils';
 
@@ -108,11 +108,43 @@ async function createChecklistItem(
   return item;
 }
 
-function isGuardedMutation(url: string, method: string) {
-  if (method === 'PATCH' && /\/api\/v1\/cards\/\d+/.test(url)) return true;
-  if (method === 'POST' && /\/api\/v1\/columns\/\d+\/move-cards/.test(url)) return true;
-  if (method === 'PATCH' && /\/api\/v1\/columns\/\d+/.test(url)) return true; // sort_order / rename - guarded in UI
-  return false;
+/**
+ * Drags `source` onto `zone` with raw pointer events and PROVES the drag
+ * engaged (dnd-kit's live `isOver` outline) before releasing the mouse.
+ *
+ * Why not locator.dragTo(): it exposes no mid-drag hook, so a drag that never
+ * engages (open menu overlaying the source, missed activation distance) only
+ * surfaces much later at the drop assertion. That is exactly how the T053
+ * blocked-drop test ran a silent no-op drag and hung until the test timeout.
+ */
+async function pointerDragToZone(
+  page: Page,
+  source: Locator,
+  zone: Locator,
+  place: 'center' | 'bottom',
+) {
+  const fromBox = await source.boundingBox();
+  const toBox = await zone.boundingBox();
+  if (!fromBox || !toBox) throw new Error('pointerDragToZone: source/target has no bounding box');
+  const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+  const clampX = (x: number) => Math.max(10, Math.min(x, vp.width - 10));
+  const clampY = (y: number) => Math.max(10, Math.min(y, vp.height - 10));
+  const startX = clampX(fromBox.x + fromBox.width / 2);
+  const startY = clampY(fromBox.y + fromBox.height / 2);
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  // Exceed MouseSensor's distance:5 activation constraint.
+  await page.mouse.move(clampX(startX + 10), clampY(startY + 10), { steps: 5 });
+  await page.mouse.move(
+    clampX(toBox.x + toBox.width / 2),
+    clampY(place === 'bottom' ? toBox.y + toBox.height - 30 : toBox.y + toBox.height / 2),
+    { steps: 15 },
+  );
+  // The target column only outlines itself while the dnd-kit drag is live AND
+  // over it — fails fast (5s) instead of at the drop assertion.
+  await expect(zone).toHaveCSS('outline-style', 'solid', { timeout: 5000 });
+  await page.mouse.up();
 }
 
 monitoringTest.describe('Board server-driven search/filter (T051)', () => {
@@ -256,82 +288,136 @@ monitoringTest.describe('Board server-driven search/filter (T051)', () => {
     assertNoErrors(monitoring);
   });
 
-  monitoringTest('filtered DnD guard disables/blocks guarded affordances with no mutation requests', async ({ page, request, monitoring }) => {
-    const boardId = await createBoard(request, `T051 DnD Guard ${Date.now()}`);
+  monitoringTest('T053: filter-active sort/move-all disabled, card DnD allowed, ambiguous drop blocked', async ({ page, request, monitoring }) => {
+    test.setTimeout(120_000);
+    const boardId = await createBoard(request, `T053 DnD ${Date.now()}`);
     const cols = await getColumns(request, boardId);
-    const colA = cols[0];
-    await createCard(request, { title: 'Guard Card A', column_id: colA.id, position: 0 });
-    await createCard(request, { title: 'Guard Card B', column_id: colA.id, position: 1 });
+    const [colA, colB, colC] = cols;
+    if (!colA || !colB || !colC) throw new Error(`Expected 3 default columns, got ${cols.length}`);
+
+    await createCard(request, { title: 'DnD A1', column_id: colA.id, position: 0 });
+    await createCard(request, { title: 'DnD A2', column_id: colA.id, position: 1 });
+    // colB: all matching cards fit in the initial embed, so a container drop
+    // always resolves to a visible anchor (never the unloaded-tail path).
+    for (let i = 1; i <= 3; i += 1) {
+      await createCard(request, { title: `DnD B0${i}`, column_id: colB.id, position: i - 1 });
+    }
+    // colC: cards exist but none match the active search (hidden-only target) —
+    // a deterministic ambiguous drop. An unloaded matching tail was NOT
+    // deterministic: hydration fills it, which turns the drop into an allowed
+    // one (T053 R3).
+    await createCard(request, { title: 'Hidden C1', column_id: colC.id, position: 0 });
 
     await uiLogin(page);
     await page.goto(`/board/${boardId}`);
     await expect(page.getByLabel('Search cards')).toBeVisible({ timeout: 15000 });
 
-    // Activate filter
     const respPromise = page.waitForResponse(
-      (r) => r.request().method() === 'GET' && r.url().includes('search=Guard'),
+      (r) => r.request().method() === 'GET' && r.url().includes('/columns') && r.url().includes('search=DnD'),
       { timeout: 15000 },
     );
-    await page.getByLabel('Search cards').fill('Guard');
+    await page.getByLabel('Search cards').fill('DnD');
     await respPromise;
-    await expect(page.getByText('Guard Card A')).toBeVisible({ timeout: 10000 });
 
-    await expect(page.getByText('Drag and drop, sorting, and move-all are disabled while search or filters are active. Clear them to reorder cards.')).toBeVisible();
+    await expect(page.getByText('DnD A1')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('DnD B01')).toBeVisible({ timeout: 10000 });
 
-    const guardedRequests: string[] = [];
-    const onRequest = (req: import('@playwright/test').Request) => {
-      if (isGuardedMutation(req.url(), req.method())) guardedRequests.push(`${req.method()} ${req.url()}`);
-    };
-    page.on('request', onRequest);
+    // Banner copy updated for T053.
+    await expect(page.getByText('Sorting and move-all are disabled while search or filters are active. Card drag and drop is available for visible cards.')).toBeVisible();
 
-    // Column header sort/move-all disabled
-    const column = page.locator(`[data-column-id="${colA.id}"]`);
-    await column.getByRole('button').filter({ has: page.locator('svg.lucide-more-horizontal') }).click();
+    // Nothing is announced before any drop.
+    await expect(page.getByTestId('dnd-blocked-status')).toHaveText('');
+
+    // Sort/move-all still disabled.
+    const columnA = page.locator(`[data-column-id="${colA.id}"]`);
+    const moreBtn = columnA.getByRole('button').filter({ has: page.locator('svg.lucide-more-horizontal') });
+    await moreBtn.click();
     const sortBtn = page.getByRole('button', { name: 'Sort by Date' });
     await expect(sortBtn).toBeDisabled();
     await expect(sortBtn).toHaveAttribute('title', 'Clear search and filters to sort cards');
-    // Move all may be absent if only one other column? There may be default columns; check presence.
     const moveBtn = page.getByRole('button', { name: 'Move All Cards' });
     if (await moveBtn.count()) {
       await expect(moveBtn).toBeDisabled();
       await expect(moveBtn).toHaveAttribute('title', 'Clear search and filters to move all cards');
     }
-    await page.keyboard.press('Escape');
-    const menuItem = page.getByRole('button', { name: 'Sort by Date' });
-    if (await menuItem.isVisible().catch(() => false)) {
-      await column.getByRole('button').filter({ has: page.locator('svg.lucide-more-horizontal') }).click();
-    }
-    if (await menuItem.isVisible().catch(() => false)) {
-      await page.keyboard.press('Escape');
-    }
-    await expect(menuItem).not.toBeVisible({ timeout: 5000 });
+    // The column menu is a manual popover with no Escape handler and no
+    // outside-click close: toggle it shut via its trigger and PROVE it is gone
+    // before dragging — an open menu overlays the drag source, the pointer never
+    // reaches the card and the drag silently never starts (T053 R2).
+    await moreBtn.click();
+    await expect(page.getByRole('button', { name: 'Sort by Date' })).toHaveCount(0);
 
-    // Attempting drag should not issue guarded mutation (DnD disabled).
-    const cardA = column.locator('[data-testid="virtual-card-row"]').filter({ hasText: 'Guard Card A' }).first();
-    const cardB = column.locator('[data-testid="virtual-card-row"]').filter({ hasText: 'Guard Card B' }).first();
-    if (await cardB.count()) {
-      await cardA.dragTo(cardB).catch(() => {});
-    }
+    const guardedRequests: string[] = [];
+    const cardPatches: string[] = [];
+    const onRequest = (req: import('@playwright/test').Request) => {
+      const url = req.url();
+      const method = req.method();
+      if (method === 'POST' && /\/api\/v1\/columns\/\d+\/move-cards/.test(url)) guardedRequests.push(`${method} ${url}`);
+      if (method === 'PATCH' && /\/api\/v1\/columns\/\d+/.test(url)) guardedRequests.push(`${method} ${url}`);
+      // A card PATCH IS the allowed DnD move. Tracking it turns "a blocked drop
+      // sends no mutation" into a real assertion instead of a coverage gap (T053 R5).
+      if (method === 'PATCH' && /\/api\/v1\/cards\/\d+/.test(url)) cardPatches.push(`${method} ${url}`);
+    };
+    page.on('request', onRequest);
 
-    // Keyboard DnD attempt should not issue guarded mutation. Close any dialog opened by Space on card button.
-    await cardA.focus().catch(() => {});
-    await page.keyboard.press('Space').catch(() => {});
-    await page.keyboard.press('ArrowDown').catch(() => {});
-    await page.keyboard.press('Space').catch(() => {});
-    await page.keyboard.press('Escape').catch(() => {});
-    const cardDialog = page.getByRole('dialog', { name: /Card details/ });
-    if (await cardDialog.isVisible().catch(() => false)) {
-      await page.keyboard.press('Escape');
-      await expect(cardDialog).not.toBeVisible({ timeout: 5000 });
-    }
+    const a1 = columnA.locator('[data-testid="virtual-card-row"]').filter({ hasText: 'DnD A1' }).first();
+    const colBDroppable = page.locator(`[data-column-id="${colB.id}"]`).locator('[data-testid="column-droppable"]').first();
+    const colCDroppable = page.locator(`[data-column-id="${colC.id}"]`).locator('[data-testid="column-droppable"]').first();
 
-    await expect.poll(() => guardedRequests.length, { timeout: 1500 }).toBe(0);
+    // Allowed filtered DnD: A1 -> end of colB (container drop over a fully
+    // loaded column resolves to the last visible anchor).
+    const moveRespPromise = page.waitForResponse(
+      (r) => r.request().method() === 'PATCH' && /\/api\/v1\/cards\/\d+/.test(r.url()) && r.status() === 200,
+      { timeout: 15000 },
+    );
+    await pointerDragToZone(page, a1, colBDroppable, 'bottom');
+    await moveRespPromise; // no .catch(): a drag that never fires the PATCH must fail here
+    await expect(page.getByTestId('dnd-blocked-status')).toHaveText('');
+    expect(cardPatches).toHaveLength(1);
+    expect(guardedRequests).toEqual([]);
 
-    // List view: filter-active guard copy visible, no DnD affordances.
+    const colBLoc = page.locator(`[data-column-id="${colB.id}"]`);
+    const a1InB = colBLoc.locator('[data-testid="virtual-card-row"]').filter({ hasText: 'DnD A1' }).first();
+    await expect(a1InB).toBeVisible({ timeout: 10000 });
+
+    // Blocked ambiguous drop: colC exists (total_cards > 0) but shows nothing
+    // that matches the search, so there is no visible anchor to drop against.
+    const blockedText = "Can't drop here while filters are active.";
+    await pointerDragToZone(page, a1InB, colCDroppable, 'center');
+    await expect(page.getByTestId('dnd-blocked-status')).toHaveText(blockedText, { timeout: 15000 });
+    await expect(page.getByText(blockedText).first()).toBeVisible(); // neutral, non-assertive toast
+    expect(cardPatches).toHaveLength(1); // blocked drop sent no card PATCH
+    expect(guardedRequests).toEqual([]);
+
+    // The blocked drop rolled back to server state: A1 is back in colB.
+    await expect(a1InB).toBeVisible({ timeout: 15000 });
+    const firstAnnouncement = (await page.getByTestId('dnd-blocked-status').textContent()) ?? '';
+
+    // An identical blocked drop must RE-announce (nonce/ZWSP): a no-op write
+    // would leave the text identical and the polite region silent.
+    await pointerDragToZone(page, a1InB, colCDroppable, 'center');
+    await expect
+      .poll(async () => (await page.getByTestId('dnd-blocked-status').textContent()) ?? '', { timeout: 15000 })
+      .not.toBe(firstAnnouncement);
+    expect(await page.getByTestId('dnd-blocked-status').textContent()).toContain(blockedText);
+    expect(cardPatches).toHaveLength(1);
+    expect(guardedRequests).toEqual([]);
+
+    // Verify persistence via reload under same filter.
+    await page.reload();
+    await expect(page.getByLabel('Search cards')).toBeVisible({ timeout: 15000 });
+    await page.getByLabel('Search cards').fill('DnD');
+    await page.waitForResponse(
+      (r) => r.request().method() === 'GET' && r.url().includes('/columns') && r.url().includes('search=DnD'),
+      { timeout: 15000 },
+    );
+    await expect(page.locator(`[data-column-id="${colB.id}"]`).getByText('DnD A1')).toBeVisible({ timeout: 10000 });
+    expect(guardedRequests).toEqual([]);
+
+    // List view remains no-DnD with accurate copy.
     await page.getByRole('button', { name: 'List' }).click();
     await expect(page.getByRole('table', { name: 'Board cards list' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Drag and drop is disabled while search or filters are active.')).toBeVisible();
-    await expect.poll(() => guardedRequests.length, { timeout: 1000 }).toBe(0);
 
     page.off('request', onRequest);
     assertNoErrors(monitoring);

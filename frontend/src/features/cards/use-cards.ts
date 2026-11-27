@@ -18,6 +18,7 @@ import {
   type CardDetail,
   type CardSummary,
 } from './cards.api';
+import type { Column } from '../columns/columns.api';
 import { currentSessionEpoch } from '@/lib/query-client-reset';
 
 const cardKeys = {
@@ -329,6 +330,58 @@ export function useRemoveCardLabel() {
       queryClient.invalidateQueries({ queryKey: cardKeys.byId(variables.cardId) });
       queryClient.invalidateQueries({ queryKey: ['columns'] });
       queryClient.invalidateQueries({ queryKey: ['board-cards'] });
+    },
+  });
+}
+
+export interface AnchorMoveCardData {
+  column_id?: number;
+  before_card_id?: number;
+  after_card_id?: number;
+}
+
+interface AnchorMoveVariables {
+  id: number;
+  data: AnchorMoveCardData;
+  activeKey: readonly unknown[];
+  optimistic?: (columns: Column[] | undefined) => Column[] | undefined;
+}
+
+interface AnchorMoveContext {
+  previous: Column[] | undefined;
+  activeKey: readonly unknown[];
+  sessionEpoch: number;
+}
+
+/**
+ * Board-scoped anchor DnD mutation (T053). No ['cards'] optimism, no global
+ * ['columns'] invalidation. Optimistic update only on captured active filtered
+ * query key. Settled/error/cancel invalidates ['columns', boardId] prefix and
+ * ['board-cards', boardId].
+ */
+export function useAnchorMoveCard(boardId: number) {
+  const queryClient = useQueryClient();
+  return useMutation<unknown, unknown, AnchorMoveVariables, AnchorMoveContext>({
+    mutationFn: ({ id, data }) => updateCard(id, data as UpdateCardData),
+    onMutate: async ({ activeKey, optimistic }) => {
+      await queryClient.cancelQueries({ queryKey: activeKey as unknown[] });
+      const previous = queryClient.getQueryData<Column[]>(activeKey as unknown[]);
+      if (optimistic) {
+        queryClient.setQueryData<Column[] | undefined>(activeKey as unknown[], optimistic);
+      }
+      return { previous, activeKey, sessionEpoch: currentSessionEpoch() };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.sessionEpoch !== undefined && context.sessionEpoch !== currentSessionEpoch()) {
+        return;
+      }
+      if (context) {
+        queryClient.setQueryData(context.activeKey as unknown[], context.previous);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['columns', boardId] });
+      queryClient.invalidateQueries({ queryKey: ['board-cards', boardId] });
     },
   });
 }

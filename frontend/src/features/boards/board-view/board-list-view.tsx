@@ -340,7 +340,7 @@ export function BoardListView({ boardId, filters, filterActive }: BoardListViewP
         </p>
       ) : null}
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-6 pb-6" data-testid="board-list-scroll">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto px-6 pb-6" data-testid="board-list-scroll">
         {isLoading ? (
           <p className="py-8 text-center text-muted-foreground" role="status">Loading cards...</p>
         ) : isError ? (
@@ -353,7 +353,10 @@ export function BoardListView({ boardId, filters, filterActive }: BoardListViewP
         ) : items.length === 0 ? (
           <p className="py-8 text-center text-muted-foreground">No cards yet</p>
         ) : (
-          <div role="table" aria-label="Board cards list" aria-rowcount={items.length + 1}>
+          // Positioned so the sr-only live region at the end of the virtual list
+          // is clipped by board-list-scroll instead of escaping to the document
+          // and adding a second vertical scrollbar.
+          <div role="table" aria-label="Board cards list" aria-rowcount={items.length + 1} className="relative">
             <div role="row" aria-rowindex={1} className="sr-only">
               <div
                 role="columnheader"

@@ -4097,15 +4097,31 @@
       },
       "UpdateCardInput": {
         "type": "object",
-        "description": "`PATCH /api/v1/cards/{id}` body (T24a scalars-only handler; T24b adds\nmove semantics for `column_id`/`position`).",
+        "description": "`PATCH /api/v1/cards/{id}` body (T24a scalars-only handler; T24b adds\nmove semantics for `column_id`/`position`; T053 adds anchor-based move\nsemantics via `before_card_id`/`after_card_id`).",
         "properties": {
+          "after_card_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Place moving card immediately after this anchor card in the resolved\ntarget column. Mutually exclusive with `position`/`before_card_id`."
+          },
+          "before_card_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Place moving card immediately before this anchor card in the resolved\ntarget column. Mutually exclusive with `position`/`after_card_id`."
+          },
           "column_id": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int32",
-            "description": "Target column id for cross-column moves (`>= 1`; T24b owns it —\nthe T24a handler ignores it)."
+            "description": "Target column id for cross-column moves (`>= 1`). Required for\ncross-column anchor/append moves; backend does not infer target from\nanchor id."
           },
           "description": {
             "type": [
@@ -4127,7 +4143,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Target position (clamped in store, never 400; T24b owns it — the T24a\nhandler ignores it)."
+            "description": "Target position (clamped in store, never 400). Mutually exclusive with\n`before_card_id`/`after_card_id`; `null` is treated as absent."
           },
           "title": {
             "type": [

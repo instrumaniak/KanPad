@@ -778,6 +778,8 @@ async fn update_dtos_trim_and_required_rules() {
             title: Some("  ".to_string()),
             column_id: None,
             position: None,
+            before_card_id: None,
+            after_card_id: None,
             description: None,
             due_date: None,
         },

@@ -301,7 +301,7 @@ export function BoardView() {
       />
       {filterActive ? (
         <p className="px-4 text-xs text-muted-foreground sm:px-6" role="status">
-          Drag and drop, sorting, and move-all are disabled while search or filters are active. Clear them to reorder cards.
+          Sorting and move-all are disabled while search or filters are active. Card drag and drop is available for visible cards.
         </p>
       ) : null}
       <p aria-live="polite" aria-atomic="true" className="sr-only">
@@ -338,8 +338,8 @@ export function BoardView() {
         ) : view === 'board' ? (
           isMobile ? (
             <div className="flex min-h-0 flex-1 overflow-hidden">
-              <div className="flex h-full min-h-0 flex-1 overflow-x-auto touch-pan-x" ref={boardScrollRef}>
-                <DragDropContext boardId={id} disabled={filterActive}>
+              <div className="flex h-full min-h-0 flex-1 overflow-x-auto overflow-y-hidden touch-pan-x" ref={boardScrollRef}>
+                <DragDropContext boardId={id} filters={serverFilters}>
                   <div className="flex h-full min-w-max gap-4 p-4 pb-4">
                     {filteredColumns.map((column) => (
                       <Column
@@ -359,8 +359,8 @@ export function BoardView() {
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 overflow-hidden">
-              <div className="flex h-full min-h-0 flex-1 overflow-x-auto" ref={boardScrollRef}>
-                <DragDropContext boardId={id} disabled={filterActive}>
+              <div className="flex h-full min-h-0 flex-1 overflow-x-auto overflow-y-hidden" ref={boardScrollRef}>
+                <DragDropContext boardId={id} filters={serverFilters}>
                   <div className="flex h-full gap-6 p-6 pb-6">
                     {filteredColumns.map((column) => (
                       <Column

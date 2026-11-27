@@ -1169,3 +1169,437 @@ async fn unrelated_1062_is_not_retried(pool: MySqlPool) {
         "the injected unrelated 1062 fired exactly once"
     );
 }
+
+// ---------------------------------------------------------------------------
+// T053: anchor-based move semantics
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cards_anchor_move_flow(pool: MySqlPool) {
+    let app = || app_on_pool(&pool);
+    let (owner_jar, _) = register(app(), "anchor-owner@example.com").await;
+    let (intruder_jar, _) = register(app(), "anchor-intruder@example.com").await;
+
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "POST",
+            "/api/v1/boards",
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"name": "Anchor Board"}))),
+        ),
+    )
+    .await;
+    let board = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED, "board: {board}");
+    let cols = board["data"]["columns"].as_array().expect("columns");
+    let col_a = cols[0]["id"].as_i64().expect("col_a");
+    let col_b = cols[1]["id"].as_i64().expect("col_b");
+
+    // Intruder board/card for no-oracle checks.
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "POST",
+            "/api/v1/boards",
+            Some(&intruder_jar),
+            Some(json_body(&serde_json::json!({"name": "Intruder Anchor"}))),
+        ),
+    )
+    .await;
+    let intruder_board = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED);
+    let intruder_col = intruder_board["data"]["columns"][0]["id"].as_i64().unwrap();
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "POST",
+            "/api/v1/cards",
+            Some(&intruder_jar),
+            Some(json_body(
+                &serde_json::json!({"title": "Intruder", "column_id": intruder_col}),
+            )),
+        ),
+    )
+    .await;
+    let intruder_card = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED);
+    let intruder_card_id = intruder_card["data"]["id"].as_i64().unwrap();
+
+    // Seed A: [A0,A1,A2,A3], B: [B0,B1]
+    for (title, column, key) in [
+        ("A0", col_a, "a0"),
+        ("A1", col_a, "a1"),
+        ("A2", col_a, "a2"),
+        ("A3", col_a, "a3"),
+        ("B0", col_b, "a0"),
+        ("B1", col_b, "a1"),
+    ] {
+        sqlx::query("INSERT INTO `cards` (`title`, `column_id`, `sort_key`) VALUES (?, ?, ?)")
+            .bind(title)
+            .bind(column)
+            .bind(key)
+            .execute(&pool)
+            .await
+            .expect("seed");
+    }
+    let a0 = card_id_by_title(&pool, "A0").await;
+    let a1 = card_id_by_title(&pool, "A1").await;
+    let a2 = card_id_by_title(&pool, "A2").await;
+    let a3 = card_id_by_title(&pool, "A3").await;
+    let b0 = card_id_by_title(&pool, "B0").await;
+    let b1 = card_id_by_title(&pool, "B1").await;
+
+    // Same-column before_card_id: A3 before A1 => [A0,A3,A1,A2]
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{a3}"),
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"before_card_id": a1}))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "same before: {moved}");
+    assert_eq!(moved["data"]["column_id"], col_a);
+    assert_eq!(moved["data"]["position"], 1);
+    assert_eq!(
+        assert_dense(&pool, col_a, "same before").await,
+        vec![a0, a3, a1, a2]
+    );
+
+    // Same-column after_card_id: A0 after A2 => [A3,A1,A2,A0]
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{a0}"),
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"after_card_id": a2}))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "same after: {moved}");
+    assert_eq!(moved["data"]["position"], 3);
+    assert_eq!(
+        assert_dense(&pool, col_a, "same after").await,
+        vec![a3, a1, a2, a0]
+    );
+
+    // Cross-column before_card_id requires column_id and works: A1 before B1 in B => [B0,A1,B1]
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{a1}"),
+            Some(&owner_jar),
+            Some(json_body(
+                &serde_json::json!({"column_id": col_b, "before_card_id": b1}),
+            )),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "cross before: {moved}");
+    assert_eq!(moved["data"]["column_id"], col_b);
+    assert_eq!(moved["data"]["position"], 1);
+    assert_eq!(
+        assert_dense(&pool, col_a, "cross before src").await,
+        vec![a3, a2, a0]
+    );
+    assert_eq!(
+        assert_dense(&pool, col_b, "cross before dst").await,
+        vec![b0, a1, b1]
+    );
+
+    // Cross-column after_card_id at tail: A0 after B1 => [B0,A1,B1,A0]
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{a0}"),
+            Some(&owner_jar),
+            Some(json_body(
+                &serde_json::json!({"column_id": col_b, "after_card_id": b1}),
+            )),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "cross after tail: {moved}");
+    assert_eq!(moved["data"]["position"], 3);
+    assert_eq!(
+        assert_dense(&pool, col_b, "cross after tail").await,
+        vec![b0, a1, b1, a0]
+    );
+
+    // Scalar + anchor in one PATCH; verify DB persistence.
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{a3}"),
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({
+                "column_id": col_b,
+                "before_card_id": b0,
+                "title": "A3 moved"
+            }))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "scalar+anchor: {moved}");
+    assert_eq!(moved["data"]["title"], "A3 moved");
+    assert_eq!(moved["data"]["column_id"], col_b);
+    assert_eq!(moved["data"]["position"], 0);
+    let stored_title: String = sqlx::query_scalar("SELECT `title` FROM `cards` WHERE `id` = ?")
+        .bind(a3)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored_title, "A3 moved");
+    assert_eq!(
+        assert_dense(&pool, col_b, "scalar+anchor dst").await,
+        vec![a3, b0, a1, b1, a0]
+    );
+
+    // Append unchanged: cross-column without position/anchor appends to real end.
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{a2}"),
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"column_id": col_b}))),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "append: {moved}");
+    assert_eq!(moved["data"]["position"], 5);
+    assert_eq!(
+        assert_dense(&pool, col_b, "append dst").await,
+        vec![a3, b0, a1, b1, a0, a2]
+    );
+
+    // Mutual exclusivity: every conflicting present field named.
+    for payload in [
+        serde_json::json!({"position": 0, "before_card_id": b0}),
+        serde_json::json!({"position": 0, "after_card_id": b0}),
+        serde_json::json!({"before_card_id": b0, "after_card_id": b1}),
+        serde_json::json!({"position": 0, "before_card_id": b0, "after_card_id": b1}),
+    ] {
+        let (status, headers, bytes) = send(
+            app(),
+            authed_request(
+                "PATCH",
+                &format!("/api/v1/cards/{b0}"),
+                Some(&owner_jar),
+                Some(json_body(&payload)),
+            ),
+        )
+        .await;
+        let failure = json_of(&bytes);
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "mutual: {payload} => {failure}"
+        );
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "validation-error",
+            "mutual exclusivity",
+        );
+        let errs = failure["errors"].as_array().expect("errors array");
+        if payload.get("position").is_some() {
+            assert!(errs.iter().any(|e| e["field"] == "position"), "{failure}");
+        }
+        if payload.get("before_card_id").is_some() {
+            assert!(
+                errs.iter().any(|e| e["field"] == "before_card_id"),
+                "{failure}"
+            );
+        }
+        if payload.get("after_card_id").is_some() {
+            assert!(
+                errs.iter().any(|e| e["field"] == "after_card_id"),
+                "{failure}"
+            );
+        }
+    }
+
+    // position: null treated as absent.
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{b0}"),
+            Some(&owner_jar),
+            Some(json_body(
+                &serde_json::json!({"position": null, "title": "B0 nullpos"}),
+            )),
+        ),
+    )
+    .await;
+    let moved = json_of(&bytes);
+    assert_eq!(status, StatusCode::OK, "position null absent: {moved}");
+    assert_eq!(moved["data"]["title"], "B0 nullpos");
+
+    // No-oracle anchor scope: missing/foreign/wrong-column/self all same generic 400.
+    let no_oracle_cases: Vec<(Value, &str)> = vec![
+        (
+            serde_json::json!({"before_card_id": 999999}),
+            "before_card_id",
+        ),
+        (
+            serde_json::json!({"after_card_id": 999999}),
+            "after_card_id",
+        ),
+        (
+            serde_json::json!({"before_card_id": intruder_card_id}),
+            "before_card_id",
+        ),
+        (
+            serde_json::json!({"column_id": col_a, "before_card_id": b1}),
+            "before_card_id",
+        ), // b1 is in col_b
+        (serde_json::json!({"before_card_id": b0}), "before_card_id"), // self
+        (serde_json::json!({"after_card_id": b0}), "after_card_id"),   // self
+    ];
+    for (payload, field) in no_oracle_cases {
+        let (status, headers, bytes) = send(
+            app(),
+            authed_request(
+                "PATCH",
+                &format!("/api/v1/cards/{b0}"),
+                Some(&owner_jar),
+                Some(json_body(&payload)),
+            ),
+        )
+        .await;
+        let failure = json_of(&bytes);
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "no-oracle {payload}: {failure}"
+        );
+        assert_problem(
+            status,
+            &headers,
+            &failure,
+            "validation-error",
+            "no-oracle anchor",
+        );
+        let errs = failure["errors"].as_array().expect("errors");
+        assert_eq!(errs.len(), 1, "single error: {failure}");
+        assert_eq!(errs[0]["field"], field);
+        assert_eq!(errs[0]["message"], "must be a card in the target column");
+        let raw = serde_json::to_string(&failure).unwrap();
+        let contains_id_token = |haystack: &str, id: i64| {
+            let needle = id.to_string();
+            haystack.match_indices(&needle).any(|(i, _)| {
+                let before = haystack.as_bytes().get(i.wrapping_sub(1)).copied();
+                let after = haystack.as_bytes().get(i + needle.len()).copied();
+                let non_digit = |b: Option<u8>| !matches!(b, Some(b'0'..=b'9'));
+                non_digit(before) && non_digit(after)
+            })
+        };
+        // Check oracle-sensitive fields only; instance/type/status may contain /v1/ or moved card id.
+        let detail = failure["detail"].as_str().unwrap_or_default();
+        let errs_raw = serde_json::to_string(&failure["errors"]).unwrap();
+        assert!(
+            !contains_id_token(detail, 999_999) && !contains_id_token(&errs_raw, 999_999),
+            "no id echo: {raw}"
+        );
+        assert!(
+            !contains_id_token(detail, intruder_card_id)
+                && !contains_id_token(&errs_raw, intruder_card_id),
+            "no intruder id echo: {raw}"
+        );
+    }
+
+    // Anchor on empty target column => generic 400 anchor-scope error.
+    let (status, _, bytes) = send(
+        app(),
+        authed_request(
+            "POST",
+            "/api/v1/boards",
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"name": "Empty Target"}))),
+        ),
+    )
+    .await;
+    let board2 = json_of(&bytes);
+    assert_eq!(status, StatusCode::CREATED);
+    let empty_col = board2["data"]["columns"][0]["id"].as_i64().unwrap();
+    let (status, headers, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{b0}"),
+            Some(&owner_jar),
+            Some(json_body(
+                &serde_json::json!({"column_id": empty_col, "before_card_id": b1}),
+            )),
+        ),
+    )
+    .await;
+    let failure = json_of(&bytes);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "empty target: {failure}");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "validation-error",
+        "empty target anchor",
+    );
+    assert_eq!(failure["errors"][0]["field"], "before_card_id");
+    assert_eq!(
+        failure["errors"][0]["message"],
+        "must be a card in the target column"
+    );
+
+    // Cross-column without column_id must not infer target from anchor id.
+    let (status, _, _bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{b1}"),
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"column_id": col_a}))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // b0 in col_b, b1 now in col_a. before_card_id=b1 without column_id resolves target to col_b.
+    let (status, headers, bytes) = send(
+        app(),
+        authed_request(
+            "PATCH",
+            &format!("/api/v1/cards/{b0}"),
+            Some(&owner_jar),
+            Some(json_body(&serde_json::json!({"before_card_id": b1}))),
+        ),
+    )
+    .await;
+    let failure = json_of(&bytes);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "no infer: {failure}");
+    assert_problem(
+        status,
+        &headers,
+        &failure,
+        "validation-error",
+        "no infer cross-column",
+    );
+    assert_eq!(failure["errors"][0]["field"], "before_card_id");
+    assert_eq!(
+        failure["errors"][0]["message"],
+        "must be a card in the target column"
+    );
+}

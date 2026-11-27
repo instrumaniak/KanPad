@@ -331,7 +331,7 @@ tasks:
     critical: false
   T053:
     name: Anchor-based card DnD under active board search/filters
-    status: pending
+    status: done
     depends:
       - T048
       - T049

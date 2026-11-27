@@ -23,6 +23,6 @@ check status: `docker logs -f kanpad-rs-testdb`
 
 Run the tests:
 ```
-RUST_BACKTRACE=full DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4' cargo test --test api -- --no-capture
+RUST_BACKTRACE=full DATABASE_URL='mysql://root:dev_root_pw@127.0.0.1:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci' cargo test --test api -- --no-capture
 ```
 

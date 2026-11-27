@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactNode } from 'react';
-import { useDeleteCard, useCreateCard, useCards, useCard, useMoveCard, useReorderCard } from './use-cards';
+import { useDeleteCard, useCreateCard, useCards, useCard, useMoveCard, useReorderCard, useAnchorMoveCard } from './use-cards';
 import { resetSessionCaches } from '@/lib/query-client-reset';
+import type { Column } from '../columns/columns.api';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -313,5 +314,99 @@ describe('useCard', () => {
 
     expect(result.current.isLoading).toBe(false);
     expect(mockFetchCard).not.toHaveBeenCalled();
+  });
+});
+
+describe('useAnchorMoveCard (T053 board-scoped DnD mutation)', () => {
+  // Captured-at-drag-start filtered key vs. the canonical unfiltered key.
+  const activeKey = ['columns', 7, { search: 'DnD' }];
+  const unfilteredKey = ['columns', 7];
+  // Column has more wire fields than this test cares about.
+  const col = (id: number, name: string) => ({ id, name }) as unknown as Column;
+  const optimistic = (old: Column[] | undefined): Column[] | undefined =>
+    old ? old.map((c) => ({ ...c, name: 'MOVED' })) : old;
+
+  const seedColumns = () => {
+    const before = [col(1, 'To Do'), col(2, 'Done')];
+    const moved = [col(1, 'MOVED'), col(2, 'MOVED')];
+    queryClient.setQueryData(activeKey, before.map((c) => ({ ...c })));
+    queryClient.setQueryData(unfilteredKey, before.map((c) => ({ ...c })));
+    return { before, moved };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient.clear();
+    mockUpdateCard.mockResolvedValue({});
+  });
+
+  it('optimistically writes ONLY the captured active key and invalidates board-scoped prefixes', async () => {
+    const { before, moved } = seedColumns();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const setSpy = vi.spyOn(queryClient, 'setQueryData');
+
+    const { result } = renderHook(() => useAnchorMoveCard(7), { wrapper });
+    await result.current.mutateAsync({ id: 10, data: { column_id: 2 }, activeKey, optimistic });
+
+    // The anchor payload goes out as-is (no position fabrication).
+    expect(mockUpdateCard).toHaveBeenCalledWith(10, { column_id: 2 });
+
+    // Optimistic write landed on the captured filtered key only — the
+    // canonical unfiltered board key and ['cards', ...] must be untouched
+    // (legacy useMoveCard/useReorderCard optimism is forbidden here).
+    expect(queryClient.getQueryData(activeKey)).toEqual(moved);
+    expect(queryClient.getQueryData(unfilteredKey)).toEqual(before);
+    expect(queryClient.getQueryData(['cards', 10])).toBeUndefined();
+    for (const [key] of setSpy.mock.calls) {
+      expect(key).toEqual(activeKey);
+    }
+
+    // Settle invalidates ['columns', boardId] prefix + ['board-cards', boardId],
+    // never a bare global ['columns'].
+    const invalidated = invalidateSpy.mock.calls.map(
+      ([arg]) => (arg as { queryKey?: unknown }).queryKey,
+    );
+    expect(invalidated).toContainEqual(['columns', 7]);
+    expect(invalidated).toContainEqual(['board-cards', 7]);
+    expect(invalidated).not.toContainEqual(['columns']);
+  });
+
+  it('rolls the active-key optimistic write back on error', async () => {
+    const { before } = seedColumns();
+    mockUpdateCard.mockRejectedValue(new Error('boom'));
+
+    const { result } = renderHook(() => useAnchorMoveCard(7), { wrapper });
+    await expect(
+      result.current.mutateAsync({ id: 10, data: { column_id: 2 }, activeKey, optimistic }),
+    ).rejects.toThrow('boom');
+
+    expect(queryClient.getQueryData(activeKey)).toEqual(before);
+  });
+
+  it('does NOT recreate the active-key cache after a session boundary mid-flight', async () => {
+    const { moved } = seedColumns();
+    let rejectMove!: (err: unknown) => void;
+    mockUpdateCard.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectMove = reject;
+      }),
+    );
+
+    const { result } = renderHook(() => useAnchorMoveCard(7), { wrapper });
+    const pending = result.current.mutateAsync({ id: 10, data: { column_id: 2 }, activeKey, optimistic });
+    pending.catch(() => {});
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(activeKey)).toEqual(moved);
+    });
+
+    // Session boundary lands while the mutation is in flight.
+    await resetSessionCaches(queryClient);
+    rejectMove(new Error('401'));
+    await pending.catch(() => {});
+
+    // Without the epoch guard the rollback would rebuild the previous user's
+    // columns query from a destroyed cache.
+    expect(queryClient.getQueryData(activeKey)).toBeUndefined();
   });
 });

@@ -1931,13 +1931,27 @@ export interface components {
         };
         /**
          * @description `PATCH /api/v1/cards/{id}` body (T24a scalars-only handler; T24b adds
-         *     move semantics for `column_id`/`position`).
+         *     move semantics for `column_id`/`position`; T053 adds anchor-based move
+         *     semantics via `before_card_id`/`after_card_id`).
          */
         UpdateCardInput: {
             /**
              * Format: int32
-             * @description Target column id for cross-column moves (`>= 1`; T24b owns it —
-             *     the T24a handler ignores it).
+             * @description Place moving card immediately after this anchor card in the resolved
+             *     target column. Mutually exclusive with `position`/`before_card_id`.
+             */
+            after_card_id?: number | null;
+            /**
+             * Format: int32
+             * @description Place moving card immediately before this anchor card in the resolved
+             *     target column. Mutually exclusive with `position`/`after_card_id`.
+             */
+            before_card_id?: number | null;
+            /**
+             * Format: int32
+             * @description Target column id for cross-column moves (`>= 1`). Required for
+             *     cross-column anchor/append moves; backend does not infer target from
+             *     anchor id.
              */
             column_id?: number | null;
             /** @description Card description (`<= 10_000` chars); explicit `null` clears. */
@@ -1946,8 +1960,8 @@ export interface components {
             due_date?: string | null;
             /**
              * Format: int32
-             * @description Target position (clamped in store, never 400; T24b owns it — the T24a
-             *     handler ignores it).
+             * @description Target position (clamped in store, never 400). Mutually exclusive with
+             *     `before_card_id`/`after_card_id`; `null` is treated as absent.
              */
             position?: number | null;
             /** @description Card title: present means non-blank, `<= 255` chars. */

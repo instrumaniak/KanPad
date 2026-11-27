@@ -1,11 +1,6 @@
 ## Overview
 
-KanPad is a  _project management & note taking_ tool.
-
-Tech stack:
-- _Frontend_: TypeScript, React, Vite : `frontend/`
-- _Backend_ : Rust, Axum, sqlx : `backend-rs`
-- _Database_: MySQL/MariaDB
+Read the `README.md`.
 
 For backend development & testing, set `CARGO_TARGET_DIR`, `CARGO_HOME` if found in `.env` or `.env.test` .
 
@@ -17,8 +12,7 @@ Initial specs:
 - `specs/planning-artifacts/prd.md`
 - `specs/planning-artifacts/architecture.md`
 - `specs/planning-artifacts/ux-design-specification.md`
-- `specs/planning-artifacts/epics.md`
-- `specs/implementation-artifacts/sprint-status.yaml`
+
 
 The backend is rewritten from node.js to rust. The spec files related to that:
 

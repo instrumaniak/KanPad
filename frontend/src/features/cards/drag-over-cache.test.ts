@@ -162,4 +162,32 @@ describe('moveCardToColumn', () => {
     expect(next[0].cards[0].position).toBe(0);
     expect(next[0].cards[1].position).toBe(1);
   });
+
+  it('filtered mode: cross-column adjusts matching_cards/total_cards and does not reindex positions', () => {
+    const a = { ...makeCard(10, 1, 5), title: 'A' };
+    const b = { ...makeCard(11, 2, 7), title: 'B' };
+    const cols = [
+      { ...makeColumn(1, 0, [a]), total_cards: 3, matching_cards: 1 },
+      { ...makeColumn(2, 1, [b]), total_cards: 4, matching_cards: 1 },
+    ] as unknown as Column[];
+    const next = moveCardToColumn(cols, 10, 2, 0, a, { filterActive: true });
+    expect(next[0].cards.map((c) => c.id)).toEqual([]);
+    expect(next[1].cards.map((c) => c.id)).toEqual([10, 11]);
+    expect((next[0] as Column & { total_cards?: number; matching_cards?: number }).total_cards).toBe(2);
+    expect((next[0] as Column & { total_cards?: number; matching_cards?: number }).matching_cards).toBe(0);
+    expect((next[1] as Column & { total_cards?: number; matching_cards?: number }).total_cards).toBe(5);
+    expect((next[1] as Column & { total_cards?: number; matching_cards?: number }).matching_cards).toBe(2);
+    expect(next[1].cards[0].position).toBe(5);
+    expect(next[1].cards[1].position).toBe(7);
+  });
+
+  it('filtered mode: same-column reorder keeps counts unchanged', () => {
+    const a = { ...makeCard(10, 1, 5) };
+    const b = { ...makeCard(11, 1, 8) };
+    const cols = [{ ...makeColumn(1, 0, [a, b]), total_cards: 5, matching_cards: 2 }] as unknown as Column[];
+    const next = moveCardToColumn(cols, 10, 1, 1, a, { filterActive: true });
+    expect(next[0].cards.map((c) => c.id)).toEqual([11, 10]);
+    expect((next[0] as Column & { total_cards?: number; matching_cards?: number }).total_cards).toBe(5);
+    expect((next[0] as Column & { total_cards?: number; matching_cards?: number }).matching_cards).toBe(2);
+  });
 });

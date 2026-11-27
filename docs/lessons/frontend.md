@@ -185,3 +185,23 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - **Cross-column cache moves must update totals.** When moving cards between columns in the columns cache, update `total_cards` alongside `cards` or hasMore/unloaded-end guards become stale.
 - **Load-more failures need UI feedback.** Fire-and-forget `void loadMore()` with no catch produces silent unhandled rejections. Return/capture error state and render a retry affordance.
 - **DnD success should not wipe hydrated pages.** Broad `invalidateQueries(['columns'])` on settled move mutations resets board hydration to first page; prefer invalidation on error or a coherent refetch strategy. Reset-to-first-page is acceptable only when explicit and safe.
+
+### T053 — Anchor-based card DnD under active board filters (2026-11-26)
+- **Tag:** `dnd,react-query,filters,a11y`
+- **Filtered DnD needs anchors, not positions.** Visible filtered indices are not stable full-column positions; resolve drops to `before_card_id`/`after_card_id` from visible loaded anchors, and block ambiguous container/end drops when matching tail is unloaded or matching_cards is unknown.
+- **Board-scoped DnD mutation must own its cache scope.** Use a dedicated anchor-move mutation: no `['cards']` optimism, no global `['columns']` invalidation; optimistic update only on the captured active query key, invalidate `['columns', boardId]` prefix + `['board-cards', boardId]` on settle/error/cancel/blocked rollback.
+- **Blocked filter drops need non-assertive feedback.** Use a neutral/default toast (not error/destructive) plus a persistently mounted polite `role="status"` live region with a nonce to re-announce identical blocks; no focus steal, no mutation.
+- **Live dragOver cache includes the active card.** Resolver/insert-index math must exclude the active card from anchor candidates but keep total/matching counts consistent when the card was live-moved.
+
+### Board kanban scroller: horizontal-only (2026-11-28)
+- **Tag:** `layout,scroll,kanban,dnd`
+- **`overflow-x-auto` alone is not horizontal-only.** CSS computes `overflow-y` to `auto`, so dense board content can add a vertical scrollbar on `boardScrollRef`.
+- **Keep kanban scrolling on one axis.** The board kanban scroller should use `overflow-x-auto overflow-y-hidden`; per-column `ColumnCardList` owns vertical card scrolling.
+- **Regression test the rendered CSS.** Playwright e2e with API-seeded dense board asserts `overflow-x:auto`, `overflow-y:hidden`, no page-level main scroll, no `waitForTimeout`.
+- **Board list view has one vertical scroll root.** `board-list-scroll` owns list scrolling; keep `main`, `listScrollRef`, and `BoardListView` clipped, `overflow-x-hidden`, and `overflow-y-hidden` on board `main`. Add regression assertions that `main` does not scroll and only `board-list-scroll` has `overflow-y:auto`.
+
+### List view double scrollbar: escaping `sr-only` live region (2026-11-28)
+- **Tag:** `layout,scroll,a11y,virtualization`
+- **Tailwind `sr-only` is `position: absolute`.** Inside a virtualized scroller it escapes clipping when no ancestor is positioned: its containing block becomes the initial containing block, so its static position at the bottom of the list extends `document.documentElement.scrollHeight` and adds a *document* scrollbar next to the list's own. Fix by putting `relative` on the scroll container (or its immediate wrapper) — keep the live-region text intact for screen readers.
+- **`main`-only scroll assertions miss this.** The whole ancestor chain (`main`, wrappers, `#root`, `body`) can report identical `scrollHeight`/`clientHeight` while the document scrolls. Regression tests must assert `document.documentElement.scrollHeight <= clientHeight + 1` too, and must wait for virtualized rows to render before measuring (a "Loading cards..." list has no live region and gives a false pass).
+- **JSX caveat:** a `{/* ... */}` comment cannot sit in a ternary expression branch; use a `//` comment there instead.

@@ -28,8 +28,7 @@ vi.mock('@dnd-kit/sortable', async (importOriginal) => {
 
 // Mock use-cards hooks
 vi.mock('./use-cards', () => ({
-  useMoveCard: () => ({ mutateAsync: vi.fn() }),
-  useReorderCard: () => ({ mutateAsync: vi.fn() }),
+  useAnchorMoveCard: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
 }));
 
 vi.mock('@/components/ui/use-toast', () => ({

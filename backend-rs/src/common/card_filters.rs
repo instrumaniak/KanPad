@@ -5,7 +5,6 @@
 //! LIKE escaping, and bound-parameter WHERE fragment composition so semantics
 //! cannot drift across endpoints.
 
-use chrono::Datelike;
 use sqlx::{MySql, QueryBuilder};
 
 use crate::error::{AppError, Internal};
@@ -27,7 +26,8 @@ pub enum DueDateFilter {
     Overdue,
     /// `due_date` in `[start_of_today_utc, start_of_tomorrow_utc)`.
     Today,
-    /// `due_date` in `[start_of_today_utc, start_of_next_week_utc)` (Monday-start week).
+    /// `due_date` in `[start_of_today_utc, start_of_next_week_utc)`
+    /// (rolling 7-day window in UTC; `start_of_next_week` = `start_of_today` + 7 days).
     ThisWeek,
     /// `due_date IS NULL`.
     NoDate,
@@ -313,7 +313,8 @@ pub struct DueDateBoundaries {
     pub start_of_today: chrono::NaiveDateTime,
     /// 00:00:00 UTC of the next day.
     pub start_of_tomorrow: chrono::NaiveDateTime,
-    /// 00:00:00 UTC of next Monday (Monday-start week, 7-day window).
+    /// 00:00:00 UTC 7 days after `start_of_today` (rolling 7-day window in UTC;
+    /// upper bound is exclusive). NOT "next Monday".
     pub start_of_next_week: chrono::NaiveDateTime,
 }
 
@@ -329,15 +330,10 @@ pub fn due_date_boundaries_at(now: chrono::DateTime<chrono::Utc>) -> DueDateBoun
     let start_of_tomorrow = (today + chrono::Days::new(1))
         .and_hms_opt(0, 0, 0)
         .expect("valid midnight");
-    // Monday-start week, 7-day window: start_of_today .. start_of_next_week
-    let weekday = today.weekday().num_days_from_monday();
-    let start_of_week = (today - chrono::Days::new(u64::from(weekday)))
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight");
-    // Spec: "this_week: due_date IS NOT NULL AND due_date >= start_of_today_utc
-    // AND due_date < start_of_next_week_utc, where week is Monday-start, 7-day
-    // window in UTC". Upper bound is next Monday 00:00:00 UTC.
-    let start_of_next_week = start_of_week + chrono::Days::new(7);
+    // `this_week`: `due_date IS NOT NULL AND due_date >= start_of_today_utc
+    // AND due_date < start_of_next_week_utc`, rolling 7-day window in UTC.
+    // Upper bound is `start_of_today` + 7 days, NOT next Monday.
+    let start_of_next_week = start_of_today + chrono::Days::new(7);
     DueDateBoundaries {
         start_of_today,
         start_of_tomorrow,

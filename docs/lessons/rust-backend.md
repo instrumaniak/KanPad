@@ -75,3 +75,35 @@ Source: extracted from root `AGENTS.md` (2026-11-10).
 - **Board embed cap: limit in SQL, not in Rust.** Fetching all cards then truncating still loads everything from DB. `ROW_NUMBER() OVER (PARTITION BY column_id ORDER BY sort_key ASC, id ASC)` with an outer `rn <= N` is portable across MySQL 8.4/MariaDB 11.4 and avoids N+1. Keep totals as a separate `COUNT(*) ... GROUP BY column_id` query (authoritative), and fetch labels/progress only for embedded card IDs.
 - **Runtime `sqlx::query()` avoids offline-prepare churn for one-off complex queries.** When adding window-function queries that are awkward in `query!` or when `.sqlx` cache is not being refreshed in the loop, runtime `query().bind().try_get()` is acceptable; keep it parameterized and decode integer widths defensively (`i64` for COUNT/CASE).
 - **Additive response fields need full contract propagation.** `total_cards` on `ColumnResponse` required updating Rust type, store to_response signatures, route callers, OpenAPI export, and frontend schema regen (`gen:api -- --check`). Grep for struct literal/signature callers; additive serde fields are safe for inbound payloads but required-field mocks/tests may need updates.
+
+### T053 — Anchor-based card move no-oracle validation (2026-11-26)
+- **Tag:** `rust,axum,sqlx,validation,security`
+- **Anchor scope must be snapshot-only.** Resolve `before_card_id`/`after_card_id` against `fetch_card_keys_in_column(target, Some(moving_id))` in the same tx; missing/foreign/wrong-column/self/concurrent-missing all return the same generic 400 `validation-error` on the anchor field with static message `must be a card in the target column`, no id echo.
+- **Mutual exclusivity before DB work.** Reject `position`/`before_card_id`/`after_card_id` conflicts in the route before loading card state; report every conflicting present field in `errors[]`. Treat `position: null` as absent.
+
+## `this_week` = rolling 7-day UTC window from `start_of_today`, NOT next Monday (2026-11-27)
+- **Tag:** card-filters, due-date, spec-drift, testing
+- `due_date=this_week` is `due_date IS NOT NULL AND due_date >= start_of_today_utc AND due_date < start_of_next_week_utc`
+  with **`start_of_next_week_utc = start_of_today_utc + 7 days`, upper bound EXCLUSIVE, UTC** (T049 line 42; in-repo
+  `common::card_filters::tests::due_date_boundaries_monday_week_window`; `cards_filters_validation_and_semantics`;
+  T053 note). `due_date_boundaries_at` must compute `start_of_today + chrono::Days::new(7)`.
+- **Do NOT** compute `start_of_next_week` as next **Monday** (`start_of_week + 7`). `start_of_week`/`num_days_from_monday`
+  are unnecessary → drop `use chrono::Datelike` or `clippy -D warnings` fails. A seeded `today + 3 days` card is inside
+  the window on **all** days; hardcoded `[Beta, Delta]`-style expectations are correct once `start_of_next_week`=today+7.
+  T053's "crosses the Monday boundary Fri–Sun" was a symptom of the buggy next-Monday bound, not intended semantics.
+- **Doc drift to avoid:** comments said "upper bound is next Monday 00:00:00 UTC" + "Monday-start week"; spec said
+  "Monday-start, 7-day window". Reality is **rolling 7-day**; `due_date >= start_of_today` already excludes earlier
+  days in the calendar week. Frontend only maps `this_week`; backend filters.
+
+## sqlx 0.9.0 MySQL `#[sqlx::test]` setup can flake with 1213 — infra, not app (2026-11-27)
+- **Tag:** sqlx, testing, mysql, mariadb, deadlock, flakiness
+- `sqlx::test` `test_context` panics `failed to connect to setup test database` (`sqlx-core-0.9.0/testing/mod.rs:227`)
+  **before the test body**; `sqlx-mysql-0.9.0` runs **parallel** per-test concurrent `CREATE TABLE IF NOT EXISTS
+  _sqlx_test_databases` + `CREATE/DROP DATABASE` + `INSERT/DELETE`, shared master pool, **no retry / no once-guard**,
+  `#[sqlx::test]` **cannot set `max_connections`**; failed tests leave scratch DBs/rows. MySQL **1213 (`40001`)**
+  retryable ("try restarting transaction"); match driver NUMBER not SQLSTATE; `REPEATABLE READ` + MDL/DDL deadlocks
+  (MySQL #63144/#31875229/#110795/#116289); sqlx #3825 / PR #3334. **App `common::tx_retry`/`common::retry` +
+  READ COMMITTED do NOT apply** (not app SQL; panic inside harness). Mitigate: **retry**, `RUST_TEST_THREADS=1` /
+  `--test-threads=1`, separate `cargo test --lib` vs `--test api`, **clean scratch DBs + tmpfs throwaway container**;
+  don't hand-edit `_sqlx_test_databases`. Distinct from the app-level `cards_move` deadlock (recorded in
+  `SHOW ENGINE INNODB STATUS`) which `common::tx_retry` recovers from.

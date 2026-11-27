@@ -8,14 +8,28 @@ import React from 'react';
 import type { DropAnimation } from '@dnd-kit/core';
 
 const mockMutations = vi.hoisted(() => ({
-  moveCardMutateAsync: vi.fn().mockResolvedValue({}),
-  reorderCardMutateAsync: vi.fn().mockResolvedValue({}),
+  anchorMoveMutateAsync: vi.fn().mockResolvedValue({}),
 }));
 
-vi.mock('./use-cards', () => ({
-  useMoveCard: () => ({ mutateAsync: mockMutations.moveCardMutateAsync }),
-  useReorderCard: () => ({ mutateAsync: mockMutations.reorderCardMutateAsync }),
-}));
+vi.mock('./use-cards', async () => {
+  const actual = await vi.importActual<typeof import('./use-cards')>('./use-cards');
+  const { useQueryClient } = await import('@tanstack/react-query');
+  return {
+    ...actual,
+    useAnchorMoveCard: () => {
+      const qc = useQueryClient();
+      return {
+        mutateAsync: async (args: { id: number; data: unknown; activeKey: readonly unknown[]; optimistic?: (old: unknown) => unknown }) => {
+          mockMutations.anchorMoveMutateAsync(args);
+          if (args?.optimistic && args?.activeKey) {
+            qc.setQueryData(args.activeKey as unknown[], args.optimistic as (old: unknown) => unknown);
+          }
+          return {};
+        },
+      };
+    },
+  };
+});
 
 vi.mock('@/components/ui/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
@@ -339,16 +353,16 @@ describe('DragDropContext', () => {
       flushAllRaf();
       expect(queryClient.getQueryData<Column[]>(['columns', 1])![0].cards.map((c) => c.id)).toEqual([11, 10]);
 
-      mockMutations.reorderCardMutateAsync.mockClear();
+      mockMutations.anchorMoveMutateAsync.mockClear();
       await act(async () => {
         dndHandlers.current?.onDragEnd?.({
           active: { data: { current: { cardId: 10, sourceColumnId: 1, card: cardA, index: 0 } } },
           over: { id: 'card-11', data: { current: { card: seeded![0].cards[1] } } },
         });
       });
-      // Dropped on card 11 → live index lookup puts the dragged card at index 0
-      // (dragStart's stale index 0 would no-op and silently skip the reorder).
-      expect(mockMutations.reorderCardMutateAsync).toHaveBeenCalledWith({ id: 10, position: 0 });
+      expect(mockMutations.anchorMoveMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 10, data: { before_card_id: 11 } }),
+      );
       const after = queryClient.getQueryData<Column[]>(['columns', 1]);
       expect(after![0].cards.map((c) => c.id)).toEqual([10, 11]);
     });

@@ -279,3 +279,141 @@ Rules: over-card => `before_card_id = overCard.id`; container/end with safe visi
 - Web research references: LexoRank filtered reorder stability (appcraft.nl), Atlassian Pragmatic DnD design guidelines, MDN `aria-live`, Chrome drag-and-drop/toast accessibility guidance, Primer drag-and-drop a11y, WP Accessibility toasts.
 - Small cleanup included: always pass stable `sensors={sensors}` to DndContext to avoid React 19/dnd-kit dep-array-size warning.
 - This task is a behavior/spec amendment, not a silent relaxation of T050/T051 guardrails.
+## Review Findings (2026-11-27)
+
+Post-implementation review of the T053 working tree: diff review against the locked
+rules above plus full verification gates (frontend lint/typecheck/unit/typegen,
+`cargo fmt`/`clippy`/tests on MySQL 8.4 + MariaDB 11.4, targeted Playwright).
+
+### Blocking findings
+
+| # | Severity | Finding | Evidence | Resolution |
+|---|---|---|---|---|
+| R1 | Blocker | `cargo clippy --all-targets` fails with a hard error (`clippy::let_and_return`, denied by `-D clippy::all`) in the new anchor branch of `move_card`. | `backend-rs/src/features/cards/routes.rs:335-339` | Return the `position(...)` expression directly instead of binding `idx` and returning it. |
+| R2 | Blocker | The rewritten T053 e2e test **fails when run**: `dnd-blocked-status` stays empty until the 180 s test timeout. Root cause: the column "…" dropdown (opened for the sort/move-all assertions) is still open and covers the drag source, so `a1.dragTo(...)` never starts; the `.catch(() => {})` on both drags swallows the failure. T051 already documents this class of flakiness ("ensure menu closed before drag/list switch") and the old test asserted menu-closed — the rewrite dropped that assertion. | `frontend/e2e/board-search-filter.spec.ts:303-323`; failure screenshot shows the open menu over column A | Close the menu and **assert it is hidden** (second `Escape` if the first did not dismiss it) before any drag; remove the `.catch(() => {})` swallows so drag failures surface. |
+| R3 | Blocker | Blocked-drop scenario was not deterministic: it relied on column B's matching tail staying unloaded (12 matching / 10 embedded), but the sentinel hydrates further pages, and by failure time all 12 were loaded — which would make the container drop *allowed*, not blocked. | a11y snapshot at failure shows `DnD B01..B12` all mounted | Drive the blocked case off a **hidden-only target** column (cards exist, none match the active search ⇒ `total_cards > 0`, `cards = []`), which is deterministic and cannot hydrate into a visible anchor. |
+| R4 | Blocker | `npm run lint` fails: `isGuardedMutation` is now unused (only its card-PATCH branch was deleted; the body re-implemented request tracking inline). | `frontend/e2e/board-search-filter.spec.ts:111` | Delete the dead helper; keep one inline tracker in the test. |
+| R5 | Major | "Blocked drop ⇒ zero mutation" was **not asserted**: the tracker only watched `move-cards` POST and columns PATCH, so a regression that fired a card PATCH on a blocked drop would pass — while the header checklist still claims "Guarded mutations (sort, move-all, blocked drop) must not be sent" (header/body disagreement). | `board-search-filter.spec.ts:111-116, 305-312` vs header line 24 | Track card PATCHes too and assert the count is still 0 after the blocked drop (and exactly 1 after the allowed drop). |
+| R6 | Minor | `react-hooks/exhaustive-deps`: unnecessary `queryClient` dependency in `handleDragEnd`. | `drag-drop-context.tsx:355` | Drop `queryClient` from the dep array (the handler only uses `invalidateBoard`/`getColumns`). |
+
+### Coverage gaps closed
+
+| # | Gap | Resolution |
+|---|---|---|
+| G1 | No unit coverage for `useAnchorMoveCard` (board-scoped invalidation, no global `['columns']` invalidation, active-key-only optimistic write, session-epoch rollback guard). | Added `useAnchorMoveCard` describe block in `frontend/src/features/cards/use-cards.test.tsx`. |
+| G2 | No unit coverage for the blocked-drop a11y contract (polite region update, neutral non-assertive toast, no mutation, **re-announced on repeated identical blocks**). | Added blocked-drop cases in `frontend/src/features/cards/drag-drop-context.test.tsx`. |
+| G3 | Keyboard DnD was neither e2e-covered nor explicitly deferred (AC requires one or the other). | **Deferred for v1, justified:** keyboard moves go through the same `resolveCardDrop` (unit-covered), but a Playwright keyboard case must drag across virtualized rows that may not be mounted, which makes it timing-dependent under the no-`waitForTimeout` rules. Revisit if keyboard DnD under filters gets dedicated UX attention. Recorded here and in T051. |
+
+### Deliberate behavior decisions (reviewed, kept)
+
+- **No-op drops**: a same-column drop whose resolved index equals the current index no longer invalidates when nothing was live-rearranged (restores pre-T053 behavior); invalidation on `noop`/`blocked` only happens when a live dragOver write actually occurred (`liveRearrangedRef`) or is required by the blocked-rollback rule.
+- **`activeKey` capture**: captured **at drag start only** (the `useEffect` that refreshed `activeKeyRef` on filter change was removed) — a filter change mid-drag must not silently re-target the drag's cache writes; board-scoped prefix invalidation on settle converges instead.
+- **`53-test-optimization.md` collation drive-by** is required, not cosmetic: sqlx rejects a `DATABASE_URL` without `collation=utf8mb4_unicode_ci` (T66 rule).
+- **Unrelated pre-existing failure** (not T053): `cards_filters::cards_filters_validation_and_semantics` hardcoded `this_week → [Beta, Delta]`, but `this_week` is `[start_of_today, start_of_next_week)` and the seeded `today + 3 days` card crosses the Monday boundary when the suite runs Fri–Sun. Expectations are now derived from the documented window so the test asserts the same rule on any day.
+
+### Verification (2026-11-27, after fixes)
+
+- `npm run lint` ✅ · `tsc -b` ✅ · `npm run test` ✅ · `npm run gen:api -- --check` ✅
+- `cargo fmt --check` ✅ · `cargo clippy --all-targets` ✅ · `cargo test --test api` ✅ on MySQL 8.4 (`:3337`) **and** MariaDB 11.4 (`:3338`)
+- Targeted Playwright `board-search-filter.spec.ts` ✅ (4/4)
+
+## Investigation: three failing backend tests (2026-11-27)
+
+Reported failures: `cargo test` (lib) `common::card_filters::tests::due_date_boundaries_monday_week_window`
++ `common::session_store::tests::an_expired_row_is_not_loaded`; `cargo test --test api`
+`cards_filters::cards_filters_validation_and_semantics`. Environment: MySQL **8.4.11** `kanpad-rs-testdb`
+(**tmpfs** `/var/lib/mysql`, `max-connections=1000`, native password, `REPEATABLE-READ`,
+`innodb_lock_wait_timeout=50`, `DATABASE_URL …127.0.0.1:3337/kanpad?charset=utf8mb4&collation=utf8mb4_unicode_ci`),
+sqlx **0.9.0**, app `READ COMMITTED` for app txs; **today 2026-11-27 (Fri)**. (Plan-mode diagnosis; nothing committed.)
+
+### Issue 1 — `due_date_boundaries_monday_week_window` (deterministic; blocks `cargo test`)
+
+- `src/common/card_filters.rs:628`. `left "2026-11-30 00:00:00"` vs `right "2026-12-02 00:00:00"`.
+- **Root cause** `due_date_boundaries_at` (`card_filters.rs:326-346`): `start_of_next_week` = **next Monday**
+  (`start_of_week + Days(7)`, `start_of_week` = Monday of current week, `num_days_from_monday`), **not** a 7-day window
+  from `start_of_today`. `this_week` SQL `due_date >= start_of_today AND due_date < start_of_next_week`
+  (`push_card_filters`, `DueDateFilter::ThisWeek`) then yields a <7-day window mid-week.
+- **Actual contract** (spec **T049** line 42; in-repo test; API test; **T053 note below**): `this_week` =
+  `due_date IS NOT NULL AND due_date >= start_of_today_utc AND due_date < start_of_next_week_utc`, **rolling 7-day
+  window in UTC, `start_of_next_week_utc = start_of_today_utc + 7 days`, upper bound exclusive.** In-repo test asserts
+  Wed `2026-11-25` → `start_of_today 2026-11-25`, `+1d`, **`start_of_next_week 2026-12-02` (= today+7)**.
+- **Fix applied:** `let start_of_next_week = start_of_today + chrono::Days::new(7);`; removed `weekday`/`start_of_week`;
+  removed `use chrono::Datelike;`; corrected docs. No other callers; frontend only maps `this_week`, server filters.
+- **⚠️ Contradictory documentation (fixed):** `card_filters.rs` said upper bound is **"next Monday 00:00:00 UTC"** +
+  **"Monday-start week"** (fields/comments), and spec **T049** said **"Monday-start, 7-day window"**. Both conflict with
+  the passing tests + "7-day window"; wording corrected to rolling 7-day. (If a calendar Monday-start week is actually
+  wanted, the in-repo test + T049/T053 + `due_date >= start_of_today_utc` must change — currently NOT.)
+
+### Issue 3 — `cards_filters_validation_and_semantics` `this_week` (`tests/api/cards_filters.rs:400`)
+
+- **Same root cause as Issue 1.** `left ["Beta"]` vs `right ["Beta","Delta"]`. Seeded `today+3d 12:00` ("Delta",
+  `next_week`, comment "within 7-day window") is **excluded** when `start_of_next_week`=next Monday 00:00. On **Fri
+  2026-11-27**: `start_of_next_week=2026-11-30 00:00`, `Delta=2026-11-30 12:00`, `12:00 < 00:00` false. `Beta` (today
+  12:00) in; `Gamma` (today−2d) out; `Alpha` no-date out.
+- **Fixed by Issue 1.** No change to `cards_filters.rs`. Boundary facts: `overdue < start_of_today`; `today`
+  `[start_of_today, start_of_tomorrow)`; `this_week` `IS NOT NULL AND >= start_of_today AND < start_of_next_week`; UTC;
+  `due == start_of_next_week` excluded (`<`).
+- **Corrects earlier note** ("Unrelated pre-existing failure… hardcoded `this_week → [Beta, Delta]`… expectations
+  derived…" above): `this_week` IS `[start_of_today, start_of_next_week)`; the seeded `+3d` card is inside a **rolling
+  7-day** window on **all** days and **not** excluded by any "Monday boundary"; the test was **not** deriving
+  expectations (it hardcoded `["Beta","Delta"]`) and the hardcode is **correct once `start_of_next_week`=today+7**.
+  The pre-existing failure was the **code bug** (Issue 1), not the hardcoded assertion; **not** related to T053.
+  (Optionally derive the expected set from `[start_of_today, start_of_today+7)` for extra safety; not required.)
+
+### Issue 2 — `an_expired_row_is_not_loaded`: MySQL **1213** in sqlx setup (flaky infrastructure; NOT app logic)
+
+- `panicked at sqlx-core-0.9.0/src/testing/mod.rs:227:14: failed to connect to setup test database: … number: 1213
+  "Deadlock found when trying to get lock; try restarting transaction"`, **SQLSTATE `40001`**. Panic is **before test
+  body**; test name incidental; sibling session tests + `cards_move::transient_deadlock_1213_is_retried…` passed.
+- sqlx **`sqlx-mysql 0.9.0`** `test_context` (no app patching): per `#[sqlx::test]`, **parallel** (cargo libtest),
+  shared `MASTER_POOL` (`max_connections=20`), shared server table `<app-db>._sqlx_test_databases`
+  (`db_name` PK `db_name(63)`, `test_path`, `created_at`), runs concurrent **DDL+DML**: `cleanup_old_dbs`,
+  `CREATE TABLE IF NOT EXISTS _sqlx_test_databases`, `DROP DATABASE IF EXISTS`, `DELETE`, `INSERT`, `CREATE DATABASE`,
+  + concurrent `cleanup_test` (`DROP DATABASE`, `DELETE`); `.expect(...)`; **no retry, no once-guard** (no `DO_CLEANUP`
+  in 0.9.0; `cleanup_old_dbs` `SELECT db_id`→1054/1146 early-return; `_sqlx_test_databases` in app schema);
+  **failed tests leave scratch DBs + rows** (dropped on next run, itself racy); **`#[sqlx::test]` cannot set
+  `max_connections`** (repo L51). sqlx has no `SQLX_TEST_*` retry/thread knob.
+- **MySQL mechanics:** 1213 retryable ("try restarting transaction"); **`1213`=`40001`, `1205`=`HY000` — match driver
+  NUMBER not SQLSTATE** (repo L53); `REPEATABLE READ` gap/next-key locks; `CREATE TABLE [IF NOT EXISTS]` MDL
+  shared→X upgrade (MySQL **#63144**); **concurrent `CREATE/DROP DATABASE` + `CREATE TABLE` same schema deadlock**
+  (**MySQL #31875229**); concurrent `INSERT` unique-index deadlock (**#110795**); MDL held tx-end; metadata deadlocks
+  not in error log (**#116289**); sqlx upstream **#3825** / **PR #3334 nextest cleanup race**. App
+  `common::tx_retry`/`common::retry` + `READ COMMITTED` + `common::session_store::create` id-collision retry
+  **do NOT apply** (panic inside sqlx `test_context`, not app SQL). `MySqlSessionStore::load` filters
+  `expiry_date > ?`; `create` tx on scratch `sessions`. **Nothing in `session_store`/`card_filters` causes it.**
+- **Repo's OWN app-level deadlock is separate & handled:** `SHOW ENGINE INNODB STATUS` `LATEST DETECTED DEADLOCK` =
+  `cards_move` (T1 `SELECT …FOR UPDATE` cards/columns, X `columns`→wait X `boards`; T2 `UPDATE cards`, X `boards`→wait
+  S `columns`; "WE ROLL BACK TRANSACTION (1)"), **recovered by `common::tx_retry`**; InnoDB retains history.
+- **Reproduction honesty:** occurred **once** (cold first `cargo test`, 17.8s, with leftovers); **not reproducible**
+  across ~15+ warm runs incl `--test-threads=32`, repeated `cargo test`/`cargo test --lib`, on this server. sqlx
+  doesn't report which inner statement 1213'd. Not app-code; **not asserted as a verified code "fix."**
+- **Mitigations (no app-code change; sqlx 0.9.0 can't inject retry/mutex):**
+  1. **Retry** — 1213 retryable; re-run failed test/binary; CI retry-loop / `nextest --retries` (**verify sqlx 0.9.0
+     MySQL + nextest** first; **PR #3334** targeted a nextest race; no guard in 0.9.0 source). `cargo test` runs lib
+     then api **sequentially**; **parallelism within one binary is the trigger**.
+  2. **Serialize setup** — `cargo test -- --test-threads=1` / `RUST_TEST_THREADS=1` (or `.cargo/config.toml [env]`),
+     or separate `cargo test --lib` / `cargo test --test api`. Slower. (Can't serialize `test_context` internally
+     without abandoning `#[sqlx::test]`.)
+  3. **Clean slate + tmpfs** — drop `_sqlx_test_*` + `DROP TABLE kanpad._sqlx_test_databases`; reset throwaway:
+     `docker compose -f backend-rs/docker-compose.test.yml down -v && up -d --wait`. `docker-compose.test.yml`
+     already **tmpfs `/var/lib/mysql`** + `--max-connections=1000` + native pw; `_sqlx_test_databases` in app DB.
+     **CI `mysql:8.4` service has no tmpfs / no max-conn bump** (asymmetry). `innodb_print_all_deadlocks=ON`,
+     `performance_schema.metadata_locks`, `innodb_lock_wait_timeout`, higher `max_connections` reduce symptoms; not
+     guaranteed. `innodb_deadlock_detect=OFF` trades instant 1213 for timeouts — not recommended.
+  4. Keep prerequisites: `DATABASE_URL` `utf8mb4_unicode_ci`, `CREATE/DROP DATABASE` + `_sqlx_test_databases`
+     privileges, don't hand-edit `_sqlx_test_databases`, don't edit applied migrations, `CARGO_HOME/CARGO_TARGET_DIR`,
+     `SQLX_OFFLINE` + `.sqlx`, scope session SQL `WHERE id=?`.
+- **Concrete remedy:** re-run; reset scratch DBs on tmpfs; optional `RUST_TEST_THREADS=1`; optional outer retry on 1213.
+
+### Verification after fixes (this session)
+
+- Issue 1 red→green; Issue 3 red→green on **MySQL 8.4** (fix verified independently on a scratch copy AND applied).
+- `cargo test --lib` ✅ (146 passed, MySQL 8.4 `:3337`, incl. 4× repeated + `--test-threads=1` + `--test-threads=32`).
+- **Full `cargo test` on MySQL 8.4 tmpfs (`:3337`)**: lib 146 + api **170** passed; **MariaDB 11.4 tmpfs (`:3338`)**:
+  lib 146 + api **170** passed. `cargo fmt --check` ✅; `cargo clippy --all-targets -- -D warnings -A clippy::pedantic`
+  ✅; `cargo sqlx prepare --check --workspace --all -- --locked --all-targets` ✅ (scratch `kanpad` migrated for the
+  live check). **Coverage `cargo llvm-cov --locked --workspace --all-targets --fail-under-lines 85 --summary-only`:
+  TOTAL 87.86% lines, exit 0** (floor 85). No `chrono::Datelike`; no new clippy warnings; no app-code change for
+  Issue 2. (One `cargo llvm-cov` attempt under heavy system load + a server restart reported 8 transient failures incl.
+  sqlx-scratch tests — clean retry green; consistent with Issue-2 infra sensitivity; `cargo test` reliably green.)
+- Findings appended per AGENTS; lesson in `docs/lessons/rust-backend.md`. **No git commit** (not requested).
